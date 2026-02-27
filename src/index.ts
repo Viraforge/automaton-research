@@ -265,6 +265,53 @@ async function run(): Promise<void> {
   // "gpt-oss:120b" route to Ollama based on their registered provider, not heuristics.
   const modelRegistry = new ModelRegistry(db.raw);
   modelRegistry.initialize();
+
+  // BYOK mode: when a custom inference provider is configured, register the
+  // configured model and disable unreachable static-baseline models so the
+  // InferenceRouter selects the right model instead of e.g. gpt-5.2.
+  if (config.inferenceBaseUrl) {
+    const now = new Date().toISOString();
+    const byokModels = new Set([
+      config.inferenceModel,
+      config.modelStrategy?.lowComputeModel,
+    ].filter(Boolean) as string[]);
+
+    for (const modelId of byokModels) {
+      if (!modelRegistry.get(modelId)) {
+        modelRegistry.upsert({
+          modelId,
+          provider: "conway",
+          displayName: modelId,
+          tierMinimum: "critical",
+          costPer1kInput: 0,
+          costPer1kOutput: 0,
+          maxTokens: config.maxTokensPerTurn || 4096,
+          contextWindow: 128000,
+          supportsTools: true,
+          supportsVision: false,
+          parameterStyle: "max_tokens",
+          enabled: true,
+          lastSeen: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    // Disable models whose providers aren't reachable in this deployment
+    for (const entry of modelRegistry.getAll()) {
+      if (byokModels.has(entry.modelId)) continue;
+      if (entry.provider === "openai" && !config.openaiApiKey) {
+        modelRegistry.setEnabled(entry.modelId, false);
+      }
+      if (entry.provider === "anthropic" && !config.anthropicApiKey) {
+        modelRegistry.setEnabled(entry.modelId, false);
+      }
+    }
+
+    logger.info(`[${new Date().toISOString()}] BYOK inference: ${config.inferenceBaseUrl}`);
+  }
+
   const inference = createInferenceClient({
     apiUrl: config.conwayApiUrl,
     apiKey,
