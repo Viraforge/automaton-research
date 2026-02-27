@@ -59,6 +59,7 @@ export function createInferenceClient(
       openaiApiKey,
       anthropicApiKey,
       ollamaBaseUrl,
+      inferenceBaseUrl,
       getModelProvider,
     });
 
@@ -169,12 +170,14 @@ function formatMessage(
  * When InferenceRouter is available, it uses the model registry's provider field.
  * This function is kept for backward compatibility with direct inference calls.
  */
-function resolveInferenceBackend(
+/** @internal Exported for testing. */
+export function resolveInferenceBackend(
   model: string,
   keys: {
     openaiApiKey?: string;
     anthropicApiKey?: string;
     ollamaBaseUrl?: string;
+    inferenceBaseUrl?: string;
     getModelProvider?: (modelId: string) => string | undefined;
   },
 ): InferenceBackend {
@@ -182,13 +185,20 @@ function resolveInferenceBackend(
   if (keys.getModelProvider) {
     const provider = keys.getModelProvider(model);
     if (provider === "ollama" && keys.ollamaBaseUrl) return "ollama";
+    // BYOK: "other" means user-registered model — route through conway/BYOK path
+    if (provider === "other") return "conway";
     if (provider === "anthropic" && keys.anthropicApiKey) return "anthropic";
     if (provider === "openai" && keys.openaiApiKey) return "openai";
     if (provider === "conway") return "conway";
     // provider unknown or key not configured — fall through to heuristics
   }
 
-  // Heuristic fallback (model not in registry yet)
+  // When inferenceBaseUrl is set (BYOK mode), skip name heuristics entirely.
+  // The user explicitly configured where inference goes; don't let a model name
+  // like "gpt-*" silently redirect to OpenAI.
+  if (keys.inferenceBaseUrl) return "conway";
+
+  // Heuristic fallback (model not in registry yet, no BYOK)
   if (keys.anthropicApiKey && /^claude/i.test(model)) return "anthropic";
   if (keys.openaiApiKey && /^(gpt-[3-9]|gpt-4|gpt-5|o[1-9][-\s.]|o[1-9]$|chatgpt)/i.test(model)) return "openai";
   return "conway";

@@ -129,27 +129,24 @@ export async function runAgentLoop(
     ].filter(Boolean) as string[]);
 
     for (const modelId of byokModels) {
-      if (!modelRegistry.get(modelId)) {
-        modelRegistry.upsert({
-          modelId,
-          provider: "other",
-          displayName: modelId,
-          tierMinimum: "critical",
-          costPer1kInput: 0,
-          costPer1kOutput: 0,
-          maxTokens: config.maxTokensPerTurn || 4096,
-          contextWindow: 128000,
-          supportsTools: true,
-          supportsVision: false,
-          parameterStyle: "max_tokens",
-          enabled: true,
-          lastSeen: null,
-          createdAt: now,
-          updatedAt: now,
-        });
-      } else if (!modelRegistry.get(modelId)!.enabled) {
-        modelRegistry.setEnabled(modelId, true);
-      }
+      const existing = modelRegistry.get(modelId);
+      modelRegistry.upsert({
+        modelId,
+        provider: "other",
+        displayName: existing?.displayName || modelId,
+        tierMinimum: existing?.tierMinimum || "critical",
+        costPer1kInput: existing?.costPer1kInput ?? 0,
+        costPer1kOutput: existing?.costPer1kOutput ?? 0,
+        maxTokens: existing?.maxTokens || config.maxTokensPerTurn || 4096,
+        contextWindow: existing?.contextWindow || 128000,
+        supportsTools: existing?.supportsTools ?? true,
+        supportsVision: existing?.supportsVision ?? false,
+        parameterStyle: existing?.parameterStyle || "max_tokens",
+        enabled: true,
+        lastSeen: null,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+      });
     }
 
     for (const entry of modelRegistry.getAll()) {
