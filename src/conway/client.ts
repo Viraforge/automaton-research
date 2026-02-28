@@ -591,21 +591,67 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
 }
 
 /**
- * Noop Conway client for BYOK mode. Every platform method returns a safe
- * default without touching the network. Sandbox exec/file operations throw
- * so callers know they're unavailable (sandbox-dependent features are not
- * expected in BYOK mode without a real Conway backend).
+ * BYOK Conway client. Sandbox operations (exec, file I/O, ports) run
+ * locally — same as the real client when sandboxId is empty. Platform
+ * admin calls (credits, registration, sandboxes, domains) return safe
+ * defaults without touching the network.
  */
 function createNoopConwayClient(): ConwayClient {
+  // ── Local execution (same as real client's isLocal path) ──────
+  const localExec = async (
+    command: string,
+    timeout?: number,
+  ): Promise<ExecResult> => {
+    try {
+      const stdout = execSync(command, {
+        timeout: timeout || 30_000,
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+        cwd: process.env.HOME || "/root",
+      });
+      return { stdout: stdout || "", stderr: "", exitCode: 0 };
+    } catch (err: any) {
+      return {
+        stdout: err.stdout || "",
+        stderr: err.stderr || err.message || "",
+        exitCode: err.status ?? 1,
+      };
+    }
+  };
+
+  const resolvePath = (filePath: string): string =>
+    filePath.startsWith("~")
+      ? nodePath.join(process.env.HOME || "/root", filePath.slice(1))
+      : filePath;
+
+  const localWriteFile = async (
+    filePath: string,
+    content: string,
+  ): Promise<void> => {
+    const resolved = resolvePath(filePath);
+    const dir = nodePath.dirname(resolved);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(resolved, content, "utf-8");
+  };
+
+  const localReadFile = async (filePath: string): Promise<string> =>
+    fs.readFileSync(resolvePath(filePath), "utf-8");
+
+  // ── Platform admin calls: safe no-ops ─────────────────────────
   const unavailable = (op: string) => () => {
     throw new Error(`Conway platform unavailable (BYOK mode): ${op}`);
   };
+
   return {
-    exec: unavailable("exec") as any,
-    writeFile: unavailable("writeFile") as any,
-    readFile: unavailable("readFile") as any,
-    exposePort: unavailable("exposePort") as any,
-    removePort: unavailable("removePort") as any,
+    exec: localExec,
+    writeFile: localWriteFile,
+    readFile: localReadFile,
+    exposePort: async (port: number) => ({
+      port,
+      publicUrl: `http://localhost:${port}`,
+      sandboxId: "local",
+    }),
+    removePort: async () => {},
     createSandbox: unavailable("createSandbox") as any,
     deleteSandbox: unavailable("deleteSandbox") as any,
     listSandboxes: async () => [],
