@@ -156,6 +156,9 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
       timestamp: new Date().toISOString(),
     }));
 
+    // Skip topup in BYOK mode — no Conway credit system
+    if (taskCtx.config.inferenceBaseUrl) return { shouldWake: false };
+
     const MIN_TOPUP_USD = 5;
     if (balance >= MIN_TOPUP_USD && (ctx.survivalTier === "critical" || ctx.survivalTier === "dead")) {
       // Cooldown: don't attempt more than once every 5 minutes to avoid

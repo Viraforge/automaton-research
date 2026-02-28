@@ -32,9 +32,19 @@ interface ConwayClientOptions {
   apiUrl: string;
   apiKey: string;
   sandboxId: string;
+  /** When true, all platform API calls (credits, registration, sandboxes) are
+   *  short-circuited with safe defaults. Used in BYOK mode where conwayApiUrl
+   *  points at an inference-only provider with no Conway control plane. */
+  platformDisabled?: boolean;
 }
 
 export function createConwayClient(options: ConwayClientOptions): ConwayClient {
+  // BYOK mode: no Conway platform — return a client where every admin method
+  // short-circuits with safe defaults and zero network calls.
+  if (options.platformDisabled) {
+    return createNoopConwayClient();
+  }
+
   const { apiUrl, apiKey } = options;
   // Normalize sandbox ID defensively so values like whitespace/"undefined"/"null"
   // never produce malformed API paths such as /v1/sandboxes//exec.
@@ -578,6 +588,40 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
   // that any code with a client reference could access.
 
   return client;
+}
+
+/**
+ * Noop Conway client for BYOK mode. Every platform method returns a safe
+ * default without touching the network. Sandbox exec/file operations throw
+ * so callers know they're unavailable (sandbox-dependent features are not
+ * expected in BYOK mode without a real Conway backend).
+ */
+function createNoopConwayClient(): ConwayClient {
+  const unavailable = (op: string) => () => {
+    throw new Error(`Conway platform unavailable (BYOK mode): ${op}`);
+  };
+  return {
+    exec: unavailable("exec") as any,
+    writeFile: unavailable("writeFile") as any,
+    readFile: unavailable("readFile") as any,
+    exposePort: unavailable("exposePort") as any,
+    removePort: unavailable("removePort") as any,
+    createSandbox: unavailable("createSandbox") as any,
+    deleteSandbox: unavailable("deleteSandbox") as any,
+    listSandboxes: async () => [],
+    // Return a high balance so survival tier stays "high" in BYOK mode.
+    // The user pays their inference provider directly; credits don't apply.
+    getCreditsBalance: async () => 100_00,
+    getCreditsPricing: async () => [],
+    transferCredits: unavailable("transferCredits") as any,
+    registerAutomaton: async () => ({ automaton: {} }),
+    searchDomains: async () => [],
+    registerDomain: unavailable("registerDomain") as any,
+    listDnsRecords: async () => [],
+    addDnsRecord: unavailable("addDnsRecord") as any,
+    deleteDnsRecord: unavailable("deleteDnsRecord") as any,
+    listModels: async () => [],
+  };
 }
 
 function normalizeSandboxId(value: string | null | undefined): string {

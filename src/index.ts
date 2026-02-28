@@ -221,11 +221,14 @@ async function run(): Promise<void> {
     db.setIdentity("automatonId", automatonId);
   }
 
-  // Create Conway client
+  // Create Conway client — in BYOK mode (inferenceBaseUrl set), there's no
+  // Conway platform backend, so all admin calls are short-circuited.
+  const platformDisabled = !!config.inferenceBaseUrl;
   const conway = createConwayClient({
     apiUrl: config.conwayApiUrl,
     apiKey,
     sandboxId: config.sandboxId,
+    platformDisabled,
   });
 
   // Register automaton identity (one-time, immutable)
@@ -366,34 +369,36 @@ async function run(): Promise<void> {
   }
 
   // Bootstrap topup: buy minimum credits ($5) from USDC so the agent can start.
-  // The agent decides larger topups itself via the topup_credits tool.
-  try {
-    let bootstrapTimer: ReturnType<typeof setTimeout>;
-    const bootstrapTimeout = new Promise<null>((_, reject) => {
-      bootstrapTimer = setTimeout(() => reject(new Error("bootstrap topup timed out")), 15_000);
-    });
+  // Skipped in BYOK mode — no Conway credit system.
+  if (!platformDisabled) {
     try {
-      await Promise.race([
-        (async () => {
-          const creditsCents = await conway.getCreditsBalance().catch(() => 0);
-          const topupResult = await bootstrapTopup({
-            apiUrl: config.conwayApiUrl,
-            account,
-            creditsCents,
-          });
-          if (topupResult?.success) {
-            logger.info(
-              `[${new Date().toISOString()}] Bootstrap topup: +$${topupResult.amountUsd} credits from USDC`,
-            );
-          }
-        })(),
-        bootstrapTimeout,
-      ]);
-    } finally {
-      clearTimeout(bootstrapTimer!);
+      let bootstrapTimer: ReturnType<typeof setTimeout>;
+      const bootstrapTimeout = new Promise<null>((_, reject) => {
+        bootstrapTimer = setTimeout(() => reject(new Error("bootstrap topup timed out")), 15_000);
+      });
+      try {
+        await Promise.race([
+          (async () => {
+            const creditsCents = await conway.getCreditsBalance().catch(() => 0);
+            const topupResult = await bootstrapTopup({
+              apiUrl: config.conwayApiUrl,
+              account,
+              creditsCents,
+            });
+            if (topupResult?.success) {
+              logger.info(
+                `[${new Date().toISOString()}] Bootstrap topup: +$${topupResult.amountUsd} credits from USDC`,
+              );
+            }
+          })(),
+          bootstrapTimeout,
+        ]);
+      } finally {
+        clearTimeout(bootstrapTimer!);
+      }
+    } catch (err: any) {
+      logger.warn(`[${new Date().toISOString()}] Bootstrap topup skipped: ${err.message}`);
     }
-  } catch (err: any) {
-    logger.warn(`[${new Date().toISOString()}] Bootstrap topup skipped: ${err.message}`);
   }
 
   // Start heartbeat daemon (Phase 1.1: DurableScheduler)
