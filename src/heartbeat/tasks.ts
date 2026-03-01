@@ -46,7 +46,11 @@ function appendDiscordLog(entry: Record<string, unknown>, logPath?: string): voi
         const trimmed = buf.subarray(buf.length - DISCORD_LOG_TRIM_TO);
         // Find first newline to avoid partial JSON line
         const firstNewline = trimmed.indexOf(0x0a);
-        fs.writeFileSync(filePath, trimmed.subarray(firstNewline + 1), { mode: 0o600 });
+        if (firstNewline >= 0) {
+          fs.writeFileSync(filePath, trimmed.subarray(firstNewline + 1), { mode: 0o600 });
+        } else {
+          fs.writeFileSync(filePath, "", { mode: 0o600 });
+        }
       }
     } catch { /* file may not exist yet */ }
 

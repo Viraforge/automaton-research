@@ -881,7 +881,7 @@ export async function runAgentLoop(
 
       consecutiveErrors = 0;
       // Clear error state on successful turn
-      if (db.getKV("last_error")) db.deleteKV("last_error");
+      db.deleteKV("last_error");
     } catch (err: any) {
       consecutiveErrors++;
       log(config, `[ERROR] Turn failed: ${err.message}`);

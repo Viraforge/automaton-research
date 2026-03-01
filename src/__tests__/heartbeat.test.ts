@@ -699,6 +699,48 @@ describe("Heartbeat Tasks", () => {
       globalThis.fetch = origFetch;
     });
 
+    it("shows crash sleep indicator when forcedSleep flag is set", async () => {
+      const tickCtx = createMockTickContext(db, {
+        creditBalance: 5000,
+        usdcBalance: 2.5,
+        survivalTier: "normal",
+      });
+
+      // Simulate a forced sleep error (consecutive errors exceeded threshold)
+      db.setKV("last_error", JSON.stringify({
+        message: "Inference provider unreachable",
+        consecutiveErrors: 5,
+        forcedSleep: true,
+        timestamp: new Date().toISOString(),
+      }));
+
+      const origFetch = globalThis.fetch;
+      let capturedBody: any = null;
+      globalThis.fetch = async (_url: any, opts: any) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+
+      const embed = capturedBody.embeds[0];
+      // Crash sleep gets stop sign prefix instead of warning
+      expect(embed.title).toContain("🛑");
+      // Last Error field shows crash sleep indicator
+      const errorField = embed.fields.find((f: any) => f.name === "Last Error");
+      expect(errorField.value).toContain("[CRASH SLEEP]");
+      expect(errorField.value).toContain("Inference provider unreachable");
+
+      globalThis.fetch = origFetch;
+    });
+
     it("includes thinking from latest turn in embed", async () => {
       const tickCtx = createMockTickContext(db);
 
@@ -709,7 +751,7 @@ describe("Heartbeat Tasks", () => {
         state: "running",
         thinking: "I should check the polymarket API for new opportunities and update our predictions.",
         toolCalls: [],
-        tokenUsage: { input: 100, output: 50 },
+        tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
         costCents: 0.5,
       });
 
