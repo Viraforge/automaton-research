@@ -211,7 +211,8 @@ export class MockConwayClient implements ConwayClient {
   }
 
   createScopedClient(_targetSandboxId: string): ConwayClient {
-    return new MockConwayClient();
+    // Return self so spies on exec/writeFile propagate to scoped clients
+    return this;
   }
 }
 

@@ -27,7 +27,9 @@ const logger = createLogger("memory.ingestion");
 
 type Database = BetterSqlite3.Database;
 
-// ─── Error Normalization ─────────────────────────────────────────
+// ─── Error Normalization ────────────────────────────────────────
+
+
 const ERROR_PATTERNS: [RegExp, string][] = [
   [/path.traversal/i, "PATH_TRAVERSAL"],
   [/permission.denied|access.denied|forbidden/i, "PERMISSION_DENIED"],
@@ -41,10 +43,15 @@ const ERROR_PATTERNS: [RegExp, string][] = [
   [/policy|blocked|denied.by.policy/i, "POLICY_BLOCKED"],
 ];
 
+/**
+ * Normalize a tool error string into a short, consistent type label.
+ * Matches known patterns first, then falls back to a sanitized prefix.
+ */
 export function normalizeErrorType(error: string): string {
   for (const [pattern, label] of ERROR_PATTERNS) {
     if (pattern.test(error)) return label;
   }
+  // Fallback: first 50 chars, alphanumeric + underscores only
   return error
     .slice(0, 50)
     .replace(/[^a-zA-Z0-9_]/g, "_")
@@ -613,17 +620,20 @@ export class MemoryIngestionPipeline {
   ): void {
     try {
       for (const tc of toolCallResults) {
+        // Learn from errors instead of ignoring them
         if (tc.error) {
-          // Learn from tool errors — store as semantic facts for future avoidance
           try {
             const errorType = normalizeErrorType(tc.error);
             const key = `tool_error:${tc.name}:${errorType}`;
+
+            // Check for existing entry to track repetition count
             const existing = this.semantic.get("environment", key);
             let count = 1;
             if (existing) {
               const countMatch = existing.value.match(/\((\d+)x\)/);
               count = countMatch ? parseInt(countMatch[1], 10) + 1 : 2;
             }
+
             const truncatedError = tc.error.length > 200 ? tc.error.slice(0, 200) + "..." : tc.error;
             this.semantic.store({
               category: "environment",

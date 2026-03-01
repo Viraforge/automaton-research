@@ -82,6 +82,8 @@ export class SemanticMemoryManager {
    */
   search(query: string, category?: SemanticCategory): SemanticMemoryEntry[] {
     try {
+      // Escape SQL LIKE wildcards so literal '%' and '_' in the query
+      // don't match arbitrary characters.
       const escaped = query.replace(/[%_]/g, (ch) => `\\${ch}`);
       if (category) {
         const rows = this.db.prepare(

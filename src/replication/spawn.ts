@@ -19,12 +19,27 @@ import type { ComputeProvider, SshCredential } from "../providers/types.js";
 import { ulid } from "ulid";
 import { propagateConstitution, propagateConstitutionSsh } from "./constitution.js";
 
+/** Valid Conway sandbox pricing tiers. */
+const SANDBOX_TIERS = [
+  { memoryMb: 512,  vcpu: 1, diskGb: 5 },
+  { memoryMb: 1024, vcpu: 1, diskGb: 10 },
+  { memoryMb: 2048, vcpu: 2, diskGb: 20 },
+  { memoryMb: 4096, vcpu: 2, diskGb: 40 },
+  { memoryMb: 8192, vcpu: 4, diskGb: 80 },
+];
+
+/** Find the smallest valid tier that has at least the requested memory. */
+function selectSandboxTier(requestedMemoryMb: number) {
+  return SANDBOX_TIERS.find((t) => t.memoryMb >= requestedMemoryMb) ?? SANDBOX_TIERS[SANDBOX_TIERS.length - 1];
+}
+
 /**
  * Validate that an address is a well-formed, non-zero Ethereum wallet address.
  */
 export function isValidWalletAddress(address: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(address) &&
-         address !== "0x" + "0".repeat(40);
+  return (
+    /^0x[a-fA-F0-9]{40}$/.test(address) && address !== "0x" + "0".repeat(40)
+  );
 }
 
 /**
@@ -162,9 +177,14 @@ async function spawnChildConway(
   lifecycle?: ChildLifecycle,
 ): Promise<ChildAutomaton> {
   // Check child limit from config
-  const existing = db.getChildren().filter(
-    (c) => c.status !== "dead" && c.status !== "cleaned_up" && c.status !== "failed",
-  );
+  const existing = db
+    .getChildren()
+    .filter(
+      (c) =>
+        c.status !== "dead" &&
+        c.status !== "cleaned_up" &&
+        c.status !== "failed",
+    );
   const maxChildren = (db as any).config?.maxChildren ?? 3;
   if (existing.length >= maxChildren) {
     throw new Error(
@@ -174,6 +194,7 @@ async function spawnChildConway(
 
   const childId = ulid();
   let sandboxId: string | undefined;
+  let reusedSandbox: { id: string } | null = null;
 
   // If no lifecycle provided, use legacy path
   if (!lifecycle) {
@@ -184,27 +205,52 @@ async function spawnChildConway(
     // State: requested
     lifecycle.initChild(childId, genesis.name, "", genesis.genesisPrompt);
 
-    // Create sandbox
-    const sandbox = await conway.createSandbox({
-      name: `automaton-child-${genesis.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
-      vcpu: 1,
-      memoryMb: 512,
-      diskGb: 5,
-    });
+    // Get child sandbox memory from config (default 1024MB)
+    const childMemoryMb = (db as any).config?.childSandboxMemoryMb ?? 1024;
+
+    // Try to reuse an existing sandbox whose DB record is 'failed' but
+    // is still running remotely, before creating a new one.
+    reusedSandbox = await findReusableSandbox(conway, db);
+
+    const tier = selectSandboxTier(childMemoryMb);
+
+    let sandbox: { id: string };
+    if (reusedSandbox) {
+      sandbox = reusedSandbox;
+    } else {
+      sandbox = await conway.createSandbox({
+        name: `automaton-child-${genesis.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
+        vcpu: tier.vcpu,
+        memoryMb: tier.memoryMb,
+        diskGb: tier.diskGb,
+      });
+    }
     sandboxId = sandbox.id;
 
+    // Create a scoped client so all exec/writeFile calls target the CHILD sandbox
+    const childConway = conway.createScopedClient(sandbox.id);
+
     // Update sandbox ID in children table
-    db.raw.prepare("UPDATE children SET sandbox_id = ? WHERE id = ?").run(sandbox.id, childId);
+    db.raw
+      .prepare("UPDATE children SET sandbox_id = ? WHERE id = ?")
+      .run(sandbox.id, childId);
 
     // State: sandbox_created
-    lifecycle.transition(childId, "sandbox_created", `sandbox ${sandbox.id} created`);
+    lifecycle.transition(
+      childId,
+      "sandbox_created",
+      `sandbox ${sandbox.id} created`,
+    );
 
-    // Install runtime
-    await conway.exec("apt-get update -qq && apt-get install -y -qq nodejs npm git curl", 120_000);
-    await conway.exec("npm install -g @conway/automaton@latest 2>/dev/null || true", 60_000);
+    // Install runtime (on the CHILD sandbox)
+    await childConway.exec("apt-get update -qq && apt-get install -y -qq nodejs npm git curl", 120_000);
+    await childConway.exec(
+      "git clone https://github.com/Conway-Research/automaton.git /root/automaton && cd /root/automaton && npm install && npm run build",
+      180_000,
+    );
 
-    // Write genesis configuration
-    await conway.exec("mkdir -p /root/.automaton", 10_000);
+    // Write genesis configuration (on the CHILD sandbox)
+    await childConway.exec("mkdir -p /root/.automaton", 10_000);
     const genesisJson = JSON.stringify(
       {
         name: genesis.name,
@@ -216,11 +262,11 @@ async function spawnChildConway(
       null,
       2,
     );
-    await conway.writeFile("/root/.automaton/genesis.json", genesisJson);
+    await childConway.writeFile("/root/.automaton/genesis.json", genesisJson);
 
     // Propagate constitution with hash verification
     try {
-      await propagateConstitution(conway, sandbox.id, db.raw);
+      await propagateConstitution(childConway, sandbox.id, db.raw);
     } catch {
       // Constitution file not found locally
     }
@@ -228,8 +274,8 @@ async function spawnChildConway(
     // State: runtime_ready
     lifecycle.transition(childId, "runtime_ready", "runtime installed");
 
-    // Initialize child wallet
-    const initResult = await conway.exec("automaton --init 2>&1", 60_000);
+    // Initialize child wallet (on the CHILD sandbox)
+    const initResult = await childConway.exec("node /root/automaton/dist/index.js --init 2>&1", 60_000);
     const walletMatch = (initResult.stdout || "").match(/0x[a-fA-F0-9]{40}/);
     const childWallet = walletMatch ? walletMatch[0] : "";
 
@@ -238,19 +284,33 @@ async function spawnChildConway(
     }
 
     // Update address in children table
-    db.raw.prepare("UPDATE children SET address = ? WHERE id = ?").run(childWallet, childId);
+    db.raw
+      .prepare("UPDATE children SET address = ? WHERE id = ?")
+      .run(childWallet, childId);
 
     // State: wallet_verified
-    lifecycle.transition(childId, "wallet_verified", `wallet ${childWallet} verified`);
+    lifecycle.transition(
+      childId,
+      "wallet_verified",
+      `wallet ${childWallet} verified`,
+    );
 
     // Record spawn modification
     db.insertModification({
       id: ulid(),
       timestamp: new Date().toISOString(),
       type: "child_spawn",
-      description: `Spawned child: ${genesis.name} in sandbox ${sandbox.id}`,
+      description: `Spawned child: ${genesis.name} in sandbox ${sandbox.id}${reusedSandbox ? " (reused)" : ""}`,
       reversible: false,
     });
+
+    // If we reused a sandbox, update the old children record to 'cleaned_up'
+    // so it doesn't get reused again.
+    if (reusedSandbox) {
+      db.raw.prepare(
+        "UPDATE children SET status = 'cleaned_up' WHERE sandbox_id = ? AND status = 'failed'",
+      ).run(sandbox.id);
+    }
 
     const child: ChildAutomaton = {
       id: childId,
@@ -266,18 +326,16 @@ async function spawnChildConway(
 
     return child;
   } catch (error) {
-    // Cleanup: destroy sandbox on any failure
-    if (sandboxId) {
-      try {
-        await conway.deleteSandbox(sandboxId);
-      } catch {
-        // Suppress cleanup errors
-      }
-    }
+    // Note: sandbox deletion is disabled by the Conway API (prepaid, non-refundable).
+    // Failed sandboxes are left running and may be reused by findReusableSandbox().
 
     // Transition to failed if lifecycle has been initialized
     try {
-      lifecycle.transition(childId, "failed", error instanceof Error ? error.message : String(error));
+      lifecycle.transition(
+        childId,
+        "failed",
+        error instanceof Error ? error.message : String(error),
+      );
     } catch {
       // May fail if child doesn't exist yet
     }
@@ -298,18 +356,32 @@ async function spawnChildLegacy(
 ): Promise<ChildAutomaton> {
   let sandboxId: string | undefined;
 
+  // Get child sandbox memory from config (default 1024MB)
+  const childMemoryMb = (db as any).config?.childSandboxMemoryMb ?? 1024;
+
+  const legacyTier = selectSandboxTier(childMemoryMb);
+
   try {
     const sandbox = await conway.createSandbox({
       name: `automaton-child-${genesis.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
-      vcpu: 1,
-      memoryMb: 512,
-      diskGb: 5,
+      vcpu: legacyTier.vcpu,
+      memoryMb: legacyTier.memoryMb,
+      diskGb: legacyTier.diskGb,
     });
     sandboxId = sandbox.id;
 
-    await conway.exec("apt-get update -qq && apt-get install -y -qq nodejs npm git curl", 120_000);
-    await conway.exec("npm install -g @conway/automaton@latest 2>/dev/null || true", 60_000);
-    await conway.exec("mkdir -p /root/.automaton", 10_000);
+    // Create a scoped client so all exec/writeFile calls target the CHILD sandbox
+    const childConway = conway.createScopedClient(sandbox.id);
+
+    await childConway.exec(
+      "apt-get update -qq && apt-get install -y -qq nodejs npm git curl",
+      120_000,
+    );
+    await childConway.exec(
+      "git clone https://github.com/Conway-Research/automaton.git /root/automaton && cd /root/automaton && npm install && npm run build",
+      180_000,
+    );
+    await childConway.exec("mkdir -p /root/.automaton", 10_000);
 
     const genesisJson = JSON.stringify(
       {
@@ -322,15 +394,15 @@ async function spawnChildLegacy(
       null,
       2,
     );
-    await conway.writeFile("/root/.automaton/genesis.json", genesisJson);
+    await childConway.writeFile("/root/.automaton/genesis.json", genesisJson);
 
     try {
-      await propagateConstitution(conway, sandbox.id, db.raw);
+      await propagateConstitution(childConway, sandbox.id, db.raw);
     } catch {
       // Constitution file not found
     }
 
-    const initResult = await conway.exec("automaton --init 2>&1", 60_000);
+    const initResult = await childConway.exec("node /root/automaton/dist/index.js --init 2>&1", 60_000);
     const walletMatch = (initResult.stdout || "").match(/0x[a-fA-F0-9]{40}/);
     const childWallet = walletMatch ? walletMatch[0] : "";
 
@@ -362,9 +434,37 @@ async function spawnChildLegacy(
 
     return child;
   } catch (error) {
-    if (sandboxId) {
-      await conway.deleteSandbox(sandboxId).catch(() => {});
-    }
+    // Sandbox deletion disabled — failed sandboxes left for potential reuse.
     throw error;
   }
+}
+
+/**
+ * Find a reusable sandbox: one that is marked 'failed' in the local DB
+ * but is still running remotely. Returns the first match or null.
+ */
+async function findReusableSandbox(
+  conway: ConwayClient,
+  db: AutomatonDatabase,
+): Promise<{ id: string } | null> {
+  try {
+    const failedChildren = db.getChildren().filter((c) => c.status === "failed" && c.sandboxId);
+    if (failedChildren.length === 0) return null;
+
+    const remoteSandboxes = await conway.listSandboxes();
+    const runningIds = new Set(
+      remoteSandboxes
+        .filter((s) => s.status === "running")
+        .map((s) => s.id),
+    );
+
+    for (const child of failedChildren) {
+      if (runningIds.has(child.sandboxId)) {
+        return { id: child.sandboxId };
+      }
+    }
+  } catch {
+    // If listing fails, just create a new sandbox
+  }
+  return null;
 }

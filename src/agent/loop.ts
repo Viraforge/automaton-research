@@ -301,7 +301,7 @@ export async function runAgentLoop(
                 name: child.name,
                 sandboxId: child.sandboxId,
               };
-            } catch (sandboxError) {
+            } catch (sandboxError: any) {
               // Conway sandbox unavailable — fall back to local worker
               logger.info("Conway sandbox unavailable, spawning local worker", {
                 taskId: task.id,
@@ -345,6 +345,7 @@ export async function runAgentLoop(
   let lastToolPatterns: string[] = [];
   let loopWarningPattern: string | null = null;
   let idleToolTurns = 0;
+  // blockedGoalTurns removed — replaced by immediate sleep + exponential backoff
 
   // Drain any stale wake events from before this loop started,
   // so they don't re-wake the agent after its first sleep.

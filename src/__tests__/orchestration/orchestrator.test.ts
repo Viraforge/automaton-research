@@ -295,7 +295,7 @@ describe("orchestration/Orchestrator", () => {
       expect(result.phase).toBe("idle");
     });
 
-    it("failed phase logs and stays failed", async () => {
+    it("failed phase resets to idle after logging", async () => {
       const goalId = insertGoal(db, { status: "active" });
       setOrchestratorState(db, {
         phase: "failed",
@@ -306,6 +306,8 @@ describe("orchestration/Orchestrator", () => {
       });
       const orc = makeOrchestrator(db);
       const result = await orc.tick();
+      // handleFailedPhase marks the goal as failed and resets to idle
+      // so the orchestrator can pick up other active goals.
       expect(result.phase).toBe("idle");
     });
   });
@@ -403,7 +405,7 @@ describe("orchestration/Orchestrator", () => {
       expect(result.spawned).toBe(false);
     });
 
-    it("self-assigns when no agent is available", async () => {
+    it("self-assigns to parent when no child agent is available", async () => {
       const goalId = insertGoal(db);
       const agentTracker = makeAgentTracker({
         getIdle: vi.fn().mockReturnValue([]),
@@ -413,7 +415,11 @@ describe("orchestration/Orchestrator", () => {
         agentTracker,
         config: { disableSpawn: true },
       });
+      // When no child agents are available, matchTaskToAgent falls back to
+      // self-assigning the task to the parent identity.
       const result = await orc.matchTaskToAgent(makeTask(goalId));
+      expect(result.agentAddress).toBe(IDENTITY.address);
+      expect(result.agentName).toBe(IDENTITY.name);
       expect(result.spawned).toBe(false);
     });
   });

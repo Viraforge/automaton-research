@@ -126,6 +126,10 @@ export class LocalWorkerPool {
     return this.activeWorkers.size;
   }
 
+  /**
+   * Check if a worker is currently active in this pool.
+   * Accepts either a full address ("local://worker-id") or raw worker ID.
+   */
   hasWorker(addressOrId: string): boolean {
     const id = addressOrId.replace("local://", "");
     return this.activeWorkers.has(id);
