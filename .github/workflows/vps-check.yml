@@ -1,0 +1,27 @@
+name: VPS Health Check
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    name: Check Connie VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check VPS status
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "=== Service Status ==="
+            systemctl status local-connie --no-pager -l 2>&1 | head -30
+            echo ""
+            echo "=== Git Status ==="
+            cd /root/.openclaw/workspace/artifacts/automaton-research
+            git log --oneline -3
+            echo ""
+            echo "=== Discord Heartbeat Log (last 10 entries) ==="
+            tail -10 /root/.automaton/discord-heartbeat.log 2>/dev/null || echo "No log file yet"
+            echo ""
+            echo "=== Recent Automaton Logs ==="
+            journalctl -u local-connie --no-pager -n 30 2>/dev/null || echo "No journalctl logs"
