@@ -66,6 +66,16 @@ export interface AutomatonConfig {
   // Phase 2 config additions
   soulConfig?: SoulConfig;
   modelStrategy?: ModelStrategyConfig;
+  // Sovereign provider keys
+  vultrApiKey?: string;
+  cloudflareApiToken?: string;
+  cloudflareZoneId?: string;
+  porkbunApiKey?: string;
+  porkbunSecretKey?: string;
+  /** When true, sovereign providers replace Conway API calls */
+  useSovereignProviders?: boolean;
+  /** Protocol version for social relay signing: "conway" (backward compat) or "automaton" (new) */
+  socialProtocolVersion?: "conway" | "automaton";
 }
 
 export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {
