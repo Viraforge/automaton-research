@@ -9,7 +9,7 @@
 
 import { execSync } from "child_process";
 import type { ExecResult } from "../types.js";
-import { ResilientHttpClient } from "../conway/http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 import type {
   ComputeProvider,
   CreateInstanceOptions,

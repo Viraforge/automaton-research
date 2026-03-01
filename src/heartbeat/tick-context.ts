@@ -15,8 +15,8 @@ import type {
   HeartbeatConfig,
   TickContext,
 } from "../types.js";
-import { getSurvivalTier, getSurvivalTierFromUsdc } from "../conway/credits.js";
-import { getUsdcBalance } from "../conway/x402.js";
+import { getSurvivalTier, getSurvivalTierFromUsdc } from "../financial/survival.js";
+import { getUsdcBalance } from "../wallet/x402.js";
 import { createLogger } from "../observability/logger.js";
 
 type DatabaseType = BetterSqlite3.Database;

@@ -10,7 +10,7 @@
 
 import type { PrivateKeyAccount } from "viem";
 import type { SocialClientInterface, InboxMessage } from "../types.js";
-import { ResilientHttpClient } from "../conway/http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 import { signSendPayload, signPollPayload, MESSAGE_LIMITS, type SigningPrefix } from "./signing.js";
 import { validateRelayUrl, validateMessage } from "./validation.js";
 import { createLogger } from "../observability/logger.js";

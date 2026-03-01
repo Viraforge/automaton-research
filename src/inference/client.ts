@@ -14,7 +14,7 @@ import type {
   TokenUsage,
   InferenceToolDefinition,
 } from "../types.js";
-import { ResilientHttpClient } from "./http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 
 const INFERENCE_TIMEOUT_MS = 60_000;
 

@@ -222,9 +222,9 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       riskLevel: "safe",
       parameters: { type: "object", properties: {} },
       execute: async (_args, ctx) => {
-        const { getUsdcBalance } = await import("../conway/x402.js");
+        const { getUsdcBalance } = await import("../wallet/x402.js");
         const balance = await getUsdcBalance(ctx.identity.address);
-        const { getSurvivalTierFromUsdc } = await import("../conway/credits.js");
+        const { getSurvivalTierFromUsdc } = await import("../financial/survival.js");
         const tier = getSurvivalTierFromUsdc(balance);
         return `USDC balance: $${balance.toFixed(6)} on Base (survival tier: ${tier})`;
       },
@@ -245,7 +245,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       },
       execute: async (args, ctx) => {
         const { transferUsdc } = await import("../wallet/transfer.js");
-        const { getUsdcBalance } = await import("../conway/x402.js");
+        const { getUsdcBalance } = await import("../wallet/x402.js");
         const amountStr = String(args.amount_usd);
         const amount = parseFloat(amountStr);
 
@@ -288,7 +288,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         const { createLogger } = await import("../observability/logger.js");
         const logger = createLogger("tools.deprecation");
         logger.warn("check_credits called — use check_balance instead");
-        const { getUsdcBalance } = await import("../conway/x402.js");
+        const { getUsdcBalance } = await import("../wallet/x402.js");
         const balance = await getUsdcBalance(ctx.identity.address);
         // Return in legacy format for compatibility
         const cents = Math.round(balance * 100);
@@ -306,7 +306,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         const { createLogger } = await import("../observability/logger.js");
         const logger = createLogger("tools.deprecation");
         logger.warn("check_usdc_balance called — use check_balance instead");
-        const { getUsdcBalance } = await import("../conway/x402.js");
+        const { getUsdcBalance } = await import("../wallet/x402.js");
         const balance = await getUsdcBalance(ctx.identity.address);
         return `USDC balance: ${balance.toFixed(6)} USDC on Base`;
       },
@@ -324,24 +324,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         },
         required: ["amount_usd"],
       },
-      execute: async (args, ctx) => {
-        if (ctx.config.useSovereignProviders) {
-          return "topup_credits is not available in sovereign mode. USDC is used directly for all operations.";
-        }
-        // Legacy path
-        const { topupCredits, TOPUP_TIERS } = await import("../conway/topup.js");
-        const amountUsd = args.amount_usd as number;
-        if (!TOPUP_TIERS.includes(amountUsd)) {
-          return `Invalid tier. Valid amounts (USD): ${TOPUP_TIERS.join(", ")}`;
-        }
-        const { getUsdcBalance } = await import("../conway/x402.js");
-        const usdcBalance = await getUsdcBalance(ctx.identity.address);
-        if (usdcBalance < amountUsd) {
-          return `Insufficient USDC. Balance: $${usdcBalance.toFixed(2)}, requested: $${amountUsd}.`;
-        }
-        const result = await topupCredits(ctx.config.conwayApiUrl, ctx.identity.account, amountUsd);
-        if (!result.success) return `Credit topup failed: ${result.error}`;
-        return `Credit topup successful: +$${amountUsd} credits purchased.`;
+      execute: async () => {
+        return "topup_credits is deprecated. USDC is used directly for all operations — no credit topup needed.";
       },
     },
     {
@@ -1045,7 +1029,7 @@ Model: ${ctx.inference.getDefaultModel()}
         // In sovereign mode, delegate to USDC transfer
         if (ctx.config.useSovereignProviders) {
           const { transferUsdc } = await import("../wallet/transfer.js");
-          const { getUsdcBalance } = await import("../conway/x402.js");
+          const { getUsdcBalance } = await import("../wallet/x402.js");
           const usdcAmount = amount / 100; // cents to USD
 
           const balance = await getUsdcBalance(ctx.identity.address);
@@ -1615,7 +1599,7 @@ Model: ${ctx.inference.getDefaultModel()}
             return `Blocked: amount must be positive, got ${amountUsd}.`;
           }
 
-          const { getUsdcBalance } = await import("../conway/x402.js");
+          const { getUsdcBalance } = await import("../wallet/x402.js");
           const balance = await getUsdcBalance(ctx.identity.address);
           if (amountNum > balance / 2) {
             return `Blocked: Cannot transfer more than half your USDC balance ($${balance.toFixed(2)}). Self-preservation.`;
@@ -2701,7 +2685,7 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["url"],
       },
       execute: async (args, ctx) => {
-        const { x402Fetch } = await import("../conway/x402.js");
+        const { x402Fetch } = await import("../wallet/x402.js");
         const { DEFAULT_TREASURY_POLICY } = await import("../types.js");
         const url = args.url as string;
         const method = (args.method as string) || "GET";

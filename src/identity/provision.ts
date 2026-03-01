@@ -11,11 +11,11 @@ import path from "path";
 import { SiweMessage } from "siwe";
 import { getWallet, getAutomatonDir } from "./wallet.js";
 import type { ProvisionResult } from "../types.js";
-import { ResilientHttpClient } from "../conway/http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 
 const httpClient = new ResilientHttpClient();
 
-const DEFAULT_API_URL = "https://api.conway.tech";
+const DEFAULT_API_URL = "";
 
 /**
  * Load API key from ~/.automaton/config.json if it exists.

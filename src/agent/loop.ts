@@ -35,8 +35,8 @@ import {
   executeTool,
 } from "./tools.js";
 import { sanitizeInput } from "./injection-defense.js";
-import { getSurvivalTier, getSurvivalTierFromUsdc, getFinancialStateFromUsdc } from "../conway/credits.js";
-import { getUsdcBalance } from "../conway/x402.js";
+import { getSurvivalTier, getSurvivalTierFromUsdc, getFinancialStateFromUsdc } from "../financial/survival.js";
+import { getUsdcBalance } from "../wallet/x402.js";
 import {
   claimInboxMessages,
   markInboxProcessed,
@@ -441,35 +441,7 @@ export async function runAgentLoop(
           ? getSurvivalTierFromUsdc(financial.usdcBalance)
           : getSurvivalTier(financial.creditsCents);
 
-        // Inline auto-topup: buy Conway credits from USDC when critically low.
-        // Skipped in sovereign mode — no Conway credit system.
-        if (!config.useSovereignProviders &&
-            (tier === "critical" || tier === "low_compute") && financial.usdcBalance >= 5) {
-          const INLINE_TOPUP_COOLDOWN_MS = 60_000;
-          const lastInlineTopup = db.getKV("last_inline_topup_attempt");
-          const cooldownExpired = !lastInlineTopup ||
-            Date.now() - new Date(lastInlineTopup).getTime() >= INLINE_TOPUP_COOLDOWN_MS;
-
-          if (cooldownExpired) {
-            db.setKV("last_inline_topup_attempt", new Date().toISOString());
-            try {
-              const { bootstrapTopup } = await import("../conway/topup.js");
-              const topupResult = await bootstrapTopup({
-                apiUrl: config.conwayApiUrl,
-                account: identity.account,
-                creditsCents: financial.creditsCents,
-              });
-              if (topupResult?.success) {
-                log(config, `[AUTO-TOPUP] Bought $${topupResult.amountUsd} credits from USDC mid-loop`);
-                financial = await getFinancialState(conway, identity.address, db, config.useSovereignProviders);
-              }
-            } catch (err: any) {
-              logger.warn(`Inline auto-topup failed: ${err.message}`);
-            }
-          }
-        }
-
-        // Re-evaluate tier after potential topup
+        // Re-evaluate tier
         const effectiveTier = config.useSovereignProviders
           ? getSurvivalTierFromUsdc(financial.usdcBalance)
           : getSurvivalTier(financial.creditsCents);

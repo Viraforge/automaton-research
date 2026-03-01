@@ -4,7 +4,7 @@ import {
   getModelForTier,
   applyTierRestrictions,
 } from "../survival/low-compute.js";
-import { createInferenceClient } from "../conway/inference.js";
+import { createInferenceClient } from "../inference/client.js";
 import type { SurvivalTier } from "../types.js";
 
 describe("canRunInference", () => {

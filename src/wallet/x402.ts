@@ -13,7 +13,7 @@ import {
   type PrivateKeyAccount,
 } from "viem";
 import { base, baseSepolia } from "viem/chains";
-import { ResilientHttpClient } from "./http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 
 const x402HttpClient = new ResilientHttpClient();
 

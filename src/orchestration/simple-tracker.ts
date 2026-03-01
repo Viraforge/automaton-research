@@ -178,7 +178,7 @@ export class SimpleFundingProtocol implements FundingProtocol {
     if (this.useSovereignProviders) {
       // In sovereign mode, try to check on-chain USDC balance directly
       try {
-        const { getUsdcBalance } = await import("../conway/x402.js");
+        const { getUsdcBalance } = await import("../wallet/x402.js");
         const usdcBalance = await getUsdcBalance(childAddress as Address);
         return Math.round(usdcBalance * 100);
       } catch {

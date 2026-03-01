@@ -8,7 +8,7 @@
  */
 
 import type { DomainSearchResult, DomainRegistration } from "../types.js";
-import { ResilientHttpClient } from "../conway/http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 import type { DomainProvider } from "./types.js";
 
 const PORKBUN_API_BASE = "https://api.porkbun.com/api/json/v3";

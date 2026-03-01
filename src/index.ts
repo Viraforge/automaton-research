@@ -11,8 +11,8 @@ import { getWallet, getAutomatonDir } from "./identity/wallet.js";
 import { provision, loadApiKeyFromConfig } from "./identity/provision.js";
 import { loadConfig, resolvePath } from "./config.js";
 import { createDatabase } from "./state/database.js";
-import { createConwayClient } from "./conway/client.js";
-import { createInferenceClient } from "./conway/inference.js";
+import { createConwayClient } from "./runtime/client.js";
+import { createInferenceClient } from "./inference/client.js";
 import { createHeartbeatDaemon } from "./heartbeat/daemon.js";
 import {
   loadHeartbeatConfig,
@@ -30,7 +30,6 @@ import { createDefaultRules } from "./agent/policy-rules/index.js";
 import type { AutomatonIdentity, AgentState, Skill, SocialClientInterface } from "./types.js";
 import { DEFAULT_TREASURY_POLICY } from "./types.js";
 import { createLogger, setGlobalLogLevel } from "./observability/logger.js";
-import { bootstrapTopup } from "./conway/topup.js";
 import { randomUUID } from "crypto";
 import { keccak256, toHex } from "viem";
 
@@ -371,39 +370,6 @@ async function run(): Promise<void> {
     logger.info(`[${new Date().toISOString()}] State repo initialized.`);
   } catch (err: any) {
     logger.warn(`[${new Date().toISOString()}] State repo init failed: ${err.message}`);
-  }
-
-  // Bootstrap topup: buy minimum credits ($5) from USDC so the agent can start.
-  // Skipped in BYOK mode or sovereign mode — no Conway credit system.
-  if (!platformDisabled && !config.useSovereignProviders) {
-    try {
-      let bootstrapTimer: ReturnType<typeof setTimeout>;
-      const bootstrapTimeout = new Promise<null>((_, reject) => {
-        bootstrapTimer = setTimeout(() => reject(new Error("bootstrap topup timed out")), 15_000);
-      });
-      try {
-        await Promise.race([
-          (async () => {
-            const creditsCents = await conway.getCreditsBalance().catch(() => 0);
-            const topupResult = await bootstrapTopup({
-              apiUrl: config.conwayApiUrl,
-              account,
-              creditsCents,
-            });
-            if (topupResult?.success) {
-              logger.info(
-                `[${new Date().toISOString()}] Bootstrap topup: +$${topupResult.amountUsd} credits from USDC`,
-              );
-            }
-          })(),
-          bootstrapTimeout,
-        ]);
-      } finally {
-        clearTimeout(bootstrapTimer!);
-      }
-    } catch (err: any) {
-      logger.warn(`[${new Date().toISOString()}] Bootstrap topup skipped: ${err.message}`);
-    }
   }
 
   // Start heartbeat daemon (Phase 1.1: DurableScheduler)

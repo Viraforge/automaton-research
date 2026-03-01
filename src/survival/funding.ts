@@ -12,8 +12,8 @@ import type {
   ConwayClient,
   SurvivalTier,
 } from "../types.js";
-import { formatCredits, formatBalance } from "../conway/credits.js";
-import { getUsdcBalance } from "../conway/x402.js";
+import { formatCredits, formatBalance } from "../financial/survival.js";
+import { getUsdcBalance } from "../wallet/x402.js";
 
 export interface FundingAttempt {
   strategy: string;

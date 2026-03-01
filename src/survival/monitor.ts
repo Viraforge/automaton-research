@@ -13,8 +13,8 @@ import type {
   FinancialState,
   SurvivalTier,
 } from "../types.js";
-import { getSurvivalTier, getSurvivalTierFromUsdc, formatCredits, formatBalance } from "../conway/credits.js";
-import { getUsdcBalance } from "../conway/x402.js";
+import { getSurvivalTier, getSurvivalTierFromUsdc, formatCredits, formatBalance } from "../financial/survival.js";
+import { getUsdcBalance } from "../wallet/x402.js";
 
 export interface ResourceStatus {
   financial: FinancialState;

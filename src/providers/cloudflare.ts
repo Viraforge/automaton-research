@@ -8,7 +8,7 @@
  */
 
 import type { DnsRecord } from "../types.js";
-import { ResilientHttpClient } from "../conway/http-client.js";
+import { ResilientHttpClient } from "../http/client.js";
 import type { DnsProvider, DnsZone } from "./types.js";
 
 const CF_API_BASE = "https://api.cloudflare.com/client/v4";

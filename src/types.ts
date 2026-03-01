@@ -79,7 +79,7 @@ export interface AutomatonConfig {
 }
 
 export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {
-  conwayApiUrl: "https://api.conway.tech",
+  conwayApiUrl: "",
   inferenceModel: "gpt-5.2",
   maxTokensPerTurn: 4096,
   heartbeatConfigPath: "~/.automaton/heartbeat.yml",
@@ -367,9 +367,12 @@ export interface InferenceToolDefinition {
   };
 }
 
-// ─── Conway Client ───────────────────────────────────────────────
+// ─── Runtime Client ─────────────────────────────────────────────
 
-export interface ConwayClient {
+/** @deprecated Use RuntimeClient instead */
+export type ConwayClient = RuntimeClient;
+
+export interface RuntimeClient {
   exec(command: string, timeout?: number): Promise<ExecResult>;
   writeFile(path: string, content: string): Promise<void>;
   readFile(path: string): Promise<string>;
@@ -410,7 +413,7 @@ export interface ConwayClient {
   // Model discovery
   listModels(): Promise<ModelInfo[]>;
   /** Create a new client scoped to a specific sandbox ID. */
-  createScopedClient(targetSandboxId: string): ConwayClient;
+  createScopedClient(targetSandboxId: string): RuntimeClient;
 }
 
 export interface ExecResult {
@@ -599,7 +602,7 @@ export const DEFAULT_TREASURY_POLICY: TreasuryPolicy = {
   maxDailyTransferCents: 25000,
   minimumReserveCents: 1000,
   maxX402PaymentCents: 100,
-  x402AllowedDomains: ['conway.tech'],
+  x402AllowedDomains: [] as string[],
   transferCooldownMs: 0,
   maxTransfersPerTurn: 2,
   maxInferenceDailyCents: 50000,
