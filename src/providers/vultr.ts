@@ -7,7 +7,7 @@
  * API Reference: https://www.vultr.com/api/
  */
 
-import { execSync, spawnSync } from "child_process";
+import { spawnSync } from "child_process";
 import type { ExecResult } from "../types.js";
 import { ResilientHttpClient } from "../http/client.js";
 import type {
@@ -28,7 +28,7 @@ function validateIp(ip: string): void {
 
 /** Validate remote path to prevent shell injection. */
 function validateRemotePath(remotePath: string): void {
-  if (/[`$;|&<>(){}!\n\r]/.test(remotePath)) {
+  if (/[`$;|&<>(){}!"\n\r]/.test(remotePath)) {
     throw new Error(`Unsafe characters in remote path: ${remotePath}`);
   }
 }

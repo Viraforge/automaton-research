@@ -471,7 +471,7 @@ export async function runAgentLoop(
         "list_children", "check_child_status", "list_sandboxes", "list_models",
         "list_skills", "git_status", "git_log", "check_reputation",
         "recall_facts", "recall_procedure", "heartbeat_ping",
-        "check_inference_spending",
+        "check_inference_spending", "discover_agents",
         "orchestrator_status", "list_goals", "get_plan",
       ]);
       const allTurns = db.getRecentTurns(20);

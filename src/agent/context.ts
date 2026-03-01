@@ -36,6 +36,9 @@ export { DEFAULT_TOKEN_BUDGET };
 export function estimateTokens(text: string): number {
   const content = text ?? "";
   const legacyEstimate = Math.ceil(content.length / 4);
+  // Skip tiktoken for very large strings — BPE tokenizers can hang on
+  // highly repetitive inputs due to exponential merge-pair expansion.
+  if (content.length > 20_000) return legacyEstimate;
   try {
     if (!tokenCounter) {
       tokenCounter = createTokenCounter();

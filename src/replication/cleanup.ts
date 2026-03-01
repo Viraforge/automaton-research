@@ -98,13 +98,18 @@ export class SandboxCleanup {
   async cleanupStale(maxAgeHours: number): Promise<number> {
     const cutoff = new Date(Date.now() - maxAgeHours * 3600_000).toISOString();
     const stale = this.db.prepare(
-      "SELECT id FROM children WHERE status IN ('failed', 'stopped', 'dead') AND (last_checked IS NULL OR last_checked < ?)",
-    ).all(cutoff) as Array<{ id: string }>;
+      "SELECT id, status FROM children WHERE status IN ('failed', 'stopped', 'dead') AND (last_checked IS NULL OR last_checked < ?)",
+    ).all(cutoff) as Array<{ id: string; status: string }>;
 
     let cleaned = 0;
     for (const child of stale) {
       try {
-        await this.cleanup(child.id);
+        if (child.status === "dead") {
+          // Dead children can't go through lifecycle transitions — destroy compute directly
+          await this.destroyCompute(child.id);
+        } else {
+          await this.cleanup(child.id);
+        }
         cleaned++;
       } catch (error) {
         logger.error(`Failed to clean up stale child ${child.id}`, error instanceof Error ? error : undefined);
