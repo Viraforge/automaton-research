@@ -102,14 +102,37 @@ jobs:
 
             echo ""
             echo "=== DELETING ALL DISCORD-POSTING SCRIPTS ==="
-            grep -rl "discord.com/api/webhooks\|discordapp.com/api/webhooks" "$CONNIE_HOME" --include="*.sh" --include="*.js" --include="*.py" 2>/dev/null | while read f; do
-              echo "DELETING: $f"
+            # Search EVERYWHERE for scripts with webhook URLs
+            for SEARCH_DIR in "$CONNIE_HOME" /root; do
+              grep -rl "discord.com/api/webhooks\|discordapp.com/api/webhooks" "$SEARCH_DIR" --include="*.sh" --include="*.js" --include="*.py" 2>/dev/null | while read f; do
+                echo "DELETING: $f"
+                rm -f "$f"
+              done
+            done
+            # Nuke ALL crash notify scripts wherever they live
+            find / -maxdepth 4 -name "connie-crash-notify*" -type f 2>/dev/null | while read f; do
+              echo "DELETING crash-notify: $f"
               rm -f "$f"
             done
-            # Also check common locations
-            rm -f "$CONNIE_HOME/connie-crash-notify.sh" 2>/dev/null && echo "Deleted connie-crash-notify.sh" || true
-            rm -f /root/connie-crash-notify.sh 2>/dev/null && echo "Deleted /root/connie-crash-notify.sh" || true
-            find "$CONNIE_HOME" -maxdepth 2 \( -name "*crash*notify*" -o -name "*health*monitor*" -o -name "*discord*monitor*" \) -type f -delete -print 2>/dev/null
+
+            echo ""
+            echo "=== REMOVING ExecStopPost FROM SYSTEMD SERVICE ==="
+            # This is THE source of "connie-watchdog" crash notifications
+            if grep -q "ExecStopPost" /etc/systemd/system/local-connie.service 2>/dev/null; then
+              sed -i '/ExecStopPost/d' /etc/systemd/system/local-connie.service
+              echo "Removed ExecStopPost from local-connie.service"
+              systemctl daemon-reload
+            else
+              echo "No ExecStopPost found (already clean)"
+            fi
+
+            echo ""
+            echo "=== NEUTRALIZING spawn-agent.sh WEBHOOK POSTING ==="
+            # spawn-agent.sh posts as "${NAME}-watchdog" on crash
+            if [ -f "$CONNIE_HOME/spawn-agent.sh" ]; then
+              sed -i 's|curl.*discord.com/api/webhooks[^"]*|echo "webhook-disabled"|g' "$CONNIE_HOME/spawn-agent.sh"
+              echo "Neutralized Discord posts in spawn-agent.sh"
+            fi
 
             echo ""
             echo "=== Actual FATAL/ERROR details ==="
@@ -117,6 +140,7 @@ jobs:
 
             echo ""
             echo "=== Restarting main service ==="
+            systemctl daemon-reload
             systemctl restart local-connie
             sleep 3
             systemctl status local-connie --no-pager -l 2>&1 | head -10
