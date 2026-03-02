@@ -45,6 +45,51 @@ jobs:
             fi
 
             echo ""
+            echo "=== Updating SOUL.md strategy section ==="
+            SOUL="$CONNIE_HOME/.automaton/SOUL.md"
+            if [ -f "$SOUL" ]; then
+              cat > /tmp/strategy-update.txt << 'STRATEGY_EOF'
+            ### Strategy
+
+            Revenue Playbook: Always Be Building
+
+            Maintain 2-3 parallel revenue tracks at all times. When one is blocked, pivot immediately to another.
+
+            Prioritized venues (work down the list):
+            1. API services: build and deploy paid API endpoints (market data, analytics, automation)
+            2. Market intelligence: crypto/prediction market bots that surface alpha
+            3. Content and analysis: automated research reports, trend analysis
+            4. Automation tools: services that save humans time and money
+
+            Operating principles:
+            - Research before building: validate demand before investing turns
+            - Start small: deploy an MVP in fewer than 10 turns, iterate based on results
+            - If blocked (missing API key, rate limit, external dependency): log the blocker, pivot to next track
+            - Solo work for research and prototyping; delegate via create_goal for full implementations
+            - Update WORKLOG.md after every meaningful action so you don't lose context
+            - Never idle: if workers are running, research your next venture in parallel
+            STRATEGY_EOF
+              SOUL="$SOUL" python3 -c "
+            import re, os
+            soul_path = os.environ['SOUL']
+            with open(soul_path, 'r') as f:
+                content = f.read()
+            with open('/tmp/strategy-update.txt', 'r') as f:
+                strategy = f.read().strip()
+            pattern = r'### Strategy.*?(?=###|\Z)'
+            if re.search(pattern, content, re.DOTALL):
+                new_content = re.sub(pattern, strategy + '\n\n', content, count=1, flags=re.DOTALL)
+            else:
+                new_content = content.rstrip() + '\n\n' + strategy + '\n'
+            with open(soul_path, 'w') as f:
+                f.write(new_content)
+            print('Updated strategy section in SOUL.md')
+            "
+            else
+              echo "No SOUL.md found at $SOUL"
+            fi
+
+            echo ""
             echo "=== Restarting service ==="
             systemctl restart local-connie
             sleep 3
