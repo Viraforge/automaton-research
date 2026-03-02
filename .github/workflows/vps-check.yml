@@ -34,9 +34,13 @@ jobs:
             fi
 
             echo ""
-            echo "=== 3. Agent State ==="
+            echo "=== 3. DB Schema ==="
             if [ -n "$DB" ] && [ -f "$DB" ]; then
-              sqlite3 "$DB" "SELECT key, value FROM kv WHERE key IN ('agent_state', 'sleep_until', 'orchestrator.state', 'current_tier', 'forcedSleep') ORDER BY key;" 2>/dev/null || echo "Query failed"
+              echo "Tables:"
+              sqlite3 "$DB" ".tables" 2>/dev/null || echo "Cannot read DB (locked?)"
+              echo ""
+              echo "Agent state KV:"
+              sqlite3 "$DB" "SELECT key, substr(value,1,120) FROM kv WHERE key IN ('agent_state', 'sleep_until', 'orchestrator.state', 'current_tier', 'forcedSleep', 'loop_detection_state') ORDER BY key;" 2>/dev/null || echo "No kv table"
             else
               echo "No DB available"
             fi
