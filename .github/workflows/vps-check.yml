@@ -57,11 +57,22 @@ jobs:
             echo "=== Crash Notify Script (webhook source) ==="
             cat "$CONNIE_HOME/connie-crash-notify.sh" 2>/dev/null | grep -i "webhook\|discord\|curl" | sed 's|discord.com/api/webhooks/[^ "]*|discord.com/api/webhooks/REDACTED|gi' || echo "No crash notify script"
             echo ""
-            echo "=== Other monitoring services ==="
-            systemctl list-units --type=service --state=running 2>/dev/null | grep -i "connie\|monitor\|watchdog" || echo "No other monitoring services"
+            echo "=== Watchdog Service ==="
+            systemctl status watchdog --no-pager -l 2>&1 | head -10 || echo "No watchdog service"
             echo ""
-            echo "=== Discord webhook in any config/script ==="
-            grep -r "discord.com/api/webhooks" "$CONNIE_HOME/" /root/ 2>/dev/null | sed 's|discord.com/api/webhooks/[^ "]*|discord.com/api/webhooks/FOUND|gi' | head -10 || echo "No webhook URLs found"
+            echo "=== Watchdog Unit File ==="
+            systemctl cat watchdog 2>/dev/null | head -30 || echo "No watchdog unit"
             echo ""
-            echo "=== Application Log (last 30 lines) ==="
-            tail -30 /tmp/connie-research.log 2>/dev/null || echo "No app log"
+            echo "=== Watchdog Script (first 50 lines) ==="
+            WATCHDOG_EXEC=$(systemctl cat watchdog 2>/dev/null | grep ExecStart | head -1 | sed 's/ExecStart=//')
+            if [ -n "$WATCHDOG_EXEC" ]; then
+              head -50 "$WATCHDOG_EXEC" 2>/dev/null || echo "Can't read: $WATCHDOG_EXEC"
+            else
+              echo "No ExecStart found"
+            fi
+            echo ""
+            echo "=== connie-monitor process ==="
+            ps aux | grep -i "monitor\|watchdog" | grep -v grep | head -10
+            echo ""
+            echo "=== Application Log (last 50 lines) ==="
+            tail -50 /tmp/connie-research.log 2>/dev/null || echo "No app log"
