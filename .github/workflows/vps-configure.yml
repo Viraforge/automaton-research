@@ -160,7 +160,7 @@ jobs:
             echo ""
             echo "=== Deploying latest code ==="
             # Find the source repo and pull + rebuild
-            REPO=$(dirname $(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||'))
+            REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
             if [ -d "$REPO/.git" ]; then
               cd "$REPO"
               echo "Repo: $REPO"
