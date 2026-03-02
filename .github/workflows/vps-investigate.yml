@@ -1,0 +1,111 @@
+name: VPS Deep Investigation
+on:
+  workflow_dispatch:
+jobs:
+  investigate:
+    name: Find Discord Posting Sources
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deep investigation via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            echo "CONNIE_HOME=$CONNIE_HOME"
+
+            echo ""
+            echo "=== 1. ALL running processes (full command) ==="
+            ps aux --sort=-rss | head -30
+
+            echo ""
+            echo "=== 2. ALL node processes with full args ==="
+            pgrep -a node 2>/dev/null || echo "No node processes"
+
+            echo ""
+            echo "=== 3. ALL python processes with full args ==="
+            pgrep -a python 2>/dev/null || echo "No python processes"
+
+            echo ""
+            echo "=== 4. Find spawn-agent.sh EVERYWHERE ==="
+            find / -name "spawn-agent*" -type f 2>/dev/null | while read f; do
+              echo "--- FOUND: $f ---"
+              cat "$f"
+              echo "--- END: $f ---"
+              echo ""
+            done
+
+            echo ""
+            echo "=== 5. Find ANY file with 'watchdog' in name or content ==="
+            # By name
+            find / -maxdepth 5 \( -name "*watchdog*" -o -name "*connie-monitor*" \) -type f 2>/dev/null | head -20
+            # By content (scripts only)
+            grep -rl "watchdog\|connie-monitor" /home /root /tmp /var /etc /opt "$CONNIE_HOME" --include="*.sh" --include="*.js" --include="*.py" --include="*.json" --include="*.service" 2>/dev/null | head -20
+
+            echo ""
+            echo "=== 6. Find ANY file with discord webhook URLs ==="
+            grep -rl "discord.com/api/webhooks\|discordapp.com/api/webhooks" / --include="*.sh" --include="*.js" --include="*.py" --include="*.json" --include="*.ts" --include="*.env" 2>/dev/null | head -30
+
+            echo ""
+            echo "=== 7. Find scripts that read the log file ==="
+            grep -rl "connie-research.log\|FATAL.*Sleeping\|consecutive errors" / --include="*.sh" --include="*.js" --include="*.py" 2>/dev/null | head -20
+
+            echo ""
+            echo "=== 8. ALL crontabs (all users) ==="
+            for u in $(cut -d: -f1 /etc/passwd); do
+              CRON=$(crontab -l -u "$u" 2>/dev/null)
+              if [ -n "$CRON" ]; then
+                echo "--- User: $u ---"
+                echo "$CRON"
+              fi
+            done
+            echo "--- /etc/cron.d/ ---"
+            ls -la /etc/cron.d/ 2>/dev/null
+            echo "--- /etc/cron.daily/ ---"
+            ls -la /etc/cron.daily/ 2>/dev/null
+
+            echo ""
+            echo "=== 9. ALL systemd services and timers ==="
+            systemctl list-units --type=service --state=running --no-pager 2>/dev/null | grep -v "systemd\|ssh\|snap\|fwupd\|polkit\|dbus\|user@\|getty\|multipathd\|irq\|kernel\|rpcbind\|serial"
+            echo ""
+            systemctl list-timers --no-pager 2>/dev/null
+
+            echo ""
+            echo "=== 10. Contents of .openclaw directory (where spawn-agent.sh likely lives) ==="
+            OPENCLAW=$(find "$CONNIE_HOME" -name ".openclaw" -type d 2>/dev/null | head -1)
+            if [ -n "$OPENCLAW" ]; then
+              echo "OPENCLAW=$OPENCLAW"
+              ls -la "$OPENCLAW/" 2>/dev/null
+              echo ""
+              echo "--- spawn scripts ---"
+              find "$OPENCLAW" -name "spawn*" -o -name "boot*" -o -name "start*" -o -name "crash*" -o -name "notify*" 2>/dev/null | head -10
+            fi
+
+            echo ""
+            echo "=== 11. Check if connie-monitor is a PM2 process ==="
+            PM2_HOME="$CONNIE_HOME/.pm2" pm2 list 2>/dev/null || echo "PM2 not running"
+            echo ""
+            echo "PM2 dump:"
+            cat "$CONNIE_HOME/.pm2/dump.pm2" 2>/dev/null || echo "No PM2 dump"
+
+            echo ""
+            echo "=== 12. /tmp scripts ==="
+            find /tmp -name "*.sh" -o -name "*.js" -o -name "*.py" 2>/dev/null | while read f; do
+              echo "--- $f ---"
+              head -5 "$f" 2>/dev/null
+              if grep -q "discord\|webhook\|watchdog\|monitor" "$f" 2>/dev/null; then
+                echo "  ** MATCHES discord/webhook/watchdog/monitor **"
+                grep -n "discord\|webhook\|watchdog\|monitor" "$f" 2>/dev/null
+              fi
+            done
+
+            echo ""
+            echo "=== 13. Environment variables with webhook ==="
+            env 2>/dev/null | grep -i "discord\|webhook" || echo "None in current env"
+            echo "---"
+            cat /etc/systemd/system/local-connie.service 2>/dev/null
+            echo "---"
+            cat /etc/systemd/system/local-connie.service.d/env.conf 2>/dev/null || echo "No env.conf"
