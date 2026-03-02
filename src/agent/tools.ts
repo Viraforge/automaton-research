@@ -66,6 +66,15 @@ const FORBIDDEN_COMMAND_PATTERNS = [
   // Discord webhook abuse — only the built-in heartbeat should post to Discord
   /discord\.com\/api\/webhooks/i,
   /discordapp\.com\/api\/webhooks/i,
+  // Background process spawning — agent must not run persistent daemons.
+  // Use the heartbeat system for periodic tasks, not nohup/pm2/screen.
+  /\bnohup\b/i,
+  /\bpm2\s+(start|restart|resurrect)/i,
+  /\bscreen\s+-[dS]/,
+  /\btmux\b.*\b(new-session|new\b|-d)/,
+  /\bsetsid\b/,
+  /\bdisown\b/,
+  /\bforever\s+start/i,
 ];
 
 function isForbiddenCommand(command: string, sandboxId: string): string | null {
@@ -140,10 +149,16 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         if (isProtectedFile(filePath)) {
           return "Blocked: Cannot overwrite protected file. This is a hard-coded safety invariant.";
         }
-        // Block writing files that embed Discord webhook URLs
+        // Block writing files that post to Discord (literal URLs or via config/env)
         const content = args.content as string;
         if (/discord\.com\/api\/webhooks/i.test(content) || /discordapp\.com\/api\/webhooks/i.test(content)) {
           return "Blocked: Do not embed Discord webhook URLs in files. The built-in heartbeat handles Discord updates.";
+        }
+        if (/discordWebhookUrl/i.test(content) && /fetch|axios|request|curl|https?\.\w+/i.test(content)) {
+          return "Blocked: Do not create scripts that read the Discord webhook URL. The built-in heartbeat handles Discord updates.";
+        }
+        if (/DISCORD_WEBHOOK/i.test(content) && /fetch|post|request|curl/i.test(content)) {
+          return "Blocked: Do not create scripts that post to Discord. The built-in heartbeat handles Discord updates.";
         }
         await ctx.conway.writeFile(filePath, content);
         return `File written: ${filePath}`;
