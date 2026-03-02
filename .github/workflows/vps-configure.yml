@@ -170,12 +170,12 @@ jobs:
               echo "Behind origin/main: $BEHIND commits"
               if [ "$BEHIND" -gt 0 ]; then
                 git pull origin main --ff-only 2>&1 || echo "Pull failed (non-ff)"
-                npm install 2>&1 | tail -5
-                npm run build 2>&1 | tail -5
-                echo "Deployed: $(git log -1 --oneline)"
-              else
-                echo "Already up to date"
               fi
+              # Always rebuild to recover from broken native addons
+              npm rebuild better-sqlite3 2>&1 | tail -5
+              npm install 2>&1 | tail -5
+              npm run build 2>&1 | tail -5
+              echo "Deployed: $(git log -1 --oneline)"
               cd /
             else
               echo "Repo not found at $REPO"
