@@ -18,9 +18,9 @@ jobs:
             CONFIG="$CONNIE_HOME/.automaton/automaton.json"
 
             echo "=== Current config ==="
-            python3 -c "
-            import json
-            c = json.load(open('$CONFIG'))
+            CONFIG="$CONFIG" python3 -c "
+            import json, os
+            c = json.load(open(os.environ['CONFIG']))
             for k in ['discordWebhookUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
                 v = c.get(k)
                 if k in ['discordWebhookUrl', 'vultrApiKey']:
@@ -33,11 +33,11 @@ jobs:
             echo "=== Configuring Discord webhook ==="
             WEBHOOK=$(grep -o 'https://discord.com/api/webhooks/[^ "]*' "$CONNIE_HOME/.automaton/SOUL.md" 2>/dev/null | head -1)
             if [ -n "$WEBHOOK" ]; then
-              python3 -c "
-            import json
-            c = json.load(open('$CONFIG'))
-            c['discordWebhookUrl'] = '$WEBHOOK'
-            json.dump(c, open('$CONFIG', 'w'), indent=2)
+              WEBHOOK="$WEBHOOK" CONFIG="$CONFIG" python3 -c "
+            import json, os
+            c = json.load(open(os.environ['CONFIG']))
+            c['discordWebhookUrl'] = os.environ['WEBHOOK']
+            json.dump(c, open(os.environ['CONFIG'], 'w'), indent=2)
             print('Set discordWebhookUrl from SOUL.md')
             "
             else
@@ -52,9 +52,9 @@ jobs:
 
             echo ""
             echo "=== Updated config ==="
-            python3 -c "
-            import json
-            c = json.load(open('$CONFIG'))
+            CONFIG="$CONFIG" python3 -c "
+            import json, os
+            c = json.load(open(os.environ['CONFIG']))
             for k in ['discordWebhookUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
                 v = c.get(k)
                 if k in ['discordWebhookUrl', 'vultrApiKey']:
