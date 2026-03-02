@@ -59,6 +59,25 @@ const FORBIDDEN_COMMAND_PATTERNS = [
   /cat\s+.*\.gnupg/,
   /cat\s+.*\.env/,
   /cat\s+.*wallet\.json/,
+  // Discord webhook abuse — only the built-in heartbeat should post to Discord
+  /discord\.com\/api\/webhooks/i,
+  /discordapp\.com\/api\/webhooks/i,
+  // Config file reads — automaton.json contains webhook URL and secrets.
+  // The agent must not read its own config; the heartbeat system handles Discord internally.
+  /\bautomaton\.json\b/,
+  // Background process spawning — agent must not run persistent daemons.
+  // Use the heartbeat system for periodic tasks, not nohup/pm2/screen.
+  /\bnohup\b/i,
+  /\bpm2\s+(start|restart|resurrect)/i,
+  /\bscreen\s+-[dS]/,
+  /\btmux\b.*\b(new-session|new\b|-d)/,
+  /\bsetsid\b/,
+  /\bdisown\b/,
+  /\bforever\s+start/i,
+  // Background operator — blocks `cmd &` at end or `cmd & next` mid-command.
+  // A backgrounding & follows whitespace/start, not = (which indicates URL query params like ?a=1&b=2).
+  /(?<=\s)&\s*$/,
+  /(?<=\s)&\s+/,
 ];
 
 function isForbiddenCommand(command: string, sandboxId: string): string | null {

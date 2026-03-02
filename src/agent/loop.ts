@@ -907,6 +907,35 @@ export async function runAgentLoop(
           config,
           `[FATAL] ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Sleeping.`,
         );
+
+        // Truncate old turns to break error 1214 crash loop.
+        // Orphaned tool results from context compression cause MiniMax to
+        // reject the messages array. Clearing old turns ensures clean context.
+        // Delete tool_calls first (FK: tool_calls.turn_id → turns.id).
+        try {
+          const keepRecent = 20;
+          db.raw.prepare(`
+            DELETE FROM tool_calls WHERE turn_id NOT IN (
+              SELECT id FROM turns ORDER BY created_at DESC LIMIT ?
+            )
+          `).run(keepRecent);
+          db.raw.prepare(`
+            DELETE FROM turns WHERE id NOT IN (
+              SELECT id FROM turns ORDER BY created_at DESC LIMIT ?
+            )
+          `).run(keepRecent);
+          log(config, `[FATAL] Truncated turns to last ${keepRecent} for clean restart.`);
+        } catch (e) {
+          log(config, `[FATAL] Failed to truncate turns: ${e}`);
+        }
+
+        // Update error state with forced sleep flag for heartbeat reporting
+        db.setKV("last_error", JSON.stringify({
+          message: err.message?.slice(0, 500) || "Unknown error",
+          consecutiveErrors,
+          forcedSleep: true,
+          timestamp: new Date().toISOString(),
+        }));
         db.setAgentState("sleeping");
         onStateChange?.("sleeping");
         db.setKV(
