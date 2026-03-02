@@ -56,21 +56,22 @@ jobs:
             # from automaton.json directly — it does NOT need it in the prompt.
             SOUL="$CONNIE_HOME/.automaton/SOUL.md"
             if [ -f "$SOUL" ]; then
-              SOUL="$SOUL" python3 -c "
-            import re, os
-            soul_path = os.environ['SOUL']
-            with open(soul_path, 'r') as f:
+              cat > /tmp/strip-webhook.py << 'PYEOF'
+            import re, sys
+            soul_path = sys.argv[1]
+            with open(soul_path, "r") as f:
                 content = f.read()
-            # Strip any Discord webhook URLs (full URL pattern)
-            cleaned = re.sub(r'https://discord\.com/api/webhooks/[^\s\"'\''<>]+', '[managed by heartbeat system]', content)
-            cleaned = re.sub(r'https://discordapp\.com/api/webhooks/[^\s\"'\''<>]+', '[managed by heartbeat system]', cleaned)
+            pattern = r"https://discord(?:app)?\.com/api/webhooks/\S+"
+            cleaned = re.sub(pattern, "[managed by heartbeat system]", content)
             if content != cleaned:
-                with open(soul_path, 'w') as f:
+                with open(soul_path, "w") as f:
                     f.write(cleaned)
-                print('Stripped webhook URL(s) from SOUL.md')
+                print("Stripped webhook URL(s) from SOUL.md")
             else:
-                print('SOUL.md already clean — no webhook URLs found')
-            "
+                print("SOUL.md already clean - no webhook URLs found")
+            PYEOF
+              python3 /tmp/strip-webhook.py "$SOUL"
+              rm -f /tmp/strip-webhook.py
             fi
 
             echo ""
