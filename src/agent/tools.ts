@@ -78,9 +78,10 @@ const FORBIDDEN_COMMAND_PATTERNS = [
   /\bsetsid\b/,
   /\bdisown\b/,
   /\bforever\s+start/i,
-  // Background operator — only blocks trailing `cmd &` (end-of-command background spawning)
-  // Narrow match to avoid false positives on URL query strings like ?a=1&b=2
-  /&\s*$/,
+  // Background operator — blocks `cmd &` at end or `cmd & next` mid-command.
+  // A backgrounding & follows whitespace/start, not = (which indicates URL query params like ?a=1&b=2).
+  /(?<=\s)&\s*$/,
+  /(?<=\s)&\s+/,
 ];
 
 function isForbiddenCommand(command: string, sandboxId: string): string | null {

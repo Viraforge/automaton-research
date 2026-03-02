@@ -959,8 +959,14 @@ export async function runAgentLoop(
         // Truncate old turns to break error 1214 crash loop.
         // Orphaned tool results from context compression cause MiniMax to
         // reject the messages array. Clearing old turns ensures clean context.
+        // Delete tool_calls first (FK: tool_calls.turn_id → turns.id).
         try {
           const keepRecent = 20;
+          db.raw.prepare(`
+            DELETE FROM tool_calls WHERE turn_id NOT IN (
+              SELECT id FROM turns ORDER BY created_at DESC LIMIT ?
+            )
+          `).run(keepRecent);
           db.raw.prepare(`
             DELETE FROM turns WHERE id NOT IN (
               SELECT id FROM turns ORDER BY created_at DESC LIMIT ?
