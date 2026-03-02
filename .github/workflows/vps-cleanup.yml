@@ -78,6 +78,40 @@ jobs:
             done
 
             echo ""
+            echo "=== FINDING ALL FILES THAT POST TO DISCORD ==="
+            grep -rl "discord.com/api/webhooks\|discordapp.com/api/webhooks\|DISCORD_WEBHOOK\|discordWebhookUrl" "$CONNIE_HOME" --include="*.sh" --include="*.js" --include="*.ts" --include="*.py" --include="*.json" 2>/dev/null | while read f; do
+              echo "--- FILE: $f ---"
+              head -5 "$f" 2>/dev/null
+              echo "..."
+              grep -n "discord\|webhook\|monitor\|watchdog\|FATAL\|curl\|fetch" "$f" 2>/dev/null | head -10
+              echo ""
+            done
+            echo "=== Also checking systemd overrides and timers ==="
+            find /etc/systemd/system -name "*.service" -o -name "*.timer" 2>/dev/null | while read f; do
+              if grep -qi "discord\|webhook\|monitor\|watchdog" "$f" 2>/dev/null; then
+                echo "--- SYSTEMD: $f ---"
+                cat "$f"
+              fi
+            done
+            echo "=== Checking /root for crash/monitor scripts ==="
+            find /root -maxdepth 2 \( -name "*crash*" -o -name "*monitor*" -o -name "*watchdog*" -o -name "*notify*" \) -type f 2>/dev/null | while read f; do
+              echo "--- ROOT FILE: $f ---"
+              head -20 "$f" 2>/dev/null
+              echo ""
+            done
+
+            echo ""
+            echo "=== DELETING ALL DISCORD-POSTING SCRIPTS ==="
+            grep -rl "discord.com/api/webhooks\|discordapp.com/api/webhooks" "$CONNIE_HOME" --include="*.sh" --include="*.js" --include="*.py" 2>/dev/null | while read f; do
+              echo "DELETING: $f"
+              rm -f "$f"
+            done
+            # Also check common locations
+            rm -f "$CONNIE_HOME/connie-crash-notify.sh" 2>/dev/null && echo "Deleted connie-crash-notify.sh" || true
+            rm -f /root/connie-crash-notify.sh 2>/dev/null && echo "Deleted /root/connie-crash-notify.sh" || true
+            find "$CONNIE_HOME" -maxdepth 2 \( -name "*crash*notify*" -o -name "*health*monitor*" -o -name "*discord*monitor*" \) -type f -delete -print 2>/dev/null
+
+            echo ""
             echo "=== Actual FATAL/ERROR details ==="
             grep -E "\[FATAL\]|\[ERROR\]" /tmp/connie-research.log 2>/dev/null | tail -20
 
