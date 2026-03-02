@@ -72,6 +72,16 @@ jobs:
             done
 
             echo ""
+            echo "=== Removing agent-created Discord scripts ==="
+            for f in $(find "$CONNIE_HOME" -maxdepth 1 -name "*discord*bot*.js" -o -name "*discord*bot*.log" 2>/dev/null); do
+              rm -f "$f" && echo "Removed: $f" || echo "Failed: $f"
+            done
+
+            echo ""
+            echo "=== Actual FATAL/ERROR details ==="
+            grep -E "\[FATAL\]|\[ERROR\]" /tmp/connie-research.log 2>/dev/null | tail -20
+
+            echo ""
             echo "=== Restarting main service ==="
             systemctl restart local-connie
             sleep 3
