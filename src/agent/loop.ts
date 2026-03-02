@@ -342,8 +342,21 @@ export async function runAgentLoop(
 
   let consecutiveErrors = 0;
   let running = true;
+
+  // Restore loop detection state across sleep cycles.
+  // Without persistence, the agent can do write_file → exec → sleep (2 turns)
+  // and detection never accumulates enough data within a single cycle.
   let lastToolPatterns: string[] = [];
   let loopWarningPattern: string | null = null;
+  try {
+    const persisted = db.getKV("loop_detection_state");
+    if (persisted) {
+      const parsed = JSON.parse(persisted);
+      if (Array.isArray(parsed.patterns)) lastToolPatterns = parsed.patterns;
+      if (typeof parsed.warningPattern === "string") loopWarningPattern = parsed.warningPattern;
+    }
+  } catch { /* ignore corrupt state */ }
+
   let idleToolTurns = 0;
   // blockedGoalTurns removed — replaced by immediate sleep + exponential backoff
 
@@ -725,6 +738,7 @@ export async function runAgentLoop(
           };
           loopWarningPattern = null;
           lastToolPatterns = [];
+          db.deleteKV("loop_detection_state");
           db.setAgentState("sleeping");
           onStateChange?.("sleeping");
           running = false;
@@ -769,6 +783,13 @@ export async function runAgentLoop(
           idleToolTurns = 0;
         }
 
+        // Persist loop detection state AFTER all modifications so it survives
+        // across sleep boundaries. Without this, a 2-turn cycle (write → sleep)
+        // resets detection every wake, letting the agent loop indefinitely.
+        db.setKV("loop_detection_state", JSON.stringify({
+          patterns: lastToolPatterns,
+          warningPattern: loopWarningPattern,
+        }));
       }
 
       // Log the turn
@@ -830,6 +851,10 @@ export async function runAgentLoop(
               source: "system",
             };
             lastToolPatterns = [];
+            db.setKV("loop_detection_state", JSON.stringify({
+              patterns: lastToolPatterns,
+              warningPattern: loopWarningPattern,
+            }));
             break;
           }
         }
