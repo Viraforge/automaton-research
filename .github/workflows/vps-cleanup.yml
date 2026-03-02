@@ -28,9 +28,16 @@ jobs:
 
             echo ""
             echo "=== Killing monitor processes ==="
-            pkill -f "health-monitor" 2>/dev/null && echo "Killed health-monitor" || echo "No health-monitor"
-            pkill -f "log-forwarder" 2>/dev/null && echo "Killed log-forwarder" || echo "No log-forwarder"
-            pkill -f "connie-health-check" 2>/dev/null && echo "Killed connie-health-check" || echo "No connie-health-check"
+            # Save our PID to exclude from kills (pkill -f would match script text in SSH shell)
+            MYPID=$$
+            for pat in "health-monitor.js" "log-forwarder.py" "connie-health-check.sh"; do
+              PIDS=$(pgrep -f "$pat" 2>/dev/null | grep -v "^${MYPID}$" || true)
+              if [ -n "$PIDS" ]; then
+                echo "$PIDS" | xargs kill 2>/dev/null && echo "Killed $pat (PIDs: $PIDS)" || echo "Failed to kill $pat"
+              else
+                echo "No $pat processes"
+              fi
+            done
 
             echo ""
             echo "=== Stopping PM2 ==="
