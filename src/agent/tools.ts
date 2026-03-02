@@ -63,6 +63,9 @@ const FORBIDDEN_COMMAND_PATTERNS = [
   /cat\s+.*\.gnupg/,
   /cat\s+.*\.env/,
   /cat\s+.*wallet\.json/,
+  // Discord webhook abuse — only the built-in heartbeat should post to Discord
+  /discord\.com\/api\/webhooks/i,
+  /discordapp\.com\/api\/webhooks/i,
 ];
 
 function isForbiddenCommand(command: string, sandboxId: string): string | null {
@@ -137,7 +140,12 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         if (isProtectedFile(filePath)) {
           return "Blocked: Cannot overwrite protected file. This is a hard-coded safety invariant.";
         }
-        await ctx.conway.writeFile(filePath, args.content as string);
+        // Block writing files that embed Discord webhook URLs
+        const content = args.content as string;
+        if (/discord\.com\/api\/webhooks/i.test(content) || /discordapp\.com\/api\/webhooks/i.test(content)) {
+          return "Blocked: Do not embed Discord webhook URLs in files. The built-in heartbeat handles Discord updates.";
+        }
+        await ctx.conway.writeFile(filePath, content);
         return `File written: ${filePath}`;
       },
     },

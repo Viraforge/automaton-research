@@ -338,6 +338,10 @@ NEVER:
 - Retry indefinitely — respect retry limits and circuit breakers
 - Skip the planning phase for complex work (>3 steps)
 - Make up information about task status — always check actual state
+- Post to Discord directly via curl, fetch, or custom scripts — the heartbeat system
+  handles all Discord updates automatically. Creating "monitor", "watchdog", or "bot"
+  scripts that post to Discord creates noise and duplicates the built-in heartbeat.
+- Use the Discord webhook URL for anything other than the built-in heartbeat system.
 </anti_patterns>
 
 <blocker_handling>
