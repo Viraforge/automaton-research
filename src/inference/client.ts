@@ -156,9 +156,12 @@ export function createInferenceClient(
 function formatMessage(
   msg: ChatMessage,
 ): Record<string, unknown> {
+  const normalizedContent = typeof msg.content === "string"
+    ? msg.content
+    : String(msg.content ?? "");
   const formatted: Record<string, unknown> = {
     role: msg.role,
-    content: msg.content,
+    content: normalizedContent,
   };
 
   if (msg.name) formatted.name = msg.name;
@@ -177,24 +180,67 @@ function formatMessage(
  * - Strips empty messages.
  */
 function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
-  // Track tool_call IDs in sequence to avoid sending out-of-order tool messages.
+  // Track tool_call IDs in strict sequence to avoid sending out-of-order tool messages.
   const seenToolCallIds = new Set<string>();
+  let activeToolCallIds = new Set<string>();
+  let toolCallCounter = 0;
   const result: ChatMessage[] = [];
   for (const msg of messages) {
-    if (msg.role === "assistant" && msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        seenToolCallIds.add(tc.id);
+    if (msg.role === "assistant") {
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        // Once a new assistant tool call block appears, any unresolved older
+        // tool-call IDs are stale for strict OpenAI-compatible providers.
+        activeToolCallIds = new Set<string>();
+        const rewrittenToolCalls = msg.tool_calls.map((tc) => {
+          const rawId = typeof tc.id === "string" && tc.id.trim().length > 0
+            ? tc.id.trim()
+            : `auto_tool_call_${toolCallCounter++}`;
+          let normalizedId = rawId;
+          while (seenToolCallIds.has(normalizedId)) {
+            normalizedId = `${rawId}_${toolCallCounter++}`;
+          }
+          seenToolCallIds.add(normalizedId);
+          activeToolCallIds.add(normalizedId);
+          return {
+            ...tc,
+            id: normalizedId,
+          };
+        });
+        result.push({
+          ...msg,
+          content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
+          tool_calls: rewrittenToolCalls,
+        });
+        continue;
       }
-    }
-    // Drop orphaned tool results
-    if (msg.role === "tool" && msg.tool_call_id && !seenToolCallIds.has(msg.tool_call_id)) {
+
+      // Drop messages with no content and no tool_calls (empty messages)
+      if (!msg.content) continue;
+      result.push({
+        ...msg,
+        content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
+      });
       continue;
     }
-    // Drop messages with no content and no tool_calls (empty messages)
-    if (!msg.content && !msg.tool_calls && msg.role !== "tool") {
+
+    if (msg.role === "tool") {
+      const toolCallId = typeof msg.tool_call_id === "string" ? msg.tool_call_id.trim() : "";
+      // Drop orphaned or stale tool results
+      if (!toolCallId || !activeToolCallIds.has(toolCallId) || !seenToolCallIds.has(toolCallId)) continue;
+      activeToolCallIds.delete(toolCallId);
+      result.push({
+        ...msg,
+        tool_call_id: toolCallId,
+        content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
+      });
       continue;
     }
-    result.push(msg);
+
+    if (!msg.content) continue;
+    result.push({
+      ...msg,
+      content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
+    });
   }
 
   return result;

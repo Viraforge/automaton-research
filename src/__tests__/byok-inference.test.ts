@@ -168,6 +168,66 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("rewrites duplicate tool_call ids and keeps only active matching tool results", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_2",
+          model: "glm-5",
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "glm-5",
+        maxTokens: 64,
+      });
+
+      await client.chat([
+        {
+          role: "assistant",
+          content: "first tools",
+          tool_calls: [{ id: "dup", type: "function", function: { name: "a", arguments: "{}" } }],
+        },
+        { role: "tool", content: "{\"ok\":true}", tool_call_id: "dup" },
+        {
+          role: "assistant",
+          content: "second tools",
+          tool_calls: [{ id: "dup", type: "function", function: { name: "b", arguments: "{}" } }],
+        },
+        // stale/out-of-order tool result for old call id should be dropped
+        { role: "tool", content: "{\"old\":true}", tool_call_id: "dup" },
+        { role: "user", content: "hello" },
+      ]);
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const payload = JSON.parse(String(requestInit?.body || "{}")) as {
+        messages?: Array<{ role?: string; tool_call_id?: string; tool_calls?: Array<{ id?: string }> }>;
+      };
+      const assistantToolCallIds = (payload.messages || [])
+        .filter((m) => m.role === "assistant" && Array.isArray(m.tool_calls))
+        .flatMap((m) => (m.tool_calls || []).map((tc) => String(tc.id || "")));
+      const toolMessageIds = (payload.messages || [])
+        .filter((m) => m.role === "tool")
+        .map((m) => String(m.tool_call_id || ""));
+
+      expect(new Set(assistantToolCallIds).size).toBe(assistantToolCallIds.length);
+      expect(toolMessageIds.every((id) => assistantToolCallIds.includes(id))).toBe(true);
+      expect(toolMessageIds).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 // ─── BYOK model registration in ModelRegistry ──────────────────
