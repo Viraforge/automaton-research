@@ -845,6 +845,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
 
         let orchestratorPhase = "";
         let hasActiveGoal = false;
+        let hasInFlightTasks = false;
         try {
           const orchestratorStateRow = ctx.db.raw
             .prepare("SELECT value FROM kv WHERE key = 'orchestrator.state'")
@@ -858,8 +859,23 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           orchestratorPhase = "";
           hasActiveGoal = false;
         }
+        try {
+          hasInFlightTasks = Number(
+            (
+              ctx.db.raw
+                .prepare(
+                  "SELECT COUNT(*) AS count FROM task_graph WHERE status IN ('assigned','running','pending')",
+                )
+                .get() as { count?: number } | undefined
+            )?.count ?? 0,
+          ) > 0;
+        } catch {
+          hasInFlightTasks = false;
+        }
         const isOrchestrationWaitReason = /orchestrator|child|worker|replan|planner/i.test(reason);
-        const hasActiveOrchestrationWork = hasActiveGoal && orchestratorPhase !== "idle";
+        const hasActiveOrchestrationWork =
+          (hasActiveGoal && orchestratorPhase !== "idle")
+          || hasInFlightTasks;
 
         // Guard against long passive sleeps when recent diagnostics show
         // child references are stale/missing. In that scenario, long sleep
@@ -883,10 +899,10 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           }
         }
 
-        // Never allow long sleeps while any orchestrator goal is active.
-        // This prevents repeated "sleep 1h while workers run" loops.
-        if (duration > 120 && isOrchestrationWaitReason && hasActiveOrchestrationWork) {
-          duration = 120;
+        // Never allow long sleeps while orchestration still has live work.
+        // Enforce this regardless of reason text to prevent idle parking.
+        if (duration > 60 && hasActiveOrchestrationWork) {
+          duration = 60;
         }
 
         // While execution is live, keep polling cadence tighter.
