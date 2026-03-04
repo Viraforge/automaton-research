@@ -84,4 +84,29 @@ jobs:
             fi
 
             systemctl restart local-connie
+            echo "local-connie restarted"
+
+            # Deploy and restart polymarket-api (separate service on :8081)
+            POLYMARKET_DIR="/root/.automaton-research-home/polymarket-api"
+            mkdir -p "$POLYMARKET_DIR"
+            cp -R services/polymarket-api/. "$POLYMARKET_DIR"/
+            cd "$POLYMARKET_DIR"
+            npm install --omit=dev
+
+            if command -v pm2 >/dev/null 2>&1; then
+              if PM2_HOME="$CONNIE_HOME/.pm2" pm2 describe polymarket-api >/dev/null 2>&1; then
+                PM2_HOME="$CONNIE_HOME/.pm2" pm2 restart polymarket-api --update-env
+              else
+                PM2_HOME="$CONNIE_HOME/.pm2" pm2 start server.js --name polymarket-api --update-env
+              fi
+              PM2_HOME="$CONNIE_HOME/.pm2" pm2 save || true
+            else
+              echo "pm2 not found; polymarket-api restart skipped"
+            fi
+
+            sleep 2
+            HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/health")
+            MARKETS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/v1/markets")
+            echo "polymarket-api /health HTTP $HEALTH_CODE"
+            echo "polymarket-api /v1/markets HTTP $MARKETS_CODE"
             echo "Deploy complete: $(git rev-parse --short HEAD)"
