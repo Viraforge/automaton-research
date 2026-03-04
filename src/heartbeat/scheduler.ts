@@ -35,6 +35,7 @@ const logger = createLogger("heartbeat.scheduler");
 const DEFAULT_TASK_TIMEOUT_MS = 30_000;
 const LEASE_TTL_MS = 60_000;
 const TICK_CONTEXT_TIMEOUT_MS = 20_000;
+const DISCORD_HEARTBEAT_MAX_SILENCE_MS = 10 * 60_000;
 const HISTORY_ID_COUNTER = { value: 0 };
 
 function generateId(): string {
@@ -109,6 +110,13 @@ export class DurableScheduler {
 
       // Get tasks that are due
       const dueTasks = this.getDueTasks(context);
+      if (this.shouldForceDiscordHeartbeat(context.survivalTier, dueTasks)) {
+        const discordTask = getHeartbeatSchedule(this.db).find((row) => row.taskName === "discord_heartbeat");
+        if (discordTask) {
+          dueTasks.push(discordTask);
+          logger.warn("Forcing discord_heartbeat due to stale last_discord_heartbeat timestamp");
+        }
+      }
 
       for (const task of dueTasks) {
         await this.executeTask(task.taskName, context);
@@ -365,5 +373,24 @@ export class DurableScheduler {
     updateHeartbeatSchedule(this.db, taskName, {
       nextRunAt: retryAt,
     });
+  }
+
+  private shouldForceDiscordHeartbeat(
+    currentTier: string,
+    dueTasks: HeartbeatScheduleRow[],
+  ): boolean {
+    if (dueTasks.some((task) => task.taskName === "discord_heartbeat")) return false;
+
+    const discordTask = getHeartbeatSchedule(this.db).find((row) => row.taskName === "discord_heartbeat");
+    if (!discordTask?.enabled) return false;
+    if (!tierMeetsMinimum(currentTier, discordTask.tierMinimum)) return false;
+
+    const row = this.db
+      .prepare("SELECT value FROM kv WHERE key = 'last_discord_heartbeat'")
+      .get() as { value?: string } | undefined;
+    const lastHeartbeatMs = Date.parse(row?.value || "");
+    if (!Number.isFinite(lastHeartbeatMs)) return true;
+
+    return Date.now() - lastHeartbeatMs >= DISCORD_HEARTBEAT_MAX_SILENCE_MS;
   }
 }
