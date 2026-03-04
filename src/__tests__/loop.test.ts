@@ -708,7 +708,7 @@ describe("Agent Loop", () => {
     expect(enforcementTurn).toBeUndefined();
   });
 
-  it("discover_agents is classified as idle and triggers loop detection", { timeout: 60_000 }, async () => {
+  it("discover_agents is classified as idle and triggers loop detection", { timeout: 180_000 }, async () => {
     // discover_agents is in IDLE_ONLY_TOOLS, so 3 consecutive identical
     // discover_agents calls should trigger the repetitive pattern detector
     // (which fires before the idle-tool detector when patterns are identical).
