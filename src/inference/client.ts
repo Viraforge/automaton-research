@@ -175,20 +175,17 @@ function formatMessage(
  * - Strips empty messages.
  */
 function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
-  // Collect all tool_call IDs from assistant messages
-  const validToolCallIds = new Set<string>();
+  // Track tool_call IDs in sequence to avoid sending out-of-order tool messages.
+  const seenToolCallIds = new Set<string>();
+  const result: ChatMessage[] = [];
   for (const msg of messages) {
     if (msg.role === "assistant" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
-        validToolCallIds.add(tc.id);
+        seenToolCallIds.add(tc.id);
       }
     }
-  }
-
-  const result: ChatMessage[] = [];
-  for (const msg of messages) {
     // Drop orphaned tool results
-    if (msg.role === "tool" && msg.tool_call_id && !validToolCallIds.has(msg.tool_call_id)) {
+    if (msg.role === "tool" && msg.tool_call_id && !seenToolCallIds.has(msg.tool_call_id)) {
       continue;
     }
     // Drop messages with no content and no tool_calls (empty messages)

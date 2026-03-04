@@ -40,7 +40,7 @@ jobs:
               sqlite3 "$DB" ".tables" 2>/dev/null || echo "Cannot read DB (locked?)"
               echo ""
               echo "Agent state KV:"
-              sqlite3 "$DB" "SELECT key, substr(value,1,120) FROM kv WHERE key IN ('agent_state', 'sleep_until', 'orchestrator.state', 'current_tier', 'forcedSleep', 'loop_detection_state') ORDER BY key;" 2>/dev/null || echo "No kv table"
+              sqlite3 "$DB" "SELECT key, substr(value,1,160) FROM kv WHERE key IN ('agent_state', 'sleep_until', 'orchestrator.state', 'current_tier', 'forcedSleep', 'loop_detection_state', 'last_discord_heartbeat', 'last_discord_error') ORDER BY key;" 2>/dev/null || echo "No kv table"
             else
               echo "No DB available"
             fi
@@ -79,6 +79,15 @@ jobs:
               echo "OK: No webhook URL in SOUL.md"
             fi
             python3 -c "import json; c=json.load(open('$CONNIE_HOME/.automaton/automaton.json')); print('automaton.json webhook:', 'SET' if c.get('discordWebhookUrl') else 'NOT SET')" 2>/dev/null
+
+            echo ""
+            echo "=== 8.5 Discord Heartbeat JSONL (tail) ==="
+            HEARTBEAT_LOG="$CONNIE_HOME/.automaton/discord-heartbeat.log"
+            if [ -f "$HEARTBEAT_LOG" ]; then
+              tail -20 "$HEARTBEAT_LOG"
+            else
+              echo "No discord-heartbeat.log at $HEARTBEAT_LOG"
+            fi
 
             echo ""
             echo "=== 9. Recent Errors ==="

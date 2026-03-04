@@ -6,7 +6,7 @@
  * mixed API key environments.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
 import { MIGRATION_V6 } from "../state/schema.js";
@@ -129,6 +129,44 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
     await expect(
       client.chat([{ role: "user", content: "hello" }]),
     ).rejects.toThrow("BYOK inference requires inferenceBaseUrl to be set");
+  });
+
+  it("drops out-of-order tool messages before BYOK request", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_1",
+          model: "glm-5",
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "glm-5",
+        maxTokens: 64,
+      });
+
+      await client.chat([
+        { role: "tool", content: "{\"ok\":true}", tool_call_id: "future_call" },
+        { role: "assistant", content: "", tool_calls: [{ id: "future_call", type: "function", function: { name: "x", arguments: "{}" } }] },
+        { role: "user", content: "hello" },
+      ]);
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const payload = JSON.parse(String(requestInit?.body || "{}")) as { messages?: Array<{ role?: string }> };
+      expect(payload.messages?.some((m) => m.role === "tool")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
