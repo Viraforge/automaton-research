@@ -291,6 +291,7 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
       },
       {
         id: "glm-5",
+        // Same model is mapped to both tiers to keep fallback behavior consistent.
         tier: "fast",
         contextWindow: 128000,
         maxOutputTokens: 16384,

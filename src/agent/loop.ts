@@ -216,9 +216,9 @@ export async function runAgentLoop(
       );
 
       // Adapter: wrap the main agent's working inference client so local
-      // workers can use it. The main InferenceClient talks to Conway Compute
-      // (which always works), unlike the UnifiedInferenceClient which needs
-      // a direct OpenAI key.
+      // workers can use it. This path honors configured inference routing
+      // (BYOK/OpenAI/Anthropic/Ollama), unlike UnifiedInferenceClient which
+      // resolves providers only from registry/env configuration.
       const workerInference = {
         chat: async (params: { messages: any[]; tools?: any[]; maxTokens?: number; temperature?: number }) => {
           const response = await inference.chat(

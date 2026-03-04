@@ -13,6 +13,7 @@ import { MIGRATION_V6 } from "../state/schema.js";
 import { ModelRegistry } from "../inference/registry.js";
 import { InferenceRouter } from "../inference/router.js";
 import { InferenceBudgetTracker } from "../inference/budget.js";
+import { createInferenceClient } from "../inference/client.js";
 import { resolveInferenceBackend } from "../inference/client.js";
 import { DEFAULT_MODEL_STRATEGY_CONFIG } from "../inference/types.js";
 import type { ModelStrategyConfig } from "../types.js";
@@ -114,6 +115,20 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       getModelProvider: () => "ollama",
     });
     expect(backend).toBe("ollama");
+  });
+
+  it("throws a clear error when BYOK backend is selected without inferenceBaseUrl", async () => {
+    const client = createInferenceClient({
+      apiKey: "test-key",
+      inferenceApiKey: "test-byok-key",
+      defaultModel: "glm-5",
+      maxTokens: 256,
+      getModelProvider: () => "other",
+    });
+
+    await expect(
+      client.chat([{ role: "user", content: "hello" }]),
+    ).rejects.toThrow("BYOK inference requires inferenceBaseUrl to be set");
   });
 });
 

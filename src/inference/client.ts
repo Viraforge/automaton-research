@@ -18,7 +18,6 @@ import { ResilientHttpClient } from "../http/client.js";
 const INFERENCE_TIMEOUT_MS = 60_000;
 
 interface InferenceClientOptions {
-  apiUrl: string;
   apiKey: string;
   /** Base URL for a custom inference provider (e.g. https://api.z.ai/api/coding/paas/v4). When set, /chat/completions is appended and Bearer auth is used. */
   inferenceBaseUrl?: string;
@@ -99,6 +98,10 @@ export function createInferenceClient(
         anthropicApiKey: anthropicApiKey as string,
         httpClient,
       });
+    }
+
+    if (backend === "byok" && !inferenceBaseUrl) {
+      throw new Error("BYOK inference requires inferenceBaseUrl to be set");
     }
 
     const useCustomInference = backend === "byok" && !!inferenceBaseUrl;

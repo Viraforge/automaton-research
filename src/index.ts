@@ -316,7 +316,6 @@ async function run(): Promise<void> {
   }
 
   const inference = createInferenceClient({
-    apiUrl: config.inferenceBaseUrl || "",
     apiKey: config.inferenceApiKey || apiKey,
     inferenceBaseUrl: config.inferenceBaseUrl,
     inferenceApiKey: config.inferenceApiKey,
