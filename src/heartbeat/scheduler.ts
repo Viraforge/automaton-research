@@ -34,6 +34,7 @@ const logger = createLogger("heartbeat.scheduler");
 
 const DEFAULT_TASK_TIMEOUT_MS = 30_000;
 const LEASE_TTL_MS = 60_000;
+const TICK_CONTEXT_TIMEOUT_MS = 20_000;
 const HISTORY_ID_COUNTER = { value: 0 };
 
 function generateId(): string {
@@ -90,13 +91,21 @@ export class DurableScheduler {
       clearExpiredLeases(this.db);
 
       // Build shared context (single API call for balance)
-      const context = await buildTickContext(
-        this.db,
-        this.legacyContext.conway,
-        this.config,
-        this.legacyContext.identity.address,
-        this.legacyContext.config.useSovereignProviders,
-      );
+      const context = await Promise.race([
+        buildTickContext(
+          this.db,
+          this.legacyContext.conway,
+          this.config,
+          this.legacyContext.identity.address,
+          this.legacyContext.config.useSovereignProviders,
+        ),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`tick context build timed out after ${TICK_CONTEXT_TIMEOUT_MS}ms`)),
+            TICK_CONTEXT_TIMEOUT_MS,
+          );
+        }),
+      ]);
 
       // Get tasks that are due
       const dueTasks = this.getDueTasks(context);
