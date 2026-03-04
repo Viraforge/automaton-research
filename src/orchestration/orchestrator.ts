@@ -45,8 +45,12 @@ const logger = createLogger("orchestration.orchestrator");
 
 const ORCHESTRATOR_STATE_KEY = "orchestrator.state";
 const ORCHESTRATOR_TODO_KEY = "orchestrator.todo_md";
+const ORCHESTRATOR_DEAD_WORKERS_KEY = "orchestrator.dead_workers";
+const ORCHESTRATOR_EXEC_STALL_KEY = "orchestrator.executing_stall";
 const DEFAULT_TASK_FUNDING_CENTS = 25;
 const DEFAULT_MAX_REPLANS = 3;
+const DEAD_WORKER_QUARANTINE_MS = 30 * 60_000;
+const EXECUTION_STALL_THRESHOLD_MS = 10 * 60_000;
 
 type ExecutionPhase =
   | "idle"
@@ -77,6 +81,21 @@ interface TickCounters {
   tasksAssigned: number;
   tasksCompleted: number;
   tasksFailed: number;
+}
+
+interface DeadWorkerRecord {
+  address: string;
+  taskId: string;
+  reason: string;
+  until: string;
+  updatedAt: string;
+}
+
+interface ExecutionStallState {
+  goalId: string;
+  signature: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
 }
 
 const DEFAULT_STATE: OrchestratorState = {
@@ -191,8 +210,11 @@ export class Orchestrator {
 
   async matchTaskToAgent(task: TaskNode): Promise<AgentAssignment> {
     const requestedRole = task.agentRole?.trim() || "generalist";
+    const isBlocked = (address: string) => this.isWorkerQuarantined(address);
 
-    const idleAgents = this.params.agentTracker.getIdle();
+    const idleAgents = this.params.agentTracker
+      .getIdle()
+      .filter((agent) => !isBlocked(agent.address));
     const directRoleMatch = idleAgents.find((agent) => agent.role === requestedRole);
     if (directRoleMatch) {
       return {
@@ -203,7 +225,7 @@ export class Orchestrator {
     }
 
     const bestIdle = this.params.agentTracker.getBestForTask(requestedRole);
-    if (bestIdle) {
+    if (bestIdle && !isBlocked(bestIdle.address)) {
       return {
         agentAddress: bestIdle.address,
         agentName: bestIdle.name,
@@ -518,16 +540,20 @@ export class Orchestrator {
 
     // Recover stale tasks: workers that died (process restart, sandbox crash)
     // leave tasks stuck in 'assigned' forever. Detect and reset them.
+    let staleRecoveries = 0;
     if (this.params.isWorkerAlive) {
       const assignedTasks = getTasksByGoal(this.params.db, goal.id)
         .filter((t) => t.status === "assigned" && t.assignedTo);
       for (const task of assignedTasks) {
         const alive = this.params.isWorkerAlive(task.assignedTo!);
         if (!alive) {
+          staleRecoveries += 1;
           logger.warn("Recovering stale task from dead worker", {
             taskId: task.id,
             worker: task.assignedTo,
           });
+          this.rememberDeadWorker(task.assignedTo!, task.id, "stale-assignment");
+          this.params.agentTracker.updateStatus(task.assignedTo!, "failed");
           this.params.db.prepare(
             "UPDATE task_graph SET status = 'pending', assigned_to = NULL, started_at = NULL WHERE id = ?",
           ).run(task.id);
@@ -651,6 +677,19 @@ export class Orchestrator {
         failedTaskId: state.failedTaskId ?? this.findFirstFailedTaskId(goal.id),
         failedError: state.failedError ?? "Task execution failed",
       };
+    }
+
+    if (this.shouldBreakExecutionStall(goal.id, counters, staleRecoveries)) {
+      logger.warn("Execution appears stalled; forcing task unstick pass", {
+        goalId: goal.id,
+        staleRecoveries,
+      });
+      this.params.db.prepare(
+        `UPDATE task_graph
+         SET status = 'pending', assigned_to = NULL, started_at = NULL
+         WHERE goal_id = ?
+           AND status IN ('assigned', 'running')`,
+      ).run(goal.id);
     }
 
     return state;
@@ -875,7 +914,8 @@ export class Orchestrator {
        ORDER BY created_at ASC`,
     ).all() as { name: string; address: string; status: string }[];
 
-    const candidate = rows.find((row) => !idleAddresses.has(row.address));
+    const candidate = rows.find((row) =>
+      !idleAddresses.has(row.address) && !this.isWorkerQuarantined(row.address));
     if (!candidate) {
       return null;
     }
@@ -1002,6 +1042,106 @@ export class Orchestrator {
     }
 
     return Math.max(0, Math.floor(configured));
+  }
+
+  private rememberDeadWorker(address: string, taskId: string, reason: string): void {
+    const now = new Date();
+    const until = new Date(now.getTime() + DEAD_WORKER_QUARANTINE_MS).toISOString();
+    const previous = this.loadDeadWorkers().filter((worker) => worker.address !== address);
+    const next: DeadWorkerRecord[] = [
+      {
+        address,
+        taskId,
+        reason,
+        until,
+        updatedAt: now.toISOString(),
+      },
+      ...previous,
+    ].slice(0, 50);
+    this.params.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(ORCHESTRATOR_DEAD_WORKERS_KEY, JSON.stringify(next));
+  }
+
+  private isWorkerQuarantined(address: string): boolean {
+    const now = Date.now();
+    const active = this.loadDeadWorkers().filter((worker) => {
+      const untilAt = Date.parse(worker.until);
+      return Number.isFinite(untilAt) && untilAt > now;
+    });
+    if (active.length > 0) {
+      this.params.db.prepare(
+        "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+      ).run(ORCHESTRATOR_DEAD_WORKERS_KEY, JSON.stringify(active));
+    }
+    return active.some((worker) => worker.address === address);
+  }
+
+  private loadDeadWorkers(): DeadWorkerRecord[] {
+    const row = this.params.db
+      .prepare("SELECT value FROM kv WHERE key = ?")
+      .get(ORCHESTRATOR_DEAD_WORKERS_KEY) as { value: string } | undefined;
+    const parsed = safeJsonParse(row?.value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is DeadWorkerRecord =>
+        !!entry && typeof entry.address === "string" && typeof entry.until === "string")
+      : [];
+  }
+
+  private shouldBreakExecutionStall(
+    goalId: string,
+    counters: TickCounters,
+    staleRecoveries: number,
+  ): boolean {
+    if (counters.tasksAssigned > 0 || counters.tasksCompleted > 0 || counters.tasksFailed > 0) {
+      this.params.db.prepare("DELETE FROM kv WHERE key = ?").run(ORCHESTRATOR_EXEC_STALL_KEY);
+      return false;
+    }
+
+    const tasks = getTasksByGoal(this.params.db, goalId);
+    const signature = JSON.stringify(
+      tasks
+        .map((task) => `${task.id}:${task.status}:${task.assignedTo ?? "none"}:${task.metadata.retryCount}`)
+        .sort(),
+    );
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    const current = this.loadExecutionStallState();
+
+    if (!current || current.goalId !== goalId || current.signature !== signature) {
+      this.saveExecutionStallState({
+        goalId,
+        signature,
+        firstSeenAt: nowIso,
+        lastSeenAt: nowIso,
+      });
+      return false;
+    }
+
+    this.saveExecutionStallState({
+      ...current,
+      lastSeenAt: nowIso,
+    });
+    const firstSeenMs = Date.parse(current.firstSeenAt);
+    const hasTimedOut = Number.isFinite(firstSeenMs) && nowMs - firstSeenMs >= EXECUTION_STALL_THRESHOLD_MS;
+    return hasTimedOut && staleRecoveries > 0;
+  }
+
+  private loadExecutionStallState(): ExecutionStallState | null {
+    const row = this.params.db
+      .prepare("SELECT value FROM kv WHERE key = ?")
+      .get(ORCHESTRATOR_EXEC_STALL_KEY) as { value: string } | undefined;
+    const parsed = safeJsonParse(row?.value);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.goalId !== "string" || typeof parsed.signature !== "string") return null;
+    if (typeof parsed.firstSeenAt !== "string" || typeof parsed.lastSeenAt !== "string") return null;
+    return parsed as ExecutionStallState;
+  }
+
+  private saveExecutionStallState(state: ExecutionStallState): void {
+    this.params.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(ORCHESTRATOR_EXEC_STALL_KEY, JSON.stringify(state));
   }
 }
 

@@ -78,6 +78,7 @@ function makeOrchestrator(
     inference?: ReturnType<typeof makeInference>;
     config?: any;
     messaging?: ColonyMessaging;
+    isWorkerAlive?: (address: string) => boolean;
   } = {},
 ): Orchestrator {
   const { messaging } = makeMessaging(db);
@@ -88,6 +89,7 @@ function makeOrchestrator(
     messaging: overrides.messaging ?? messaging,
     inference: overrides.inference ?? (makeInference() as any),
     identity: IDENTITY,
+    isWorkerAlive: overrides.isWorkerAlive,
     config: overrides.config ?? {},
   });
 }
@@ -248,6 +250,46 @@ describe("orchestration/Orchestrator", () => {
       const orc = makeOrchestrator(db, { inference: inference as any });
       const result = await orc.tick();
       expect(result.phase).toBe("plan_review");
+    });
+
+    it("quarantines dead worker and avoids immediate reassignment to it", async () => {
+      const goalId = insertGoal(db, { status: "active" });
+      const deadWorker = "local://dead-worker";
+      const taskId = insertTask(db, {
+        goalId,
+        status: "assigned",
+        assignedTo: deadWorker,
+      });
+      setOrchestratorState(db, {
+        phase: "executing",
+        goalId,
+        replanCount: 0,
+        failedTaskId: null,
+        failedError: null,
+      });
+
+      const agentTracker = makeAgentTracker({
+        getIdle: vi.fn().mockReturnValue([
+          { address: deadWorker, name: "dead", role: "generalist", status: "running" },
+        ]),
+      });
+
+      const orc = makeOrchestrator(db, {
+        agentTracker,
+        isWorkerAlive: (address: string) => address !== deadWorker,
+      });
+      await orc.tick();
+
+      const taskRow = db
+        .prepare("SELECT status, assigned_to FROM task_graph WHERE id = ?")
+        .get(taskId) as { status: string; assigned_to: string | null } | undefined;
+      expect(taskRow?.status).toBe("assigned");
+      expect(taskRow?.assigned_to).toBe(IDENTITY.address);
+
+      const quarantine = db
+        .prepare("SELECT value FROM kv WHERE key = 'orchestrator.dead_workers'")
+        .get() as { value: string } | undefined;
+      expect(quarantine?.value).toContain(deadWorker);
     });
 
     it("plan_review with plan in KV auto-approves (auto mode) and transitions to executing", async () => {
