@@ -38,20 +38,20 @@ afterEach(() => {
 // ─── resolveInferenceBackend: BYOK precedence ───────────────────
 
 describe("resolveInferenceBackend — BYOK precedence", () => {
-  it("returns 'conway' for provider 'other' even when OpenAI key is present", () => {
+  it("returns 'byok' for provider 'other' even when OpenAI key is present", () => {
     const backend = resolveInferenceBackend("gpt-5.2", {
       openaiApiKey: "sk-real-key",
       getModelProvider: () => "other",
     });
-    expect(backend).toBe("conway");
+    expect(backend).toBe("byok");
   });
 
-  it("returns 'conway' for provider 'other' even when Anthropic key is present", () => {
+  it("returns 'byok' for provider 'other' even when Anthropic key is present", () => {
     const backend = resolveInferenceBackend("claude-3.5-sonnet", {
       anthropicApiKey: "sk-ant-real-key",
       getModelProvider: () => "other",
     });
-    expect(backend).toBe("conway");
+    expect(backend).toBe("byok");
   });
 
   it("skips heuristics when inferenceBaseUrl is set (gpt-* name with OpenAI key)", () => {
@@ -60,7 +60,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       inferenceBaseUrl: "https://custom.provider/v4",
       // No registry — tests heuristic bypass
     });
-    expect(backend).toBe("conway");
+    expect(backend).toBe("byok");
   });
 
   it("skips heuristics when inferenceBaseUrl is set (claude-* name with Anthropic key)", () => {
@@ -68,7 +68,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       anthropicApiKey: "sk-ant-real-key",
       inferenceBaseUrl: "https://custom.provider/v4",
     });
-    expect(backend).toBe("conway");
+    expect(backend).toBe("byok");
   });
 
   it("still routes to OpenAI when no inferenceBaseUrl and OpenAI key present", () => {
@@ -87,9 +87,24 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
     expect(backend).toBe("anthropic");
   });
 
-  it("returns 'conway' for unknown model with no keys", () => {
+  it("returns 'byok' for unknown model with no keys", () => {
     const backend = resolveInferenceBackend("glm-5", {});
-    expect(backend).toBe("conway");
+    expect(backend).toBe("byok");
+  });
+
+  it("routes MiniMax model through byok when provider is 'other'", () => {
+    const backend = resolveInferenceBackend("MiniMax-M2.5-highspeed", {
+      inferenceBaseUrl: "https://api.minimax.io/v1",
+      getModelProvider: () => "other",
+    });
+    expect(backend).toBe("byok");
+  });
+
+  it("routes glm-5 through byok when inferenceBaseUrl set", () => {
+    const backend = resolveInferenceBackend("glm-5", {
+      inferenceBaseUrl: "https://api.z.ai/api/coding/paas/v4",
+    });
+    expect(backend).toBe("byok");
   });
 
   it("ollama still wins when provider is 'ollama' even with inferenceBaseUrl", () => {
@@ -161,14 +176,14 @@ describe("BYOK model registration", () => {
     expect(entry!.provider).toBe("other");
   });
 
-  it("BYOK model with provider 'conway' gets disabled by initialize() cleanup", () => {
+  it("BYOK model with provider 'defunct' gets disabled by initialize() cleanup", () => {
     const registry = new ModelRegistry(db);
     registry.initialize();
 
     const now = new Date().toISOString();
     registry.upsert({
       modelId: "glm-5",
-      provider: "conway",
+      provider: "defunct",
       displayName: "GLM-5",
       tierMinimum: "critical",
       costPer1kInput: 0,
@@ -189,7 +204,7 @@ describe("BYOK model registration", () => {
 
     const entry = registry.get("glm-5");
     expect(entry).toBeDefined();
-    expect(entry!.enabled).toBe(false); // "conway" is NOT protected
+    expect(entry!.enabled).toBe(false); // "defunct" is NOT protected
   });
 });
 

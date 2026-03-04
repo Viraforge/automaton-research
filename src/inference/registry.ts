@@ -140,7 +140,7 @@ export class ModelRegistry {
       const existing = modelRegistryGet(this.db, m.id);
       const row: ModelRegistryRow = {
         modelId: m.id,
-        provider: m.provider || m.owned_by || "conway",
+        provider: m.provider || m.owned_by || "other",
         displayName: m.display_name || m.id,
         tierMinimum: existing?.tierMinimum || "normal",
         costPer1kInput: m.pricing?.input_per_1k ?? existing?.costPer1kInput ?? 0,

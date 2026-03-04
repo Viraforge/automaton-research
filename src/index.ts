@@ -220,8 +220,9 @@ async function run(): Promise<void> {
     db.setIdentity("automatonId", automatonId);
   }
 
-  // Create Conway client — in BYOK mode (inferenceBaseUrl set), there's no
-  // Conway platform backend, so all admin calls are short-circuited.
+  // Create platform client for sandbox/admin operations.
+  // This is separate from inference routing.
+  // In BYOK mode (inferenceBaseUrl set), platform calls are short-circuited.
   const platformDisabled = !!config.inferenceBaseUrl;
   const conway = createConwayClient({
     apiUrl: config.conwayApiUrl,
@@ -315,8 +316,8 @@ async function run(): Promise<void> {
   }
 
   const inference = createInferenceClient({
-    apiUrl: config.conwayApiUrl,
-    apiKey,
+    apiUrl: config.inferenceBaseUrl || "",
+    apiKey: config.inferenceApiKey || apiKey,
     inferenceBaseUrl: config.inferenceBaseUrl,
     inferenceApiKey: config.inferenceApiKey,
     defaultModel: config.inferenceModel,
