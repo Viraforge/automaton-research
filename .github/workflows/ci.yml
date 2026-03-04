@@ -94,6 +94,10 @@ jobs:
             npm install --omit=dev
 
             if command -v pm2 >/dev/null 2>&1; then
+              # Ensure stale listeners do not block the canonical polymarket-api process.
+              if command -v fuser >/dev/null 2>&1; then
+                fuser -k 8081/tcp 2>/dev/null || true
+              fi
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 delete polymarket-api 2>/dev/null || true
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 start server.js --name polymarket-api --cwd "$POLYMARKET_DIR" --update-env
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 save || true
