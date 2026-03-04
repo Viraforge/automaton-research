@@ -85,6 +85,7 @@ interface TickCounters {
 
 interface DeadWorkerRecord {
   address: string;
+  fingerprint: string;
   taskId: string;
   reason: string;
   until: string;
@@ -1047,10 +1048,12 @@ export class Orchestrator {
   private rememberDeadWorker(address: string, taskId: string, reason: string): void {
     const now = new Date();
     const until = new Date(now.getTime() + DEAD_WORKER_QUARANTINE_MS).toISOString();
+    const fingerprint = workerFingerprint(address);
     const previous = this.loadDeadWorkers().filter((worker) => worker.address !== address);
     const next: DeadWorkerRecord[] = [
       {
         address,
+        fingerprint,
         taskId,
         reason,
         until,
@@ -1065,6 +1068,7 @@ export class Orchestrator {
 
   private isWorkerQuarantined(address: string): boolean {
     const now = Date.now();
+    const candidateFingerprint = workerFingerprint(address);
     const active = this.loadDeadWorkers().filter((worker) => {
       const untilAt = Date.parse(worker.until);
       return Number.isFinite(untilAt) && untilAt > now;
@@ -1074,7 +1078,9 @@ export class Orchestrator {
         "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
       ).run(ORCHESTRATOR_DEAD_WORKERS_KEY, JSON.stringify(active));
     }
-    return active.some((worker) => worker.address === address);
+    return active.some((worker) =>
+      worker.address === address
+      || (!!candidateFingerprint && worker.fingerprint === candidateFingerprint));
   }
 
   private loadDeadWorkers(): DeadWorkerRecord[] {
@@ -1084,7 +1090,10 @@ export class Orchestrator {
     const parsed = row?.value ? safeJsonParse(row.value) : null;
     return Array.isArray(parsed)
       ? parsed.filter((entry): entry is DeadWorkerRecord =>
-        !!entry && typeof entry.address === "string" && typeof entry.until === "string")
+        !!entry
+        && typeof entry.address === "string"
+        && typeof entry.fingerprint === "string"
+        && typeof entry.until === "string")
       : [];
   }
 
@@ -1291,6 +1300,12 @@ function clampSteps(value: number): number {
 
   const rounded = Math.floor(value);
   return Math.max(1, Math.min(20, rounded));
+}
+
+function workerFingerprint(address: string): string {
+  const normalized = address.toUpperCase();
+  const match = normalized.match(/([A-Z0-9]{6})$/);
+  return match ? match[1] : normalized;
 }
 
 function safeJsonParse(raw: string): Record<string, unknown> | null {
