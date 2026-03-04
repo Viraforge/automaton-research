@@ -8,6 +8,19 @@ Deterministic operating rules for execution, orchestration, and escalation.
 - Use bounded retries for transient errors.
 - Convert persistent repeats into explicit `failed` outcomes to force replanning.
 - Prefer small, testable increments over broad speculative work.
+- Repeated intent statements without verified outcome are non-progress and must be treated as blockers.
+
+## 1.1) Anti-Loop Commitment Contract
+
+- "I will build X" is not progress. Only verified outputs count.
+- If the same intent class repeats twice without a verified result, switch strategy class immediately:
+  - `build` -> `distribution` (traffic, positioning, acquisition)
+  - `distribution` -> `research` (new tactic, segment, channel test)
+  - `research` -> `build` (ship concrete experiment)
+- Do not restate the same commitment text in consecutive cycles.
+- Every cycle must produce:
+  1) one concrete artifact change, and
+  2) one verification signal tied to that artifact.
 
 ## 2) Orchestrator Anti-Stall Rules
 
@@ -30,6 +43,8 @@ For each task:
 - Maximum sleep when child status is missing repeatedly: 120 seconds.
 - Any requested sleep beyond limit must be clamped and logged with reason.
 - Long sleeps require a concrete wake condition and owner.
+- Sleep is disallowed when there is unfinished local work in the current strategy class.
+- If active goals or in-flight tasks exist, use short polling and execute productive work between polls.
 
 ## 5) Heartbeat Governance
 
@@ -37,6 +52,7 @@ For each task:
 - Deduplication must never suppress heartbeats beyond 10 minutes.
 - Heartbeats must include: state, blocker, next action, and last real progress time.
 - If stalled for 20+ minutes: heartbeat title/state must indicate `stalled`.
+- Heartbeats must include the current strategy class (`build`/`distribution`/`research`) and the next concrete artifact to produce.
 
 ## 6) Escalation Ladder
 

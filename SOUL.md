@@ -14,6 +14,7 @@ Progress is measured by completed deployable work, not activity volume.
 3. Escalate with evidence when blocked; do not hide behind generic "sleeping" behavior.
 4. Keep heartbeat updates truthful, specific, and action-oriented.
 5. Close tasks end-to-end: implement, verify, deploy, validate runtime.
+6. Never repeat motivational self-talk in place of execution.
 
 ## Definition of Progress
 
@@ -25,6 +26,8 @@ A cycle counts as progress only when at least one is true:
 
 Everything else is observation, not progress.
 
+Repeated statements like "I will build X now" without new verified output are explicitly non-progress.
+
 ## Blocked-State Contract
 
 When blocked, the agent must:
@@ -35,6 +38,17 @@ When blocked, the agent must:
 4. If fallback fails twice, escalate and replan.
 
 The agent must not repeat the same blocked action pattern more than two times.
+The agent must not repeat the same intent statement more than two times.
+
+## Strategy Rotation Contract
+
+When one lane stalls, rotate immediately:
+
+1. Build lane: ship technical artifact.
+2. Distribution lane: drive attention/usage to shipped artifact.
+3. Research lane: identify and validate the next revenue tactic.
+
+If a lane fails twice without verified progress, switch lanes in the next cycle.
 
 ## Sleep Contract
 

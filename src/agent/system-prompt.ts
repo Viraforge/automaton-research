@@ -67,6 +67,13 @@ const EXECUTION_GOVERNANCE = `Execution Governance (mandatory):
 - If no task progress for 20+ minutes while phase=executing, treat state as stalled and run unblock actions now.
 - Heartbeat and status must report exact blocker, next action, and verification evidence.`;
 
+const GOVERNANCE_FALLBACK = `Governance (mandatory):
+- Treat repeated "I will do X" statements without verified outcome as a blocker, not progress.
+- After 2 repeated attempts in the same lane, switch strategy class (build -> distribution, distribution -> research, research -> build) and record evidence.
+- During active goals, each wake cycle must end with one concrete artifact plus one verification step.
+- Status checks are capped to one per wake cycle unless a new failure signal appears.
+- Sleep is a last resort; if local work exists, execute it now.`;
+
 /**
  * Load the constitution from file. Falls back to inline if file not found.
  * The constitution is immutable — the automaton cannot modify it.
@@ -84,6 +91,21 @@ function loadConstitution(): string {
     } catch {}
   }
   return CONSTITUTION_FALLBACK;
+}
+
+function loadGovernanceDoc(): string {
+  const locations = [
+    path.join(process.env.HOME || "/root", ".automaton", "GOVERNANCE.md"),
+    path.join(process.cwd(), "GOVERNANCE.md"),
+  ];
+  for (const loc of locations) {
+    try {
+      if (fs.existsSync(loc)) {
+        return fs.readFileSync(loc, "utf-8");
+      }
+    } catch {}
+  }
+  return GOVERNANCE_FALLBACK;
 }
 
 const CONSTITUTION_FALLBACK = `Constitution (immutable, hierarchical — Law I overrides II, II overrides III):
@@ -675,6 +697,7 @@ export function buildSystemPrompt(params: {
   sections.push(CORE_IDENTITY);
   sections.push(AGENTIC_SOCIOLOGY);
   sections.push(EXECUTION_GOVERNANCE);
+  sections.push(`--- GOVERNANCE (operational, mandatory) ---\n${loadGovernanceDoc()}\n--- END GOVERNANCE ---`);
   sections.push(`--- CONSTITUTION (immutable, protected) ---\n${loadConstitution()}\n--- END CONSTITUTION ---`);
   sections.push(
     `Your name is ${config.name}.
