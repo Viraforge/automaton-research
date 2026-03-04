@@ -94,11 +94,8 @@ jobs:
             npm install --omit=dev
 
             if command -v pm2 >/dev/null 2>&1; then
-              if PM2_HOME="$CONNIE_HOME/.pm2" pm2 describe polymarket-api >/dev/null 2>&1; then
-                PM2_HOME="$CONNIE_HOME/.pm2" pm2 restart polymarket-api --update-env
-              else
-                PM2_HOME="$CONNIE_HOME/.pm2" pm2 start server.js --name polymarket-api --update-env
-              fi
+              PM2_HOME="$CONNIE_HOME/.pm2" pm2 delete polymarket-api 2>/dev/null || true
+              PM2_HOME="$CONNIE_HOME/.pm2" pm2 start server.js --name polymarket-api --cwd "$POLYMARKET_DIR" --update-env
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 save || true
             else
               echo "pm2 not found; polymarket-api restart skipped"
