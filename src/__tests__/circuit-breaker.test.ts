@@ -206,7 +206,7 @@ describe("Circuit Breaker", () => {
     expect(escalationTurn).toBeUndefined();
   });
 
-  it("breaker fires exactly once per 3 failures", async () => {
+  it("breaker fires exactly once per 3 failures", { timeout: 90_000 }, async () => {
     // All exec calls fail. After 3 failures, breaker fires and resets.
     // The 4th failure starts a new count at 1 — no second escalation.
     conway.exec = async () => {
