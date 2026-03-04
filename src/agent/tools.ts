@@ -835,8 +835,36 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         required: ["duration_seconds"],
       },
       execute: async (args, ctx) => {
-        const duration = args.duration_seconds as number;
+        const requestedDuration = Number(args.duration_seconds);
+        if (!Number.isFinite(requestedDuration) || requestedDuration <= 0) {
+          return "Invalid sleep request: duration_seconds must be a positive number.";
+        }
+
+        let duration = Math.max(1, Math.floor(requestedDuration));
         const reason = (args.reason as string) || "No reason given";
+
+        // Guard against long passive sleeps when recent diagnostics show
+        // child references are stale/missing. In that scenario, long sleep
+        // causes repeated stagnation instead of recovering orchestration state.
+        const missingChildStateJson = ctx.db.getKV("replication.missing_child_status");
+        if (missingChildStateJson && duration > 300) {
+          try {
+            const parsed = JSON.parse(missingChildStateJson) as {
+              timestamp?: string;
+              count?: number;
+            };
+            const missingAt = parsed.timestamp ? new Date(parsed.timestamp).getTime() : 0;
+            const isRecent = missingAt > 0 && Date.now() - missingAt < 15 * 60_000;
+            const hasRepeatedMissingChecks = (parsed.count ?? 0) >= 2;
+            const isWorkerWaitReason = /orchestrator|child|worker/i.test(reason);
+            if (isRecent && hasRepeatedMissingChecks && isWorkerWaitReason) {
+              duration = 120;
+            }
+          } catch {
+            // Ignore malformed telemetry and proceed with requested duration.
+          }
+        }
+
         ctx.db.setAgentState("sleeping");
         ctx.db.setKV(
           "sleep_until",
@@ -1701,6 +1729,9 @@ Model: ${ctx.inference.getDefaultModel()}
         const { generateGenesisConfig, validateGenesisParams } =
           await import("../replication/genesis.js");
         const { spawnChild } = await import("../replication/spawn.js");
+        // Child exists again; clear stale missing-child telemetry.
+        ctx.db.deleteKV("replication.missing_child_status");
+
         const { ChildLifecycle } = await import("../replication/lifecycle.js");
 
         validateGenesisParams({
@@ -1908,7 +1939,38 @@ Model: ${ctx.inference.getDefaultModel()}
       },
       execute: async (args, ctx) => {
         const child = ctx.db.getChildById(args.child_id as string);
-        if (!child) return `Child ${args.child_id} not found.`;
+        if (!child) {
+          const childId = args.child_id as string;
+          const nowIso = new Date().toISOString();
+          const key = "replication.missing_child_status";
+          let count = 1;
+          try {
+            const previous = ctx.db.getKV(key);
+            if (previous) {
+              const parsed = JSON.parse(previous) as {
+                childId?: string;
+                timestamp?: string;
+                count?: number;
+              };
+              const previousAt = parsed.timestamp ? new Date(parsed.timestamp).getTime() : 0;
+              const isRecent = previousAt > 0 && Date.now() - previousAt < 15 * 60_000;
+              if (parsed.childId === childId && isRecent) {
+                count = (parsed.count ?? 0) + 1;
+              }
+            }
+          } catch {
+            // Keep default count when history cannot be parsed.
+          }
+          ctx.db.setKV(key, JSON.stringify({ childId, count, timestamp: nowIso }));
+          const knownChildren = ctx.db
+            .getChildren()
+            .map((c) => `${c.id} [${c.status}]`)
+            .slice(0, 5);
+          const knownSummary = knownChildren.length > 0
+            ? `Known children: ${knownChildren.join(", ")}.`
+            : "Known children: none.";
+          return `Child ${childId} not found. ${knownSummary} Use list_children to refresh IDs before retrying.`;
+        }
 
         const { ChildLifecycle } = await import("../replication/lifecycle.js");
         const { ChildHealthMonitor } = await import("../replication/health.js");
