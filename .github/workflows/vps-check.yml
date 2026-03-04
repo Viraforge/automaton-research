@@ -46,6 +46,16 @@ jobs:
             fi
 
             echo ""
+            echo "=== 3.5 Heartbeat Scheduler State ==="
+            if [ -n "$DB" ] && [ -f "$DB" ]; then
+              echo "discord_heartbeat schedule row:"
+              sqlite3 "$DB" "SELECT task_name, enabled, cron_expression, interval_ms, last_run_at, next_run_at, last_result, substr(last_error,1,120), run_count, fail_count FROM heartbeat_schedule WHERE task_name='discord_heartbeat';" 2>/dev/null || echo "No heartbeat_schedule row"
+              echo ""
+              echo "Recent discord_heartbeat history:"
+              sqlite3 "$DB" "SELECT started_at, completed_at, result, duration_ms, substr(error,1,120) FROM heartbeat_history WHERE task_name='discord_heartbeat' ORDER BY started_at DESC LIMIT 10;" 2>/dev/null || echo "No heartbeat_history rows"
+            fi
+
+            echo ""
             echo "=== 4. Recent Goals ==="
             if [ -n "$DB" ] && [ -f "$DB" ]; then
               sqlite3 "$DB" "SELECT id, title, status, created_at FROM goals ORDER BY created_at DESC LIMIT 5;" 2>/dev/null || echo "No goals table"
@@ -79,6 +89,18 @@ jobs:
               echo "OK: No webhook URL in SOUL.md"
             fi
             python3 -c "import json; c=json.load(open('$CONNIE_HOME/.automaton/automaton.json')); print('automaton.json webhook:', 'SET' if c.get('discordWebhookUrl') else 'NOT SET')" 2>/dev/null
+            echo "systemd drop-ins:"
+            ls -la /etc/systemd/system/local-connie.service.d 2>/dev/null || true
+            PID=$(systemctl show -p MainPID --value local-connie 2>/dev/null || echo "")
+            if [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null; then
+              if tr '\0' '\n' < "/proc/$PID/environ" | grep -q '^DISCORD_WEBHOOK_URL='; then
+                echo "runtime DISCORD_WEBHOOK_URL: SET"
+              else
+                echo "runtime DISCORD_WEBHOOK_URL: NOT SET"
+              fi
+            else
+              echo "runtime DISCORD_WEBHOOK_URL: unknown (no MainPID)"
+            fi
 
             echo ""
             echo "=== 8.5 Discord Heartbeat JSONL (tail) ==="
