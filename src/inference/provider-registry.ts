@@ -55,12 +55,12 @@ const DEFAULT_EMERGENCY_STOP_CREDITS = 100;
 
 const DEFAULT_TIER_DEFAULTS: Record<ModelTier, TierDefault> = {
   reasoning: {
-    preferredProvider: "minimax",
-    fallbackOrder: ["zai", "openai", "groq", "together"],
+    preferredProvider: "zai",
+    fallbackOrder: ["minimax", "openai", "groq", "together"],
   },
   fast: {
-    preferredProvider: "minimax",
-    fallbackOrder: ["zai", "groq", "openai", "together", "local"],
+    preferredProvider: "zai",
+    fallbackOrder: ["minimax", "groq", "openai", "together", "local"],
   },
   cheap: {
     preferredProvider: "zai",

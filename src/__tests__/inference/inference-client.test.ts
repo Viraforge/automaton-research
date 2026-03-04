@@ -122,8 +122,8 @@ describe("UnifiedInferenceClient", () => {
     });
 
     expect(result.content).toBe("reasoning-response");
-    expect(result.metadata.providerId).toBe("minimax");
-    expect(result.metadata.modelId).toBe("MiniMax-M2.5");
+    expect(result.metadata.providerId).toBe("zai");
+    expect(result.metadata.modelId).toBe("glm-5");
     expect(result.metadata.tier).toBe("reasoning");
   });
 
@@ -137,8 +137,8 @@ describe("UnifiedInferenceClient", () => {
       messages: BASE_MESSAGES,
     });
 
-    expect(result.metadata.providerId).toBe("minimax");
-    expect(result.metadata.modelId).toBe("MiniMax-M2.5-highspeed");
+    expect(result.metadata.providerId).toBe("zai");
+    expect(result.metadata.modelId).toBe("glm-5");
     expect(result.metadata.tier).toBe("reasoning");
   });
 
@@ -177,12 +177,12 @@ describe("UnifiedInferenceClient", () => {
     async (status) => {
       const client = createClient();
 
-      // minimax gets 4 failures (3 retries + final failure), then zai succeeds
+      // zai gets 4 failures (3 retries + final failure), then minimax succeeds
       queueError(status);
       queueError(status);
       queueError(status);
       queueError(status);
-      queueCompletion({ content: `from-zai-${status}` });
+      queueCompletion({ content: `from-minimax-${status}` });
 
       vi.useFakeTimers();
       const pending = client.chat({ tier: "reasoning", messages: BASE_MESSAGES });
@@ -190,9 +190,9 @@ describe("UnifiedInferenceClient", () => {
       const result = await pending;
       vi.useRealTimers();
 
-      expect(result.content).toBe(`from-zai-${status}`);
-      expect(result.metadata.providerId).toBe("zai");
-      expect(result.metadata.failedProviders).toEqual(["minimax"]);
+      expect(result.content).toBe(`from-minimax-${status}`);
+      expect(result.metadata.providerId).toBe("minimax");
+      expect(result.metadata.failedProviders).toEqual(["zai"]);
       expect(result.metadata.retries).toBe(3);
     },
   );
@@ -304,7 +304,7 @@ describe("UnifiedInferenceClient", () => {
     queueCompletion({ content: "from-fallback" });
 
     const result = await client.chat({ tier: "reasoning", messages: BASE_MESSAGES });
-    expect(result.metadata.providerId).toBe("minimax");
+    expect(result.metadata.providerId).toBe("zai");
     expect(result.metadata.failedProviders).toEqual([]);
   });
 

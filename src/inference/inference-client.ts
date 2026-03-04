@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatMessage } from "../types.js";
+import { createLogger } from "../observability/logger.js";
 import {
   ProviderRegistry,
   type ModelTier,
@@ -11,6 +12,7 @@ const RETRYABLE_STATUS_CODES = new Set([429, 500, 503]);
 const RETRY_BACKOFF_MS = [1000, 2000, 4000] as const;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5;
 const CIRCUIT_BREAKER_DISABLE_MS = 5 * 60_000;
+const logger = createLogger("inference.unified");
 
 export interface UnifiedInferenceResult {
   content: string;
@@ -187,7 +189,7 @@ export class UnifiedInferenceClient {
       try {
         const result = await this.executeSingleRequest(
           resolved.client,
-          resolved.provider.id,
+          resolved.provider,
           resolved.model,
           requestedTier,
           params,
@@ -222,12 +224,25 @@ export class UnifiedInferenceClient {
 
   private async executeSingleRequest(
     client: OpenAI,
-    providerId: string,
+    provider: ResolvedModel["provider"],
     model: ModelConfig,
     requestedTier: ModelTier,
     params: SharedChatParams,
   ): Promise<UnifiedInferenceResult> {
     const startedAt = Date.now();
+    const configuredApiKey = process.env[provider.apiKeyEnvVar];
+    const apiKeyInfo = typeof configuredApiKey === "string" && configuredApiKey.length > 0
+      ? `${provider.apiKeyEnvVar}:set(len=${configuredApiKey.length})`
+      : `${provider.apiKeyEnvVar}:missing`;
+    const expectedEndpoint = `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`;
+    logger.info("Unified inference request", {
+      providerId: provider.id,
+      modelId: model.id,
+      requestedTier,
+      baseUrl: provider.baseUrl,
+      endpoint: expectedEndpoint,
+      apiKey: apiKeyInfo,
+    });
     const payload = this.buildChatCompletionRequest(model.id, params);
     if (params.stream) {
       const stream = await client.chat.completions.create({
@@ -236,7 +251,7 @@ export class UnifiedInferenceClient {
       } as any);
       const streamed = await this.consumeStreamResponse(stream as any);
       return this.buildUnifiedResult({
-        providerId,
+        providerId: provider.id,
         model,
         requestedTier,
         latencyMs: Date.now() - startedAt,
@@ -246,18 +261,32 @@ export class UnifiedInferenceClient {
       });
     }
 
-    const completion = await client.chat.completions.create({
-      ...payload,
-      stream: false,
-    } as any);
+    let completion;
+    try {
+      completion = await client.chat.completions.create({
+        ...payload,
+        stream: false,
+      } as any);
+    } catch (error) {
+      logger.warn("Unified inference request failed", {
+        providerId: provider.id,
+        modelId: model.id,
+        requestedTier,
+        baseUrl: provider.baseUrl,
+        endpoint: expectedEndpoint,
+        apiKey: apiKeyInfo,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     const choice = (completion as any).choices?.[0];
     if (!choice?.message) {
-      throw new Error(`No completion choice returned from provider '${providerId}'`);
+      throw new Error(`No completion choice returned from provider '${provider.id}'`);
     }
 
     return this.buildUnifiedResult({
-      providerId,
+      providerId: provider.id,
       model,
       requestedTier,
       latencyMs: Date.now() - startedAt,
