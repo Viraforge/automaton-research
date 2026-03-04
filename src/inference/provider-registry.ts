@@ -55,16 +55,16 @@ const DEFAULT_EMERGENCY_STOP_CREDITS = 100;
 
 const DEFAULT_TIER_DEFAULTS: Record<ModelTier, TierDefault> = {
   reasoning: {
-    preferredProvider: "openai",
-    fallbackOrder: ["groq", "together"],
+    preferredProvider: "minimax",
+    fallbackOrder: ["zai", "openai", "groq", "together"],
   },
   fast: {
-    preferredProvider: "groq",
-    fallbackOrder: ["openai", "together", "local"],
+    preferredProvider: "minimax",
+    fallbackOrder: ["zai", "groq", "openai", "together", "local"],
   },
   cheap: {
-    preferredProvider: "groq",
-    fallbackOrder: ["together", "local", "openai"],
+    preferredProvider: "zai",
+    fallbackOrder: ["groq", "together", "local", "openai"],
   },
 };
 
@@ -237,6 +237,75 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
     maxTokensPerMinute: 200000,
     priority: 10,
     enabled: false,
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    baseUrl: "https://api.minimax.io/v1",
+    apiKeyEnvVar: "MINIMAX_API_KEY",
+    models: [
+      {
+        id: "MiniMax-M2.5-highspeed",
+        tier: "fast",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+        costPerInputToken: 0.5,
+        costPerOutputToken: 1.0,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      },
+      {
+        id: "MiniMax-M2.5",
+        tier: "reasoning",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+        costPerInputToken: 0.5,
+        costPerOutputToken: 1.0,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      },
+    ],
+    maxRequestsPerMinute: 60,
+    maxTokensPerMinute: 100_000,
+    priority: 0,
+    enabled: true,
+  },
+  {
+    id: "zai",
+    name: "ZAI (Zhipu AI)",
+    baseUrl: "https://api.z.ai/api/coding/paas/v4",
+    apiKeyEnvVar: "ZAI_API_KEY",
+    models: [
+      {
+        id: "glm-5",
+        tier: "reasoning",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+        costPerInputToken: 0.5,
+        costPerOutputToken: 1.0,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      },
+      {
+        id: "glm-5",
+        // Same model is mapped to both tiers to keep fallback behavior consistent.
+        tier: "fast",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+        costPerInputToken: 0.5,
+        costPerOutputToken: 1.0,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      },
+    ],
+    maxRequestsPerMinute: 60,
+    maxTokensPerMinute: 100_000,
+    priority: 4,
+    enabled: true,
   },
 ];
 

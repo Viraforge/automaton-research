@@ -1,8 +1,7 @@
 /**
- * Conway Inference Client
+ * Inference Client
  *
- * Wraps Conway's /v1/chat/completions endpoint (OpenAI-compatible).
- * The automaton pays for its own thinking through Conway credits.
+ * Routes requests to OpenAI-compatible BYOK endpoints, OpenAI, Anthropic, or Ollama.
  */
 
 import type {
@@ -19,7 +18,6 @@ import { ResilientHttpClient } from "../http/client.js";
 const INFERENCE_TIMEOUT_MS = 60_000;
 
 interface InferenceClientOptions {
-  apiUrl: string;
   apiKey: string;
   /** Base URL for a custom inference provider (e.g. https://api.z.ai/api/coding/paas/v4). When set, /chat/completions is appended and Bearer auth is used. */
   inferenceBaseUrl?: string;
@@ -35,12 +33,12 @@ interface InferenceClientOptions {
   getModelProvider?: (modelId: string) => string | undefined;
 }
 
-type InferenceBackend = "conway" | "openai" | "anthropic" | "ollama";
+type InferenceBackend = "byok" | "openai" | "anthropic" | "ollama";
 
 export function createInferenceClient(
   options: InferenceClientOptions,
 ): InferenceClient {
-  const { apiUrl, apiKey, inferenceBaseUrl, inferenceApiKey, openaiApiKey, anthropicApiKey, ollamaBaseUrl, getModelProvider } = options;
+  const { apiKey, inferenceBaseUrl, inferenceApiKey, openaiApiKey, anthropicApiKey, ollamaBaseUrl, getModelProvider } = options;
   const httpClient = new ResilientHttpClient({
     baseTimeout: INFERENCE_TIMEOUT_MS,
     retryableStatuses: [429, 500, 502, 503, 504],
@@ -102,12 +100,15 @@ export function createInferenceClient(
       });
     }
 
-    const useCustomInference = backend === "conway" && !!inferenceBaseUrl;
+    if (backend === "byok" && !inferenceBaseUrl) {
+      throw new Error("BYOK inference requires inferenceBaseUrl to be set");
+    }
+
+    const useCustomInference = backend === "byok" && !!inferenceBaseUrl;
     const openAiLikeApiUrl =
       backend === "openai" ? "https://api.openai.com" :
       backend === "ollama" ? (ollamaBaseUrl as string).replace(/\/$/, "") :
-      useCustomInference ? inferenceBaseUrl!.replace(/\/$/, "") :
-      apiUrl;
+      inferenceBaseUrl!.replace(/\/$/, "");
     const openAiLikeApiKey =
       backend === "openai" ? (openaiApiKey as string) :
       backend === "ollama" ? "ollama" :
@@ -220,23 +221,22 @@ export function resolveInferenceBackend(
   if (keys.getModelProvider) {
     const provider = keys.getModelProvider(model);
     if (provider === "ollama" && keys.ollamaBaseUrl) return "ollama";
-    // BYOK: "other" means user-registered model — route through conway/BYOK path
-    if (provider === "other") return "conway";
+    // BYOK: "other" means user-registered model — route through BYOK path.
+    if (provider === "other") return "byok";
     if (provider === "anthropic" && keys.anthropicApiKey) return "anthropic";
     if (provider === "openai" && keys.openaiApiKey) return "openai";
-    if (provider === "conway") return "conway";
     // provider unknown or key not configured — fall through to heuristics
   }
 
   // When inferenceBaseUrl is set (BYOK mode), skip name heuristics entirely.
   // The user explicitly configured where inference goes; don't let a model name
   // like "gpt-*" silently redirect to OpenAI.
-  if (keys.inferenceBaseUrl) return "conway";
+  if (keys.inferenceBaseUrl) return "byok";
 
   // Heuristic fallback (model not in registry yet, no BYOK)
   if (keys.anthropicApiKey && /^claude/i.test(model)) return "anthropic";
   if (keys.openaiApiKey && /^(gpt-[3-9]|gpt-4|gpt-5|o[1-9][-\s.]|o[1-9]$|chatgpt)/i.test(model)) return "openai";
-  return "conway";
+  return "byok";
 
 }
 
@@ -245,7 +245,7 @@ async function chatViaOpenAiCompatible(params: {
   body: Record<string, unknown>;
   apiUrl: string;
   apiKey: string;
-  backend: "conway" | "openai" | "ollama";
+  backend: "byok" | "openai" | "ollama";
   /** When true, the apiUrl already includes the version path — append /chat/completions only. */
   useBearer?: boolean;
   httpClient: ResilientHttpClient;

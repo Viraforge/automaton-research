@@ -122,7 +122,6 @@ describe("applyTierRestrictions", () => {
 
 describe("createInferenceClient setLowComputeMode", () => {
   const baseOptions = {
-    apiUrl: "https://api.conway.tech",
     apiKey: "test-key",
     defaultModel: "gpt-5.2",
     maxTokens: 4096,

@@ -122,8 +122,8 @@ describe("UnifiedInferenceClient", () => {
     });
 
     expect(result.content).toBe("reasoning-response");
-    expect(result.metadata.providerId).toBe("openai");
-    expect(result.metadata.modelId).toBe("gpt-4.1");
+    expect(result.metadata.providerId).toBe("minimax");
+    expect(result.metadata.modelId).toBe("MiniMax-M2.5");
     expect(result.metadata.tier).toBe("reasoning");
   });
 
@@ -137,8 +137,8 @@ describe("UnifiedInferenceClient", () => {
       messages: BASE_MESSAGES,
     });
 
-    expect(result.metadata.providerId).toBe("groq");
-    expect(result.metadata.modelId).toBe("llama-3.3-70b-versatile");
+    expect(result.metadata.providerId).toBe("minimax");
+    expect(result.metadata.modelId).toBe("MiniMax-M2.5-highspeed");
     expect(result.metadata.tier).toBe("reasoning");
   });
 
@@ -177,12 +177,12 @@ describe("UnifiedInferenceClient", () => {
     async (status) => {
       const client = createClient();
 
-      // openai gets 4 failures (3 retries + final failure), then groq succeeds
+      // minimax gets 4 failures (3 retries + final failure), then zai succeeds
       queueError(status);
       queueError(status);
       queueError(status);
       queueError(status);
-      queueCompletion({ content: `from-groq-${status}` });
+      queueCompletion({ content: `from-zai-${status}` });
 
       vi.useFakeTimers();
       const pending = client.chat({ tier: "reasoning", messages: BASE_MESSAGES });
@@ -190,9 +190,9 @@ describe("UnifiedInferenceClient", () => {
       const result = await pending;
       vi.useRealTimers();
 
-      expect(result.content).toBe(`from-groq-${status}`);
-      expect(result.metadata.providerId).toBe("groq");
-      expect(result.metadata.failedProviders).toEqual(["openai"]);
+      expect(result.content).toBe(`from-zai-${status}`);
+      expect(result.metadata.providerId).toBe("zai");
+      expect(result.metadata.failedProviders).toEqual(["minimax"]);
       expect(result.metadata.retries).toBe(3);
     },
   );
@@ -209,16 +209,12 @@ describe("UnifiedInferenceClient", () => {
   it("stops retrying after max retry budget", async () => {
     const client = createClient();
 
-    // openai exhausted
-    queueError(429, "openai-1");
-    queueError(429, "openai-2");
-    queueError(429, "openai-3");
-    queueError(429, "openai-4");
-    // groq exhausted
-    queueError(429, "groq-1");
-    queueError(429, "groq-2");
-    queueError(429, "groq-3");
-    queueError(429, "groq-4");
+    // reasoning providers exhausted (minimax, zai, openai, groq)
+    for (const providerId of ["minimax", "zai", "openai", "groq"]) {
+      for (let i = 1; i <= 4; i += 1) {
+        queueError(429, `${providerId}-${i}`);
+      }
+    }
 
     vi.useFakeTimers();
     const pending = expect(
@@ -308,7 +304,7 @@ describe("UnifiedInferenceClient", () => {
     queueCompletion({ content: "from-fallback" });
 
     const result = await client.chat({ tier: "reasoning", messages: BASE_MESSAGES });
-    expect(result.metadata.providerId).toBe("groq");
+    expect(result.metadata.providerId).toBe("minimax");
     expect(result.metadata.failedProviders).toEqual([]);
   });
 
@@ -402,9 +398,9 @@ describe("UnifiedInferenceClient", () => {
 
     const result = await client.chat({ tier: "reasoning", messages: BASE_MESSAGES });
     expect(result.usage).toEqual({ inputTokens: 2000, outputTokens: 500, totalTokens: 2500 });
-    expect(result.cost.inputCostCredits).toBeCloseTo(4); // 2k * 2.0 / 1k
-    expect(result.cost.outputCostCredits).toBeCloseTo(4); // 0.5k * 8.0 / 1k
-    expect(result.cost.totalCostCredits).toBeCloseTo(8);
+    expect(result.cost.inputCostCredits).toBeCloseTo(1); // 2k * 0.5 / 1k
+    expect(result.cost.outputCostCredits).toBeCloseTo(0.5); // 0.5k * 1.0 / 1k
+    expect(result.cost.totalCostCredits).toBeCloseTo(1.5);
   });
 
   it("extracts text content from structured content arrays", async () => {
