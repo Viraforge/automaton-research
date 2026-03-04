@@ -863,6 +863,45 @@ describe("Heartbeat Tasks", () => {
       globalThis.fetch = origFetch;
     });
 
+    it("skips sleeping duplicate heartbeat only within 10-minute window", async () => {
+      const tickCtx = createMockTickContext(db, {
+        creditBalance: 5000,
+        usdcBalance: 2.5,
+        survivalTier: "normal",
+      });
+      db.setAgentState("sleeping");
+      db.setKV("last_heartbeat_hash", JSON.stringify({
+        state: "sleeping",
+        turnCount: 0,
+        lastError: "none",
+        currentGoal: "",
+      }));
+      db.setKV("last_discord_heartbeat", new Date().toISOString());
+
+      const origFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      globalThis.fetch = async () => {
+        fetchCalls++;
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+      expect(fetchCalls).toBe(0);
+
+      db.setKV("last_discord_heartbeat", new Date(Date.now() - 11 * 60_000).toISOString());
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+      expect(fetchCalls).toBe(1);
+
+      globalThis.fetch = origFetch;
+    });
+
     it("reads webhook URL from env var when config is not set", async () => {
       const tickCtx = createMockTickContext(db);
 

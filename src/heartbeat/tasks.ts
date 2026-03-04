@@ -30,6 +30,7 @@ const logger = createLogger("heartbeat.tasks");
 
 const DISCORD_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5MB
 const DISCORD_LOG_TRIM_TO = 2 * 1024 * 1024;   // 2MB
+const HEARTBEAT_DEDUP_MAX_SILENCE_MS = 10 * 60_000; // Always post at least every 10 minutes.
 
 /** Append a JSONL entry to the Discord heartbeat diagnostic log. */
 function appendDiscordLog(entry: Record<string, unknown>, logPath?: string): void {
@@ -923,7 +924,10 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     // Skip duplicate posts while sleeping (nothing changed)
     const contentHash = JSON.stringify({ state, turnCount, lastError, currentGoal });
     const lastHash = taskCtx.db.getKV("last_heartbeat_hash");
-    if (lastHash === contentHash && state === "sleeping") {
+    const lastHeartbeatAtMs = Date.parse(taskCtx.db.getKV("last_discord_heartbeat") || "");
+    const hasRecentHeartbeat = Number.isFinite(lastHeartbeatAtMs)
+      && Date.now() - lastHeartbeatAtMs < HEARTBEAT_DEDUP_MAX_SILENCE_MS;
+    if (lastHash === contentHash && state === "sleeping" && hasRecentHeartbeat) {
       appendDiscordLog({ ...logBase, status: "skipped_dedup" });
       return { shouldWake: false };
     }
