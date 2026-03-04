@@ -22,6 +22,8 @@ export class CircuitOpenError extends Error {
 export class ResilientHttpClient {
   private consecutiveFailures = 0;
   private circuitOpenUntil = 0;
+  private nextRequestAt = 0;
+  private requestQueue: Promise<void> = Promise.resolve();
   private readonly config: HttpClientConfig;
 
   constructor(config?: Partial<HttpClientConfig>) {
@@ -36,6 +38,8 @@ export class ResilientHttpClient {
       retries?: number;
     },
   ): Promise<Response> {
+    await this.waitForRequestSlot();
+
     if (this.isCircuitOpen()) {
       throw new CircuitOpenError(this.circuitOpenUntil);
     }
@@ -94,6 +98,25 @@ export class ResilientHttpClient {
     }
 
     throw new Error("Unreachable");
+  }
+
+  private async waitForRequestSlot(): Promise<void> {
+    if (this.config.minRequestIntervalMs <= 0) return;
+
+    let releaseQueue: (() => void) | undefined;
+    const previous = this.requestQueue;
+    this.requestQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+
+    await previous;
+    const now = Date.now();
+    const waitMs = Math.max(0, this.nextRequestAt - now);
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    this.nextRequestAt = Date.now() + this.config.minRequestIntervalMs;
+    releaseQueue?.();
   }
 
   private async backoff(attempt: number): Promise<void> {

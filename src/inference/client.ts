@@ -16,6 +16,7 @@ import type {
 import { ResilientHttpClient } from "../http/client.js";
 
 const INFERENCE_TIMEOUT_MS = 60_000;
+const INFERENCE_MIN_REQUEST_INTERVAL_MS = 5_000;
 
 interface InferenceClientOptions {
   apiKey: string;
@@ -42,6 +43,7 @@ export function createInferenceClient(
   const httpClient = new ResilientHttpClient({
     baseTimeout: INFERENCE_TIMEOUT_MS,
     retryableStatuses: [429, 500, 502, 503, 504],
+    minRequestIntervalMs: INFERENCE_MIN_REQUEST_INTERVAL_MS,
   });
   let currentModel = options.defaultModel;
   let maxTokens = options.maxTokens;
