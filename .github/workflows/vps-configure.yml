@@ -112,6 +112,15 @@ jobs:
                 rm -rf "$d"
               done
             done
+            # Explicitly retire legacy watchdog script if present.
+            rm -f "$CONNIE_HOME/connie-health-check.sh" "$CONNIE_HOME/scripts/connie-health-check.sh"
+            rm -f /root/.automaton-research-home/connie-health-check.sh /root/.automaton-research-home/scripts/connie-health-check.sh
+            # Remove cron entries that invoke legacy watchdog/health-check scripts.
+            for USERNAME in root "$USER"; do
+              crontab -u "$USERNAME" -l 2>/dev/null \
+                | grep -vE "connie-health-check|connie-watchdog|watchdog.*connie|/\\.automaton-research-home/scripts/watchdog" \
+                | crontab -u "$USERNAME" - 2>/dev/null || true
+            done
             # Also clean /tmp of watchdog/monitor artifacts
             rm -f /tmp/connie-watchdog.log /tmp/connie-health-check.sh /tmp/request_body.json /tmp/request_body_air.json
             # Kill PM2 and delete dump so agent processes don't auto-restart

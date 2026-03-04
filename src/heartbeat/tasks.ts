@@ -717,6 +717,7 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
         const parsed = JSON.parse(errorJson);
         if (parsed.message) {
           // Show resolved errors with age, active errors without
+          const hasActiveUnresolvedError = !parsed.resolvedAt;
           if (parsed.resolvedAt) {
             const agoMs = Date.now() - new Date(parsed.resolvedAt).getTime();
             const agoMin = Math.floor(agoMs / 60_000);
@@ -734,7 +735,7 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
               ? `${parsed.message.slice(0, 120)} (x${parsed.consecutiveErrors})`
               : parsed.message.slice(0, 150);
           }
-          if (parsed.forcedSleep) {
+          if (hasActiveUnresolvedError && parsed.forcedSleep) {
             isForcedSleep = true;
             lastError += " [CRASH SLEEP]";
           }

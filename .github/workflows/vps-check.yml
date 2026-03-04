@@ -90,6 +90,25 @@ jobs:
             fi
 
             echo ""
+            echo "=== 8.6 Watchdog Retirement Checks ==="
+            if [ -f "$CONNIE_HOME/connie-health-check.sh" ] || [ -f "$CONNIE_HOME/scripts/connie-health-check.sh" ]; then
+              echo "WARNING: legacy connie-health-check.sh still present"
+            else
+              echo "OK: legacy connie-health-check.sh not found"
+            fi
+            if systemctl list-units --type=service --all --no-pager 2>/dev/null | grep -q "connie-watchdog.service"; then
+              echo "WARNING: connie-watchdog.service exists"
+            else
+              echo "OK: no connie-watchdog.service"
+            fi
+            if crontab -u root -l 2>/dev/null | grep -Eq "connie-health-check|connie-watchdog|watchdog.*connie|/\\.automaton-research-home/scripts/watchdog"; then
+              echo "WARNING: root crontab still has watchdog entries"
+              crontab -u root -l 2>/dev/null | grep -E "connie-health-check|connie-watchdog|watchdog.*connie|/\\.automaton-research-home/scripts/watchdog" || true
+            else
+              echo "OK: root crontab has no watchdog entries"
+            fi
+
+            echo ""
             echo "=== 9. Recent Errors ==="
             grep -E "\[FATAL\]|\[ERROR\]" /tmp/connie-research.log 2>/dev/null | tail -5 || echo "No errors"
 

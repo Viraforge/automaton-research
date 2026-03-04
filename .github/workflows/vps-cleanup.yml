@@ -58,6 +58,7 @@ jobs:
             echo ""
             echo "=== Removing cron jobs ==="
             crontab -l 2>/dev/null | grep -v "connie-health-check\|health-monitor\|log-forwarder\|discord\|monitor\|watchdog" | crontab - 2>/dev/null && echo "Cleaned crontab" || echo "No crontab to clean"
+            crontab -u root -l 2>/dev/null | grep -v "connie-health-check\|health-monitor\|log-forwarder\|discord\|monitor\|watchdog" | crontab -u root - 2>/dev/null && echo "Cleaned root crontab" || true
 
             echo ""
             echo "=== Stopping PM2 ==="
@@ -70,6 +71,8 @@ jobs:
             for f in $(find "$CONNIE_HOME" -maxdepth 2 \( -name "*monitor*" -o -name "*watchdog*" \) -not -name "*.disabled" 2>/dev/null); do
               mv "$f" "$f.disabled" && echo "Disabled: $f" || echo "Failed to disable: $f"
             done
+            rm -f "$CONNIE_HOME/connie-health-check.sh" "$CONNIE_HOME/scripts/connie-health-check.sh"
+            rm -f /root/.automaton-research-home/connie-health-check.sh /root/.automaton-research-home/scripts/connie-health-check.sh
 
             echo ""
             echo "=== Removing agent-created Discord scripts ==="
