@@ -865,6 +865,36 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           }
         }
 
+        // Never allow hour-long sleeps while orchestration is actively executing
+        // with assigned/running tasks. In that state, short polling is safer so
+        // the parent can react quickly if workers fail.
+        if (duration > 300 && /orchestrator|child|worker/i.test(reason)) {
+          try {
+            const orchestratorStateRow = ctx.db.raw
+              .prepare("SELECT value FROM kv WHERE key = 'orchestrator.state'")
+              .get() as { value?: string } | undefined;
+            const parsedState = orchestratorStateRow?.value
+              ? JSON.parse(orchestratorStateRow.value) as { phase?: string; goalId?: string | null }
+              : null;
+            const isExecuting = parsedState?.phase === "executing";
+            const hasActiveAssignedTasks = Number(
+              (
+                ctx.db.raw
+                  .prepare(
+                    "SELECT COUNT(*) AS count FROM task_graph WHERE status IN ('assigned','running')",
+                  )
+                  .get() as { count?: number } | undefined
+              )?.count ?? 0,
+            ) > 0;
+
+            if (isExecuting && hasActiveAssignedTasks) {
+              duration = Math.min(duration, 300);
+            }
+          } catch {
+            // Keep requested duration when orchestration state cannot be read.
+          }
+        }
+
         ctx.db.setAgentState("sleeping");
         ctx.db.setKV(
           "sleep_until",
