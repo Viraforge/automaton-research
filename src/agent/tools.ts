@@ -843,6 +843,24 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         let duration = Math.max(1, Math.floor(requestedDuration));
         const reason = (args.reason as string) || "No reason given";
 
+        let orchestratorPhase = "";
+        let hasActiveGoal = false;
+        try {
+          const orchestratorStateRow = ctx.db.raw
+            .prepare("SELECT value FROM kv WHERE key = 'orchestrator.state'")
+            .get() as { value?: string } | undefined;
+          const parsedState = orchestratorStateRow?.value
+            ? JSON.parse(orchestratorStateRow.value) as { phase?: string; goalId?: string | null }
+            : null;
+          orchestratorPhase = parsedState?.phase ?? "";
+          hasActiveGoal = Boolean(parsedState?.goalId);
+        } catch {
+          orchestratorPhase = "";
+          hasActiveGoal = false;
+        }
+        const isOrchestrationWaitReason = /orchestrator|child|worker|replan|planner/i.test(reason);
+        const hasActiveOrchestrationWork = hasActiveGoal && orchestratorPhase !== "idle";
+
         // Guard against long passive sleeps when recent diagnostics show
         // child references are stale/missing. In that scenario, long sleep
         // causes repeated stagnation instead of recovering orchestration state.
@@ -856,7 +874,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
             const missingAt = parsed.timestamp ? new Date(parsed.timestamp).getTime() : 0;
             const isRecent = missingAt > 0 && Date.now() - missingAt < 15 * 60_000;
             const hasRepeatedMissingChecks = (parsed.count ?? 0) >= 2;
-            const isWorkerWaitReason = /orchestrator|child|worker/i.test(reason);
+            const isWorkerWaitReason = isOrchestrationWaitReason;
             if (isRecent && hasRepeatedMissingChecks && isWorkerWaitReason) {
               duration = 120;
             }
@@ -865,18 +883,15 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           }
         }
 
-        // Never allow hour-long sleeps while orchestration is actively executing
-        // with assigned/running tasks. In that state, short polling is safer so
-        // the parent can react quickly if workers fail.
-        if (duration > 300 && /orchestrator|child|worker/i.test(reason)) {
+        // Never allow long sleeps while any orchestrator goal is active.
+        // This prevents repeated "sleep 1h while workers run" loops.
+        if (duration > 120 && isOrchestrationWaitReason && hasActiveOrchestrationWork) {
+          duration = 120;
+        }
+
+        // While execution is live, keep polling cadence tighter.
+        if (duration > 60 && isOrchestrationWaitReason && orchestratorPhase === "executing") {
           try {
-            const orchestratorStateRow = ctx.db.raw
-              .prepare("SELECT value FROM kv WHERE key = 'orchestrator.state'")
-              .get() as { value?: string } | undefined;
-            const parsedState = orchestratorStateRow?.value
-              ? JSON.parse(orchestratorStateRow.value) as { phase?: string; goalId?: string | null }
-              : null;
-            const isExecuting = parsedState?.phase === "executing";
             const hasActiveAssignedTasks = Number(
               (
                 ctx.db.raw
@@ -887,8 +902,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
               )?.count ?? 0,
             ) > 0;
 
-            if (isExecuting && hasActiveAssignedTasks) {
-              duration = Math.min(duration, 300);
+            if (hasActiveAssignedTasks) {
+              duration = Math.min(duration, 60);
             }
           } catch {
             // Keep requested duration when orchestration state cannot be read.
@@ -897,18 +912,12 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
 
         // If orchestration is executing but has not made progress for a while,
         // keep sleep extremely short so the parent can actively resolve stalls.
-        if (duration > 60 && /orchestrator|child|worker/i.test(reason)) {
+        if (duration > 60 && isOrchestrationWaitReason) {
           try {
-            const orchestratorStateRow = ctx.db.raw
-              .prepare("SELECT value FROM kv WHERE key = 'orchestrator.state'")
-              .get() as { value?: string } | undefined;
-            const parsedState = orchestratorStateRow?.value
-              ? JSON.parse(orchestratorStateRow.value) as { phase?: string }
-              : null;
             const lastProgressAt = ctx.db.getKV("orchestrator.last_progress_at");
             const lastProgressMs = lastProgressAt ? Date.parse(lastProgressAt) : Number.NaN;
             const hasStaleProgress = Number.isFinite(lastProgressMs) && Date.now() - lastProgressMs > 20 * 60_000;
-            if (parsedState?.phase === "executing" && hasStaleProgress) {
+            if (hasActiveOrchestrationWork && hasStaleProgress) {
               duration = Math.min(duration, 60);
             }
           } catch {

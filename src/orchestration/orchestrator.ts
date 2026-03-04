@@ -1133,7 +1133,18 @@ export class Orchestrator {
     });
     const firstSeenMs = Date.parse(current.firstSeenAt);
     const hasTimedOut = Number.isFinite(firstSeenMs) && nowMs - firstSeenMs >= EXECUTION_STALL_THRESHOLD_MS;
-    return hasTimedOut && staleRecoveries > 0;
+    if (!hasTimedOut) return false;
+
+    // Force unstick when execution is stale even without fresh dead-worker events.
+    // Requiring staleRecoveries can miss prolonged "assigned/running but no progress" loops.
+    const inFlightCount = Number(
+      (
+        this.params.db.prepare(
+          "SELECT COUNT(*) AS count FROM task_graph WHERE goal_id = ? AND status IN ('assigned', 'running')",
+        ).get(goalId) as { count?: number } | undefined
+      )?.count ?? 0,
+    );
+    return staleRecoveries > 0 || inFlightCount > 0;
   }
 
   private loadExecutionStallState(): ExecutionStallState | null {
