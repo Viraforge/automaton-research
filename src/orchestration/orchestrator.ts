@@ -1081,7 +1081,7 @@ export class Orchestrator {
     const row = this.params.db
       .prepare("SELECT value FROM kv WHERE key = ?")
       .get(ORCHESTRATOR_DEAD_WORKERS_KEY) as { value: string } | undefined;
-    const parsed = safeJsonParse(row?.value);
+    const parsed = row?.value ? safeJsonParse(row.value) : null;
     return Array.isArray(parsed)
       ? parsed.filter((entry): entry is DeadWorkerRecord =>
         !!entry && typeof entry.address === "string" && typeof entry.until === "string")
@@ -1101,7 +1101,7 @@ export class Orchestrator {
     const tasks = getTasksByGoal(this.params.db, goalId);
     const signature = JSON.stringify(
       tasks
-        .map((task) => `${task.id}:${task.status}:${task.assignedTo ?? "none"}:${task.metadata.retryCount}`)
+        .map((task) => `${task.id}:${task.status}:${task.assignedTo ?? "none"}:${task.retryCount}`)
         .sort(),
     );
     const nowIso = new Date().toISOString();
@@ -1131,11 +1131,16 @@ export class Orchestrator {
     const row = this.params.db
       .prepare("SELECT value FROM kv WHERE key = ?")
       .get(ORCHESTRATOR_EXEC_STALL_KEY) as { value: string } | undefined;
-    const parsed = safeJsonParse(row?.value);
+    const parsed = row?.value ? safeJsonParse(row.value) : null;
     if (!parsed || typeof parsed !== "object") return null;
     if (typeof parsed.goalId !== "string" || typeof parsed.signature !== "string") return null;
     if (typeof parsed.firstSeenAt !== "string" || typeof parsed.lastSeenAt !== "string") return null;
-    return parsed as ExecutionStallState;
+    return {
+      goalId: parsed.goalId,
+      signature: parsed.signature,
+      firstSeenAt: parsed.firstSeenAt,
+      lastSeenAt: parsed.lastSeenAt,
+    };
   }
 
   private saveExecutionStallState(state: ExecutionStallState): void {
