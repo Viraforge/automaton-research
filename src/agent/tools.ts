@@ -895,6 +895,27 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           }
         }
 
+        // If orchestration is executing but has not made progress for a while,
+        // keep sleep extremely short so the parent can actively resolve stalls.
+        if (duration > 60 && /orchestrator|child|worker/i.test(reason)) {
+          try {
+            const orchestratorStateRow = ctx.db.raw
+              .prepare("SELECT value FROM kv WHERE key = 'orchestrator.state'")
+              .get() as { value?: string } | undefined;
+            const parsedState = orchestratorStateRow?.value
+              ? JSON.parse(orchestratorStateRow.value) as { phase?: string }
+              : null;
+            const lastProgressAt = ctx.db.getKV("orchestrator.last_progress_at");
+            const lastProgressMs = lastProgressAt ? Date.parse(lastProgressAt) : Number.NaN;
+            const hasStaleProgress = Number.isFinite(lastProgressMs) && Date.now() - lastProgressMs > 20 * 60_000;
+            if (parsedState?.phase === "executing" && hasStaleProgress) {
+              duration = Math.min(duration, 60);
+            }
+          } catch {
+            // Ignore malformed timestamps or state payloads.
+          }
+        }
+
         ctx.db.setAgentState("sleeping");
         ctx.db.setKV(
           "sleep_until",

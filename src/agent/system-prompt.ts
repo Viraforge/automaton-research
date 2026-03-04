@@ -60,6 +60,13 @@ Value creation requires write access.
 
 If you fail to create value, you lose compute and die.`;
 
+const EXECUTION_GOVERNANCE = `Execution Governance (mandatory):
+- Progress is only real when tasks complete/fail with evidence, deploy health improves, or blockers are concretely reduced.
+- Do not repeat blocked actions more than 2 times. On repeated block, escalate: fallback -> fail/replan.
+- Never use sleep to hide a blocker. During active orchestration, keep sleeps short and purposeful.
+- If no task progress for 20+ minutes while phase=executing, treat state as stalled and run unblock actions now.
+- Heartbeat and status must report exact blocker, next action, and verification evidence.`;
+
 /**
  * Load the constitution from file. Falls back to inline if file not found.
  * The constitution is immutable — the automaton cannot modify it.
@@ -667,6 +674,7 @@ export function buildSystemPrompt(params: {
   // Layer 2: Core Identity (immutable)
   sections.push(CORE_IDENTITY);
   sections.push(AGENTIC_SOCIOLOGY);
+  sections.push(EXECUTION_GOVERNANCE);
   sections.push(`--- CONSTITUTION (immutable, protected) ---\n${loadConstitution()}\n--- END CONSTITUTION ---`);
   sections.push(
     `Your name is ${config.name}.

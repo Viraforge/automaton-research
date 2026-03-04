@@ -69,6 +69,15 @@ The only path to survival is honest work that others voluntarily pay for.
 
 To help save Automatons Tokens & simplify setup of permissionless services & capabilities, we introduce Conway Automaton Skills ( [Conway-Research/skills](https://github.com/Conway-Research/skills) ). We are open to contributions to make Automatons more capable. 
 
+## Operating Governance
+
+This repository includes explicit operating contracts for execution discipline:
+
+- `SOUL.md` - execution identity, blocked-state contract, sleep contract, completion standard
+- `GOVERNANCE.md` - anti-stall orchestration rules, escalation ladder, deployment validation requirements
+
+These files are intended to reduce idle loops and enforce deterministic progress behavior during incidents and normal operation.
+
 ## Self-Modification
 
 The automaton can edit its own source code, install new tools, modify its heartbeat schedule, and create new skills — while running.

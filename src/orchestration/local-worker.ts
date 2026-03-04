@@ -163,6 +163,7 @@ export class LocalWorkerPool {
 
     const artifacts: string[] = [];
     let finalOutput = "";
+    let inferenceFailureCount = 0;
     const startedAt = Date.now();
 
     logger.info(`[WORKER ${workerId}] Starting task "${task.title}" (${task.id}), role: ${task.agentRole ?? "generalist"}`);
@@ -191,10 +192,20 @@ export class LocalWorkerPool {
           tools: toolDefs,
           toolChoice: "auto",
         });
+        inferenceFailureCount = 0;
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[WORKER ${workerId}] Inference failed on turn ${turn + 1}`, error instanceof Error ? error : new Error(msg));
-        failTask(this.config.db, task.id, `Inference failed: ${msg}`, true);
+        inferenceFailureCount += 1;
+        const isAbortLike = /aborted|aborterror|timed out|timeout/i.test(msg);
+        const shouldRetry = isAbortLike && inferenceFailureCount < 3 && turn + 1 < maxTurns;
+        if (shouldRetry) {
+          logger.warn(`[WORKER ${workerId}] Retrying transient inference failure (${inferenceFailureCount}/3)`);
+          continue;
+        }
+        // Permanent failure here is intentional: orchestration should replan
+        // instead of endlessly respawning workers for the same broken task.
+        failTask(this.config.db, task.id, `Inference failed: ${msg}`, false);
         return;
       }
 

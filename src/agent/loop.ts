@@ -526,10 +526,15 @@ export async function runAgentLoop(
       if (orchestrator) {
         const orchestratorTick = await orchestrator.tick();
         db.setKV("orchestrator.last_tick", JSON.stringify(orchestratorTick));
-        if (
+        const hasOrchestratorProgress =
           orchestratorTick.tasksAssigned > 0 ||
           orchestratorTick.tasksCompleted > 0 ||
-          orchestratorTick.tasksFailed > 0
+          orchestratorTick.tasksFailed > 0;
+        if (hasOrchestratorProgress) {
+          db.setKV("orchestrator.last_progress_at", new Date().toISOString());
+        }
+        if (
+          hasOrchestratorProgress
         ) {
           log(
             config,
