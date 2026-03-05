@@ -781,6 +781,110 @@ describe("Heartbeat Tasks", () => {
       globalThis.fetch = origFetch;
     });
 
+    it("includes permanent blockers from runtime diagnostics and child failures", async () => {
+      const tickCtx = createMockTickContext(db, {
+        creditBalance: 5000,
+        usdcBalance: 2.5,
+        survivalTier: "normal",
+      });
+      db.setKV("inference.runtime_keys", JSON.stringify({
+        inferredProvider: "zai",
+        hasZaiRuntimeKey: false,
+        hasMiniMaxRuntimeKey: true,
+      }));
+      db.setKV("orchestrator.planner_runtime_issue", JSON.stringify({
+        message: "401 login fail: ZAI_API_KEY:missing",
+        count: 2,
+        missingRuntimeKey: true,
+        lastSeenAt: new Date().toISOString(),
+      }));
+      db.setKV("orchestrator.worker_issue.last", JSON.stringify({
+        summary: "exec timeout (60000ms): spawnSync /bin/sh ETIMEDOUT",
+        command: "npm test",
+        isPermanent: false,
+        at: new Date().toISOString(),
+      }));
+      db.setKV("orchestrator.child_failures", JSON.stringify([
+        {
+          assignedTo: "local://worker-1",
+          error: "x402_fetch DOMAIN_NOT_ALLOWED for polymarket host",
+          isPermanent: true,
+          at: new Date().toISOString(),
+        },
+      ]));
+
+      const origFetch = globalThis.fetch;
+      let capturedBody: any = null;
+      globalThis.fetch = async (_url: any, opts: any) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+
+      const embed = capturedBody.embeds[0];
+      const permanentField = embed.fields.find((f: any) => f.name === "🛑 Permanent Blockers");
+      expect(permanentField).toBeDefined();
+      expect(permanentField.value).toContain("ZAI key missing in runtime process env");
+      expect(permanentField.value).toContain("Planner runtime key missing");
+      expect(permanentField.value).toContain("Worker issue");
+      expect(permanentField.value).toContain("Child local://worker-1 PERM");
+
+      globalThis.fetch = origFetch;
+    });
+
+    it("excludes stale permanent blockers from heartbeat output", async () => {
+      const tickCtx = createMockTickContext(db);
+      const staleAt = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+      db.setKV("orchestrator.planner_runtime_issue", JSON.stringify({
+        message: "401 login fail: ZAI_API_KEY:missing",
+        count: 1,
+        missingRuntimeKey: true,
+        lastSeenAt: staleAt,
+      }));
+      db.setKV("orchestrator.worker_issue.last", JSON.stringify({
+        summary: "exec timeout (60000ms): spawnSync /bin/sh ETIMEDOUT",
+        command: "npm test",
+        isPermanent: false,
+        at: staleAt,
+      }));
+      db.setKV("orchestrator.child_failures", JSON.stringify([
+        {
+          assignedTo: "local://worker-1",
+          error: "x402_fetch DOMAIN_NOT_ALLOWED for polymarket host",
+          isPermanent: true,
+          at: staleAt,
+        },
+      ]));
+
+      const origFetch = globalThis.fetch;
+      let capturedBody: any = null;
+      globalThis.fetch = async (_url: any, opts: any) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+
+      const embed = capturedBody.embeds[0];
+      const permanentField = embed.fields.find((f: any) => f.name === "🛑 Permanent Blockers");
+      expect(permanentField).toBeUndefined();
+      globalThis.fetch = origFetch;
+    });
+
     it("includes thinking from latest turn in embed", async () => {
       const tickCtx = createMockTickContext(db);
 
@@ -875,6 +979,9 @@ describe("Heartbeat Tasks", () => {
         turnCount: 0,
         lastError: "none",
         currentGoal: "",
+        plannerIssue: "",
+        workerIssue: "",
+        childFailures: "",
       }));
       db.setKV("last_discord_heartbeat", new Date().toISOString());
 

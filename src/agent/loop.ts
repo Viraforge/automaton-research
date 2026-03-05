@@ -72,6 +72,15 @@ const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
 const MAX_REPETITIVE_TURNS = 3;
 const MAX_IDLE_ONLY_TURNS = 5;
+const INFERENCE_RUNTIME_KEYS_KEY = "inference.runtime_keys";
+
+function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
+  if (!baseUrl) return "unknown";
+  const normalized = baseUrl.toLowerCase();
+  if (normalized.includes("z.ai") || normalized.includes("bigmodel.cn")) return "zai";
+  if (normalized.includes("minimax")) return "minimax";
+  return "unknown";
+}
 
 export interface AgentLoopOptions {
   identity: AutomatonIdentity;
@@ -188,10 +197,30 @@ export async function runAgentLoop(
       if (config.anthropicApiKey && !process.env.ANTHROPIC_API_KEY) {
         process.env.ANTHROPIC_API_KEY = config.anthropicApiKey;
       }
-      // Bridge inferenceApiKey to MiniMax env var (primary provider).
-      if (config.inferenceApiKey && !process.env.MINIMAX_API_KEY) {
-        process.env.MINIMAX_API_KEY = config.inferenceApiKey;
+      // Bridge inference API key to the provider implied by inferenceBaseUrl.
+      // This avoids false "missing key" diagnostics when BYOK is configured.
+      const inferredProvider = detectInferenceProviderFromBaseUrl(config.inferenceBaseUrl);
+      if (config.inferenceApiKey) {
+        if (inferredProvider === "zai" && !process.env.ZAI_API_KEY) {
+          process.env.ZAI_API_KEY = config.inferenceApiKey;
+        }
+        if (inferredProvider === "minimax" && !process.env.MINIMAX_API_KEY) {
+          process.env.MINIMAX_API_KEY = config.inferenceApiKey;
+        }
+        // Backward compatibility: if we cannot infer provider, keep previous
+        // behavior so older MiniMax-only setups keep working.
+        if (inferredProvider === "unknown" && !process.env.MINIMAX_API_KEY) {
+          process.env.MINIMAX_API_KEY = config.inferenceApiKey;
+        }
       }
+      db.setKV(INFERENCE_RUNTIME_KEYS_KEY, JSON.stringify({
+        inferredProvider,
+        hasZaiRuntimeKey: Boolean(process.env.ZAI_API_KEY),
+        hasMiniMaxRuntimeKey: Boolean(process.env.MINIMAX_API_KEY),
+        hasConfigInferenceApiKey: Boolean(config.inferenceApiKey),
+        baseUrl: config.inferenceBaseUrl || "",
+        observedAt: new Date().toISOString(),
+      }));
 
       const providersPath = path.join(
         process.env.HOME || process.cwd(),

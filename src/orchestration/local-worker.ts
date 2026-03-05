@@ -51,6 +51,12 @@ const logger = createLogger("orchestration.local-worker");
 
 const MAX_TURNS = 25;
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
+const WORKER_ISSUE_LAST_KEY = "orchestrator.worker_issue.last";
+const WORKER_ISSUE_ACTIVE_KEY = "orchestrator.worker_issue.active";
+
+function isTimeoutLikeError(message: string): boolean {
+  return /(timed out|timeout|etimedout)/i.test(message);
+}
 
 // Minimal inference interface — works with both UnifiedInferenceClient and
 // an adapter around the main agent's InferenceClient.
@@ -145,7 +151,7 @@ export class LocalWorkerPool {
 
   private async runWorker(workerId: string, task: TaskNode, signal: AbortSignal): Promise<void> {
     const maxTurns = this.config.maxTurns ?? MAX_TURNS;
-    const tools = this.buildWorkerTools();
+    const tools = this.buildWorkerTools(workerId, task.id);
     const toolDefs = tools.map((t) => ({
       type: "function" as const,
       function: {
@@ -178,6 +184,14 @@ export class LocalWorkerPool {
       const timeoutMs = task.metadata.timeoutMs || DEFAULT_TIMEOUT_MS;
       if (Date.now() - startedAt > timeoutMs) {
         logger.warn(`[WORKER ${workerId}] Timed out after ${timeoutMs}ms on turn ${turn}`);
+        this.persistWorkerIssue({
+          type: "worker_timeout",
+          workerId,
+          taskId: task.id,
+          summary: `Worker timed out after ${timeoutMs}ms`,
+          command: null,
+          isPermanent: false,
+        });
         failTask(this.config.db, task.id, `Worker timed out after ${timeoutMs}ms`, true);
         return;
       }
@@ -203,6 +217,14 @@ export class LocalWorkerPool {
           logger.warn(`[WORKER ${workerId}] Retrying transient inference failure (${inferenceFailureCount}/3)`);
           continue;
         }
+        this.persistWorkerIssue({
+          type: isTimeoutLikeError(msg) ? "inference_timeout" : "inference_failure",
+          workerId,
+          taskId: task.id,
+          summary: `Inference failed: ${msg}`,
+          command: null,
+          isPermanent: true,
+        });
         // Permanent failure here is intentional: orchestration should replan
         // instead of endlessly respawning workers for the same broken task.
         failTask(this.config.db, task.id, `Inference failed: ${msg}`, false);
@@ -274,6 +296,7 @@ export class LocalWorkerPool {
 
     try {
       completeTask(this.config.db, task.id, result);
+      this.clearWorkerIssueForTask(task.id);
       logger.info("Local worker completed task", {
         workerId,
         taskId: task.id,
@@ -327,7 +350,59 @@ RULES:
     return lines.join("\n");
   }
 
-  private buildWorkerTools(): WorkerTool[] {
+  private persistWorkerIssue(entry: {
+    type: string;
+    workerId: string;
+    taskId: string;
+    summary: string;
+    command: string | null;
+    isPermanent: boolean;
+  }): void {
+    const issue = {
+      ...entry,
+      at: new Date().toISOString(),
+    };
+    this.config.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(WORKER_ISSUE_LAST_KEY, JSON.stringify(issue));
+
+    const row = this.config.db.prepare(
+      "SELECT value FROM kv WHERE key = ?",
+    ).get(WORKER_ISSUE_ACTIVE_KEY) as { value: string } | undefined;
+    const parsed = row?.value ? safeJsonArray(row.value) : [];
+    const next = [
+      issue,
+      ...parsed.filter((item) => item.taskId !== entry.taskId || item.type !== entry.type),
+    ].slice(0, 25);
+    this.config.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(WORKER_ISSUE_ACTIVE_KEY, JSON.stringify(next));
+  }
+
+  private clearWorkerIssueForTask(taskId: string): void {
+    const lastRow = this.config.db.prepare(
+      "SELECT value FROM kv WHERE key = ?",
+    ).get(WORKER_ISSUE_LAST_KEY) as { value: string } | undefined;
+    const lastIssue = lastRow?.value ? safeJsonObject(lastRow.value) : null;
+    if (lastIssue && lastIssue.taskId === taskId) {
+      this.config.db.prepare("DELETE FROM kv WHERE key = ?").run(WORKER_ISSUE_LAST_KEY);
+    }
+
+    const activeRow = this.config.db.prepare(
+      "SELECT value FROM kv WHERE key = ?",
+    ).get(WORKER_ISSUE_ACTIVE_KEY) as { value: string } | undefined;
+    const parsed = activeRow?.value ? safeJsonArray(activeRow.value) : [];
+    const filtered = parsed.filter((item) => item.taskId !== taskId);
+    if (filtered.length === 0) {
+      this.config.db.prepare("DELETE FROM kv WHERE key = ?").run(WORKER_ISSUE_ACTIVE_KEY);
+      return;
+    }
+    this.config.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(WORKER_ISSUE_ACTIVE_KEY, JSON.stringify(filtered));
+  }
+
+  private buildWorkerTools(workerId: string, taskId: string): WorkerTool[] {
     return [
       {
         name: "exec",
@@ -357,7 +432,19 @@ RULES:
               const stderr = truncateOutput(result.stderr, 4000);
               return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
             } catch (error) {
-              return `exec error: ${error instanceof Error ? error.message : String(error)}`;
+              const message = error instanceof Error ? error.message : String(error);
+              if (isTimeoutLikeError(message)) {
+                this.persistWorkerIssue({
+                  type: "exec_timeout",
+                  workerId,
+                  taskId,
+                  summary: `exec timeout (${timeoutMs}ms): ${message}`,
+                  command,
+                  isPermanent: false,
+                });
+                return `exec timeout: ${message}`;
+              }
+              return `exec error: ${message}`;
             }
           }
         },
@@ -429,5 +516,25 @@ RULES:
         },
       },
     ];
+  }
+}
+
+function safeJsonArray(raw: string): Array<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === "object") : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
   }
 }

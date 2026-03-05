@@ -47,6 +47,8 @@ const ORCHESTRATOR_STATE_KEY = "orchestrator.state";
 const ORCHESTRATOR_TODO_KEY = "orchestrator.todo_md";
 const ORCHESTRATOR_DEAD_WORKERS_KEY = "orchestrator.dead_workers";
 const ORCHESTRATOR_EXEC_STALL_KEY = "orchestrator.executing_stall";
+const ORCHESTRATOR_PLANNER_RUNTIME_ISSUE_KEY = "orchestrator.planner_runtime_issue";
+const ORCHESTRATOR_CHILD_FAILURES_KEY = "orchestrator.child_failures";
 const DEFAULT_TASK_FUNDING_CENTS = 25;
 const DEFAULT_MAX_REPLANS = 3;
 const DEAD_WORKER_QUARANTINE_MS = 30 * 60_000;
@@ -423,8 +425,10 @@ export class Orchestrator {
         await this.buildPlannerContext(),
         this.params.inference,
       );
+      this.clearPlannerRuntimeIssue();
     } catch (error) {
       const err = normalizeError(error);
+      this.recordPlannerRuntimeIssue("planner", goal.id, err.message);
       logger.warn("Planner inference failed, falling back to single-task plan", {
         goalId: goal.id,
         error: err.message,
@@ -653,7 +657,18 @@ export class Orchestrator {
       }
 
       const taskNode = taskRowToTaskNode(taskRow);
-      await this.handleFailure(taskNode, event.error ?? event.result.output);
+      const failureError = event.error ?? event.result.output;
+      const isPermanent = taskRow.retryCount >= taskRow.maxRetries;
+      if (this.shouldRecordChildFailure(taskRow.assignedTo)) {
+        this.recordChildFailure({
+          taskId: taskNode.id,
+          goalId: taskNode.goalId,
+          assignedTo: taskRow.assignedTo,
+          error: failureError,
+          isPermanent,
+        });
+      }
+      await this.handleFailure(taskNode, failureError);
       const latest = getTaskById(this.params.db, taskNode.id);
       if (taskRow.status !== "failed" && latest?.status === "failed") {
         counters.tasksFailed += 1;
@@ -732,8 +747,10 @@ export class Orchestrator {
         await this.buildPlannerContext(),
         this.params.inference,
       );
+      this.clearPlannerRuntimeIssue();
     } catch (error) {
       const err = normalizeError(error);
+      this.recordPlannerRuntimeIssue("replanner", goal.id, err.message);
       logger.warn("Replanner inference failed, falling back to single-task plan", {
         goalId: goal.id,
         error: err.message,
@@ -1168,6 +1185,77 @@ export class Orchestrator {
       "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
     ).run(ORCHESTRATOR_EXEC_STALL_KEY, JSON.stringify(state));
   }
+
+  private recordPlannerRuntimeIssue(
+    phase: "planner" | "replanner",
+    goalId: string,
+    message: string,
+  ): void {
+    const previous = this.params.db.prepare(
+      "SELECT value FROM kv WHERE key = ?",
+    ).get(ORCHESTRATOR_PLANNER_RUNTIME_ISSUE_KEY) as { value: string } | undefined;
+    const previousParsed = previous?.value ? safeJsonParse(previous.value) : null;
+    const previousCount = typeof previousParsed?.count === "number"
+      ? Math.max(0, Math.floor(previousParsed.count))
+      : 0;
+    const now = new Date().toISOString();
+    const isAuthLike = /(401|invalid api key|api[_\s-]?key|unauthoriz|login fail|missing)/i.test(message);
+    const missingRuntimeKey = /(zai_api_key:missing|minimax_api_key:missing|api[_\s-]?key:missing)/i.test(message);
+    const payload = {
+      phase,
+      goalId,
+      message,
+      isAuthLike,
+      missingRuntimeKey,
+      count: previousCount + 1,
+      firstSeenAt: typeof previousParsed?.firstSeenAt === "string" ? previousParsed.firstSeenAt : now,
+      lastSeenAt: now,
+    };
+    this.params.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(ORCHESTRATOR_PLANNER_RUNTIME_ISSUE_KEY, JSON.stringify(payload));
+  }
+
+  private clearPlannerRuntimeIssue(): void {
+    this.params.db.prepare("DELETE FROM kv WHERE key = ?").run(ORCHESTRATOR_PLANNER_RUNTIME_ISSUE_KEY);
+  }
+
+  private recordChildFailure(entry: {
+    taskId: string;
+    goalId: string;
+    assignedTo: string | null | undefined;
+    error: string;
+    isPermanent: boolean;
+  }): void {
+    const row = this.params.db.prepare(
+      "SELECT value FROM kv WHERE key = ?",
+    ).get(ORCHESTRATOR_CHILD_FAILURES_KEY) as { value: string } | undefined;
+    const parsed = row?.value ? safeJsonParseArray(row.value) : [];
+    const nextEntry = {
+      taskId: entry.taskId,
+      goalId: entry.goalId,
+      assignedTo: entry.assignedTo ?? "unassigned",
+      error: entry.error.slice(0, 240),
+      isPermanent: entry.isPermanent,
+      at: new Date().toISOString(),
+    };
+    const deduped = [
+      nextEntry,
+      ...parsed.filter((item) => item.taskId !== entry.taskId),
+    ].slice(0, 25);
+    this.params.db.prepare(
+      "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+    ).run(ORCHESTRATOR_CHILD_FAILURES_KEY, JSON.stringify(deduped));
+  }
+
+  private shouldRecordChildFailure(assignedTo: string | null | undefined): boolean {
+    if (!assignedTo) return false;
+    if (assignedTo === this.params.identity.address) return false;
+    const row = this.params.db.prepare(
+      "SELECT 1 AS exists_flag FROM children WHERE address = ? LIMIT 1",
+    ).get(assignedTo) as { exists_flag?: number } | undefined;
+    return row?.exists_flag === 1;
+  }
 }
 
 function plannerOutputToTasks(goalId: string, output: PlannerOutput): Omit<TaskNode, "id" | "metadata">[] {
@@ -1328,6 +1416,17 @@ function safeJsonParse(raw: string): Record<string, unknown> | null {
     return parsed as Record<string, unknown>;
   } catch {
     return null;
+  }
+}
+
+function safeJsonParseArray(raw: string): Array<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is Record<string, unknown> =>
+      !!item && typeof item === "object");
+  } catch {
+    return [];
   }
 }
 

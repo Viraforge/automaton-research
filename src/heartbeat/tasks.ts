@@ -31,6 +31,7 @@ const logger = createLogger("heartbeat.tasks");
 const DISCORD_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5MB
 const DISCORD_LOG_TRIM_TO = 2 * 1024 * 1024;   // 2MB
 const HEARTBEAT_DEDUP_MAX_SILENCE_MS = 10 * 60_000; // Always post at least every 10 minutes.
+const BLOCKER_RECENCY_MS = 30 * 60_000; // Ignore stale blockers older than 30 minutes.
 
 /** Append a JSONL entry to the Discord heartbeat diagnostic log. */
 function appendDiscordLog(entry: Record<string, unknown>, logPath?: string): void {
@@ -841,8 +842,92 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
       fields.push({ name: "Last Error", value: lastError, inline: false });
     }
 
-    // Surface ALL blockers: task_graph failures + WORKLOG.md blockers
+    // Surface ALL blockers: permanent runtime blockers first, then task/worklog blockers.
     const blockerLines: string[] = [];
+    const permanentBlockerLines: string[] = [];
+
+    // Runtime inference diagnostics from loop bootstrapping.
+    try {
+      const runtimeKeys = taskCtx.db.getKV("inference.runtime_keys");
+      if (runtimeKeys) {
+        const parsed = JSON.parse(runtimeKeys) as {
+          inferredProvider?: string;
+          hasZaiRuntimeKey?: boolean;
+          hasMiniMaxRuntimeKey?: boolean;
+        };
+        if (parsed.inferredProvider === "zai" && !parsed.hasZaiRuntimeKey) {
+          permanentBlockerLines.push("ZAI key missing in runtime process env (provider inferred as zai)");
+        }
+        if (parsed.inferredProvider === "minimax" && !parsed.hasMiniMaxRuntimeKey) {
+          permanentBlockerLines.push("MiniMax key missing in runtime process env (provider inferred as minimax)");
+        }
+      }
+    } catch { /* ignore parse errors */ }
+
+    // Planner/replanner runtime auth issues.
+    try {
+      const plannerIssue = taskCtx.db.getKV("orchestrator.planner_runtime_issue");
+      if (plannerIssue) {
+        const parsed = JSON.parse(plannerIssue) as {
+          phase?: string;
+          message?: string;
+          count?: number;
+          missingRuntimeKey?: boolean;
+          lastSeenAt?: string;
+        };
+        if (parsed.message && isRecentIsoTimestamp(parsed.lastSeenAt, BLOCKER_RECENCY_MS)) {
+          const prefix = parsed.missingRuntimeKey
+            ? "Planner runtime key missing"
+            : "Planner inference failure";
+          const countSuffix = parsed.count && parsed.count > 1 ? ` (x${parsed.count})` : "";
+          permanentBlockerLines.push(
+            `${prefix}${countSuffix}: ${String(parsed.message).slice(0, 100)}`,
+          );
+        }
+      }
+    } catch { /* ignore parse errors */ }
+
+    // Worker timeout/failure diagnostics bubbled up from local workers.
+    try {
+      const workerIssue = taskCtx.db.getKV("orchestrator.worker_issue.last");
+      if (workerIssue) {
+        const parsed = JSON.parse(workerIssue) as {
+          type?: string;
+          summary?: string;
+          command?: string | null;
+          isPermanent?: boolean;
+          at?: string;
+        };
+        if (parsed.summary && isRecentIsoTimestamp(parsed.at, BLOCKER_RECENCY_MS)) {
+          const prefix = parsed.isPermanent ? "Worker failure (permanent)" : "Worker issue";
+          const cmd = parsed.command ? ` cmd=${parsed.command.slice(0, 40)}` : "";
+          permanentBlockerLines.push(`${prefix}: ${parsed.summary.slice(0, 90)}${cmd}`);
+        }
+      }
+    } catch { /* ignore parse errors */ }
+
+    // Child task failures from orchestrator task-result processing.
+    try {
+      const childFailures = taskCtx.db.getKV("orchestrator.child_failures");
+      if (childFailures) {
+        const parsed = JSON.parse(childFailures) as Array<{
+          taskId?: string;
+          assignedTo?: string;
+          error?: string;
+          isPermanent?: boolean;
+          at?: string;
+        }>;
+        for (const failure of parsed.slice(0, 2)) {
+          if (!isRecentIsoTimestamp(failure.at, BLOCKER_RECENCY_MS)) continue;
+          if (!failure?.error) continue;
+          const permanence = failure.isPermanent ? "PERM" : "retryable";
+          const source = failure.assignedTo || "unknown-worker";
+          permanentBlockerLines.push(
+            `Child ${source} ${permanence}: ${failure.error.slice(0, 90)}`,
+          );
+        }
+      }
+    } catch { /* ignore parse errors */ }
 
     // 1. Blocked/failed tasks from the orchestrator
     try {
@@ -878,9 +963,14 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
       }
     } catch { /* WORKLOG.md may not exist */ }
 
+    if (permanentBlockerLines.length > 0) {
+      const blockerText = permanentBlockerLines.slice(0, 4).join("\n");
+      fields.push({ name: "🛑 Permanent Blockers", value: blockerText.slice(0, 300), inline: false });
+    }
+
     if (blockerLines.length > 0) {
-      const blockerText = blockerLines.slice(0, 5).join("\n");
-      fields.push({ name: "🚧 Blockers", value: blockerText.slice(0, 300), inline: false });
+      const blockerText = blockerLines.slice(0, 4).join("\n");
+      fields.push({ name: "🚧 Active Blockers", value: blockerText.slice(0, 300), inline: false });
     }
 
     // When sleeping, replace stale thinking/activity with sleep context
@@ -922,7 +1012,15 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     };
 
     // Skip duplicate posts while sleeping (nothing changed)
-    const contentHash = JSON.stringify({ state, turnCount, lastError, currentGoal });
+    const contentHash = JSON.stringify({
+      state,
+      turnCount,
+      lastError,
+      currentGoal,
+      plannerIssue: taskCtx.db.getKV("orchestrator.planner_runtime_issue") || "",
+      workerIssue: taskCtx.db.getKV("orchestrator.worker_issue.last") || "",
+      childFailures: taskCtx.db.getKV("orchestrator.child_failures") || "",
+    });
     const lastHash = taskCtx.db.getKV("last_heartbeat_hash");
     const lastHeartbeatAtMs = Date.parse(taskCtx.db.getKV("last_discord_heartbeat") || "");
     const hasRecentHeartbeat = Number.isFinite(lastHeartbeatAtMs)
@@ -1043,4 +1141,11 @@ async function createHealthMonitor(taskCtx: HeartbeatLegacyContext): Promise<Col
   const messaging = new ColonyMessaging(transport, taskCtx.db);
 
   return new HealthMonitor(taskCtx.db, tracker, funding, messaging);
+}
+
+function isRecentIsoTimestamp(value: string | undefined, maxAgeMs: number): boolean {
+  if (!value) return false;
+  const parsedMs = Date.parse(value);
+  if (!Number.isFinite(parsedMs)) return false;
+  return Date.now() - parsedMs <= maxAgeMs;
 }

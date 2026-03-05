@@ -252,6 +252,69 @@ describe("orchestration/Orchestrator", () => {
       expect(result.phase).toBe("plan_review");
     });
 
+    it("records planner runtime issue when planning inference fails with auth-like error", async () => {
+      const goalId = insertGoal(db, { title: "Auth Goal", description: "Needs planning" });
+      setOrchestratorState(db, { phase: "planning", goalId, replanCount: 0, failedTaskId: null, failedError: null });
+      const inference = {
+        chat: vi.fn().mockRejectedValueOnce(new Error("401 login fail: ZAI_API_KEY:missing")),
+      };
+
+      const orc = makeOrchestrator(db, { inference: inference as any });
+      const result = await orc.tick();
+      expect(result.phase).toBe("plan_review");
+
+      const issueRow = db.prepare(
+        "SELECT value FROM kv WHERE key = 'orchestrator.planner_runtime_issue'",
+      ).get() as { value: string } | undefined;
+      expect(issueRow?.value).toBeDefined();
+      const issue = JSON.parse(issueRow!.value);
+      expect(issue.missingRuntimeKey).toBe(true);
+      expect(issue.count).toBe(1);
+      expect(issue.message).toContain("ZAI_API_KEY:missing");
+    });
+
+    it("clears planner runtime issue after successful planning", async () => {
+      const goalId = insertGoal(db, { title: "Clear issue", description: "Plan successfully" });
+      setOrchestratorState(db, { phase: "planning", goalId, replanCount: 0, failedTaskId: null, failedError: null });
+      db.prepare(
+        "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+      ).run(
+        "orchestrator.planner_runtime_issue",
+        JSON.stringify({ message: "old issue", count: 2 }),
+      );
+      const inference = {
+        chat: vi.fn().mockResolvedValueOnce({
+          content: JSON.stringify({
+            analysis: "ok",
+            strategy: "ok",
+            customRoles: [],
+            tasks: [{
+              title: "Task One",
+              description: "Do thing",
+              agentRole: "generalist",
+              dependencies: [],
+              estimatedCostCents: 100,
+              priority: 50,
+              timeoutMs: 60000,
+            }],
+            risks: [],
+            estimatedTotalCostCents: 100,
+            estimatedTimeMinutes: 10,
+          }),
+          usage: {},
+        }),
+      };
+
+      const orc = makeOrchestrator(db, { inference: inference as any });
+      const result = await orc.tick();
+      expect(result.phase).toBe("plan_review");
+
+      const issueRow = db.prepare(
+        "SELECT value FROM kv WHERE key = 'orchestrator.planner_runtime_issue'",
+      ).get() as { value: string } | undefined;
+      expect(issueRow).toBeUndefined();
+    });
+
     it("quarantines dead worker and avoids immediate reassignment to it", async () => {
       const goalId = insertGoal(db, { status: "active" });
       const deadWorker = "local://dead-worker";
@@ -689,6 +752,21 @@ describe("orchestration/Orchestrator", () => {
         | { status: string }
         | undefined;
       expect(["pending", "blocked"]).toContain(taskRow?.status);
+    });
+
+    it("does not record child failure for unassigned non-child task failures", async () => {
+      const goalId = insertGoal(db, { status: "active" });
+      const taskId = insertTask(db, { goalId, status: "running", assignedTo: null });
+      db.prepare("UPDATE task_graph SET max_retries = 0, retry_count = 0 WHERE id = ?").run(taskId);
+      setOrchestratorState(db, { phase: "executing", goalId, replanCount: 0, failedTaskId: null, failedError: null });
+
+      const orc = makeOrchestrator(db, { config: { maxReplans: 1 } });
+      await orc.handleFailure(makeTaskNode(goalId, taskId), "failed before child execution");
+
+      const row = db.prepare(
+        "SELECT value FROM kv WHERE key = 'orchestrator.child_failures'",
+      ).get() as { value: string } | undefined;
+      expect(row).toBeUndefined();
     });
   });
 
