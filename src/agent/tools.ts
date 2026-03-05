@@ -78,16 +78,45 @@ const FORBIDDEN_COMMAND_PATTERNS = [
   /\bsetsid\b/,
   /\bdisown\b/,
   /\bforever\s+start/i,
-  // Background operator — blocks `cmd &` at end or `cmd & next` mid-command.
-  // A backgrounding & follows whitespace or a word char (e.g. `sleep 1&`),
-  // but NOT `=` (URL query params like ?a=1&b=2) or `&` (chaining `&&`).
-  /(?<=[^\s=&])&\s*$/,
-  /(?<=\s)&\s*$/,
-  /(?<=[^\s=&])&\s+/,
-  /(?<=\s)&\s+/,
 ];
 
+function hasUnquotedBackgroundOperator(command: string): boolean {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    const prevChar = command[index - 1];
+    const nextChar = command[index + 1];
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote && prevChar !== "\\") {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if (char !== "&" || inSingleQuote || inDoubleQuote) continue;
+    if (nextChar === "&") {
+      index++;
+      continue;
+    }
+
+    const nextBoundary = !nextChar || /\s|;/.test(nextChar);
+    if (nextBoundary) return true;
+  }
+
+  return false;
+}
+
 function isForbiddenCommand(command: string, sandboxId: string): string | null {
+  if (hasUnquotedBackgroundOperator(command)) {
+    return "Blocked: Command contains background operator &";
+  }
+
   for (const pattern of FORBIDDEN_COMMAND_PATTERNS) {
     if (pattern.test(command)) {
       return `Blocked: Command matches self-harm pattern: ${pattern.source}`;

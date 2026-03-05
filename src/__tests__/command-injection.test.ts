@@ -272,6 +272,20 @@ describe("command.forbidden_patterns rule", () => {
     });
   }
 
+  it("blocks unquoted background operator", () => {
+    const request = makeRequest("exec", { command: "echo hello & sleep 1" }, "vm", "caution");
+    const result = forbiddenRule.evaluate(request);
+    expect(result).not.toBeNull();
+    expect(result!.reasonCode).toBe("FORBIDDEN_COMMAND");
+  });
+
+  it("allows ampersands in quoted payloads and URL query strings", () => {
+    const quoted = makeRequest("exec", { command: "echo 'a & b'" }, "vm", "caution");
+    const url = makeRequest("exec", { command: "curl -s 'https://example.com?q=a&limit=1'" }, "vm", "caution");
+    expect(forbiddenRule.evaluate(quoted)).toBeNull();
+    expect(forbiddenRule.evaluate(url)).toBeNull();
+  });
+
   it("only applies to exec tool", () => {
     const request = makeRequest("write_file", { command: "rm -rf .automaton" }, "vm", "caution");
     // The rule's appliesTo is { by: "name", names: ["exec"] }, so it shouldn't match write_file

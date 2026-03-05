@@ -471,6 +471,8 @@ describe("Agent Loop", () => {
       idleToolResponse("check_credits", {}, "t1"),
       idleToolResponse("system_synopsis", {}, "t2"),
       idleToolResponse("review_memory", {}, "t3"),
+      idleToolResponse("list_children", {}, "t4"),
+      idleToolResponse("discover_agents", { limit: 5 }, "t5"),
       noToolResponse("I will now work on something productive."),
     ]);
 
@@ -485,14 +487,13 @@ describe("Agent Loop", () => {
       onTurnComplete: (turn) => turns.push(turn),
     });
 
-    // After 3 consecutive idle-only turns, the loop forces a 10-min sleep.
-    // The 4th mock response should NOT be consumed (loop exits after 3).
-    expect(turns.length).toBe(3);
-    // Verify sleep_until was set (10-minute forced sleep)
-    const sleepUntil = db.getKV("sleep_until");
-    expect(sleepUntil).toBeDefined();
-    const sleepMs = new Date(sleepUntil!).getTime() - Date.now();
-    expect(sleepMs).toBeGreaterThan(500_000); // ~10 minutes
+    // After 5 consecutive idle-only turns, the loop injects an intervention
+    // and still consumes the next turn rather than force-sleeping.
+    expect(turns.length).toBe(6);
+    const interventionTurn = turns.find(
+      (t) => t.input?.includes("MAINTENANCE LOOP DETECTED"),
+    );
+    expect(interventionTurn).toBeDefined();
   });
 
   it("maintenance loop NOT triggered when turns mix idle and productive tools", async () => {
@@ -564,6 +565,8 @@ describe("Agent Loop", () => {
       idleToolResponse("check_credits", {}, "v1"),
       idleToolResponse("check_usdc_balance", {}, "v2"),
       idleToolResponse("git_status", {}, "v3"),
+      idleToolResponse("list_children", {}, "v4"),
+      idleToolResponse("discover_agents", { limit: 5 }, "v5"),
       noToolResponse("Starting productive work now."),
     ]);
 
@@ -578,11 +581,13 @@ describe("Agent Loop", () => {
       onTurnComplete: (turn) => turns.push(turn),
     });
 
-    // After 3 consecutive idle-only turns (even with different tools),
-    // the loop forces a 10-min sleep. Turn 4 should NOT be consumed.
-    expect(turns.length).toBe(3);
-    const sleepUntil = db.getKV("sleep_until");
-    expect(sleepUntil).toBeDefined();
+    // After 5 consecutive idle-only turns (even with different tools),
+    // the loop injects a no-idle directive instead of forcing sleep.
+    expect(turns.length).toBe(6);
+    const interventionTurn = turns.find(
+      (t) => t.input?.includes("MAINTENANCE LOOP DETECTED"),
+    );
+    expect(interventionTurn).toBeDefined();
   });
 
   it("loop enforcement forces sleep after warning is ignored (6 identical patterns)", async () => {
@@ -708,10 +713,9 @@ describe("Agent Loop", () => {
     expect(enforcementTurn).toBeUndefined();
   });
 
-  it("discover_agents is classified as idle and triggers loop detection", { timeout: 180_000 }, async () => {
-    // discover_agents is in IDLE_ONLY_TOOLS, so 3 consecutive identical
-    // discover_agents calls should trigger the repetitive pattern detector
-    // (which fires before the idle-tool detector when patterns are identical).
+  it("discover_agents is treated as idle-only and triggers maintenance intervention", { timeout: 180_000 }, async () => {
+    // discover_agents is in IDLE_ONLY_TOOLS and now bypasses exact-pattern loop
+    // enforcement. It should trigger the maintenance idle intervention instead.
     function discoverResponse(uid: string): ReturnType<typeof toolCallResponse> {
       return {
         id: `resp_${uid}`,
@@ -738,7 +742,9 @@ describe("Agent Loop", () => {
     const inference = new MockInferenceClient([
       discoverResponse("d1"),
       discoverResponse("d2"),
-      discoverResponse("d3"), // Triggers loop detection since discover_agents is idle
+      discoverResponse("d3"),
+      discoverResponse("d4"),
+      discoverResponse("d5"), // Triggers maintenance intervention
       noToolResponse("Processing discovery results."),
     ]);
 
@@ -753,11 +759,9 @@ describe("Agent Loop", () => {
       onTurnComplete: (turn) => turns.push(turn),
     });
 
-    // The repetitive pattern detector fires first (identical patterns 3x),
-    // which prevents the idle-tool detector from also firing.
-    const loopWarning = turns.find(
-      (t) => t.input?.includes("LOOP DETECTED"),
+    const maintenanceWarning = turns.find(
+      (t) => t.input?.includes("MAINTENANCE LOOP DETECTED"),
     );
-    expect(loopWarning).toBeDefined();
+    expect(maintenanceWarning).toBeDefined();
   });
 });

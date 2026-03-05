@@ -526,11 +526,21 @@ describe("exec tool forbidden command patterns", () => {
       expect(conway.execCalls.length).toBe(0);
     });
 
-    // Known limitation: `echo 'a & b'` is blocked (accepted tradeoff)
-    it("known false positive: echo 'a & b' is blocked (accepted tradeoff)", async () => {
+    it("allows ampersand inside quoted text", async () => {
       const execTool = tools.find((t) => t.name === "exec")!;
       const result = await execTool.execute({ command: "echo 'a & b'" }, ctx);
-      expect(result).toContain("Blocked");
+      expect(result).toContain("stdout: ok");
+      expect(conway.execCalls.length).toBe(1);
+    });
+
+    it("allows URL query ampersands", async () => {
+      const execTool = tools.find((t) => t.name === "exec")!;
+      const result = await execTool.execute(
+        { command: "curl -s 'https://example.com?q=alpha&limit=10'" },
+        ctx,
+      );
+      expect(result).toContain("stdout: ok");
+      expect(conway.execCalls.length).toBe(1);
     });
 
     // sh -c indirection IS caught because \bnohup\b matches anywhere in the string

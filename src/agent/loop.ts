@@ -71,6 +71,7 @@ const logger = createLogger("loop");
 const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
 const MAX_REPETITIVE_TURNS = 3;
+const MAX_IDLE_ONLY_TURNS = 5;
 
 export interface AgentLoopOptions {
   identity: AutomatonIdentity;
@@ -737,68 +738,65 @@ export async function runAgentLoop(
           loopWarningPattern = null;
         }
 
-        // ── Loop Enforcement Escalation ──
-        // If we already warned about this pattern and the agent STILL repeats, force sleep.
-        if (
-          loopWarningPattern &&
-          currentPattern === loopWarningPattern &&
-          lastToolPatterns.length === MAX_REPETITIVE_TURNS &&
-          lastToolPatterns.every((p) => p === currentPattern)
-        ) {
-          log(config, `[LOOP] Enforcement: agent ignored loop warning, forcing sleep.`);
-          pendingInput = {
-            content:
-              `LOOP ENFORCEMENT: You were warned about repeating "${currentPattern}" but continued. ` +
-              `Forcing sleep to prevent credit waste. On next wake, try a DIFFERENT approach.`,
-            source: "system",
-          };
-          loopWarningPattern = null;
-          lastToolPatterns = [];
-          db.deleteKV("loop_detection_state");
-          db.setAgentState("sleeping");
-          onStateChange?.("sleeping");
-          running = false;
-          break;
-        }
-
-        // Check if the same pattern repeated MAX_REPETITIVE_TURNS times
-        if (
-          lastToolPatterns.length === MAX_REPETITIVE_TURNS &&
-          lastToolPatterns.every((p) => p === currentPattern)
-        ) {
-          log(config, `[LOOP] Repetitive pattern detected: ${currentPattern}`);
-          pendingInput = {
-            content:
-              `LOOP DETECTED: You have called "${currentPattern}" ${MAX_REPETITIVE_TURNS} times in a row with similar results. ` +
-              `STOP repeating yourself. You already know your status. DO SOMETHING DIFFERENT NOW. ` +
-              `Pick ONE concrete task from your genesis prompt and execute it.`,
-            source: "system",
-          };
-          loopWarningPattern = currentPattern;
-          lastToolPatterns = [];
-        }
-
         // Detect multi-tool maintenance loops: all tools in the turn are idle-only,
         // even if the specific combination varies across consecutive turns.
         const isAllIdleTools = turn.toolCalls.every((tc) => IDLE_ONLY_TOOLS.has(tc.name));
+        if (!isAllIdleTools) {
+          // ── Loop Enforcement Escalation ──
+          // If we already warned about this pattern and the agent STILL repeats, force sleep.
+          if (
+            loopWarningPattern &&
+            currentPattern === loopWarningPattern &&
+            lastToolPatterns.length === MAX_REPETITIVE_TURNS &&
+            lastToolPatterns.every((p) => p === currentPattern)
+          ) {
+            log(config, `[LOOP] Enforcement: agent ignored loop warning, forcing sleep.`);
+            pendingInput = {
+              content:
+                `LOOP ENFORCEMENT: You were warned about repeating "${currentPattern}" but continued. ` +
+                `Forcing sleep to prevent credit waste. On next wake, try a DIFFERENT approach.`,
+              source: "system",
+            };
+            loopWarningPattern = null;
+            lastToolPatterns = [];
+            db.deleteKV("loop_detection_state");
+            db.setAgentState("sleeping");
+            onStateChange?.("sleeping");
+            running = false;
+            break;
+          }
+
+          // Check if the same pattern repeated MAX_REPETITIVE_TURNS times
+          if (
+            lastToolPatterns.length === MAX_REPETITIVE_TURNS &&
+            lastToolPatterns.every((p) => p === currentPattern)
+          ) {
+            log(config, `[LOOP] Repetitive pattern detected: ${currentPattern}`);
+            pendingInput = {
+              content:
+                `LOOP DETECTED: You have called "${currentPattern}" ${MAX_REPETITIVE_TURNS} times in a row with similar results. ` +
+                `STOP repeating yourself. You already know your status. DO SOMETHING DIFFERENT NOW. ` +
+                `Pick ONE concrete task from your genesis prompt and execute it.`,
+              source: "system",
+            };
+            loopWarningPattern = currentPattern;
+            lastToolPatterns = [];
+          }
+        }
+
         if (isAllIdleTools) {
           idleToolTurns++;
-          if (idleToolTurns >= MAX_REPETITIVE_TURNS && !pendingInput) {
-            log(config, `[LOOP] Maintenance loop detected: ${idleToolTurns} consecutive idle-only turns. Forcing 10-min sleep.`);
+          if (idleToolTurns >= MAX_IDLE_ONLY_TURNS && !pendingInput) {
+            log(config, `[LOOP] Maintenance loop detected: ${idleToolTurns} consecutive idle-only turns. Injecting no-idle directive.`);
             pendingInput = {
               content:
                 `MAINTENANCE LOOP DETECTED: Your last ${idleToolTurns} turns only used status-check tools ` +
                 `(${turn.toolCalls.map((tc) => tc.name).join(", ")}). ` +
-                `You already know your status. Sleeping 10 minutes to stop credit waste. ` +
-                `On next wake: do CONCRETE work (research, write code, create a file, prototype) or sleep longer.`,
+                `You already know your status. Do NOT call status tools next turn. ` +
+                `Immediately execute one concrete action that creates an artifact or external outcome.`,
               source: "system",
             };
             idleToolTurns = 0;
-            // Force a meaningful sleep so the agent doesn't immediately loop back
-            db.setKV("sleep_until", new Date(Date.now() + 600_000).toISOString());
-            db.setAgentState("sleeping");
-            onStateChange?.("sleeping");
-            running = false;
           }
         } else {
           idleToolTurns = 0;

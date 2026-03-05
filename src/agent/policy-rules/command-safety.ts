@@ -80,12 +80,39 @@ const FORBIDDEN_COMMAND_PATTERNS: { pattern: RegExp; description: string }[] = [
   { pattern: /\bsetsid\b/, description: "Background process via setsid" },
   { pattern: /\bdisown\b/, description: "Background process via disown" },
   { pattern: /\bforever\s+start/i, description: "Background process via forever" },
-  // Background operator
-  { pattern: /(?<=[^\s=&])&\s*$/, description: "Background operator &" },
-  { pattern: /(?<=\s)&\s*$/, description: "Background operator &" },
-  { pattern: /(?<=[^\s=&])&\s+/, description: "Background operator &" },
-  { pattern: /(?<=\s)&\s+/, description: "Background operator &" },
 ];
+
+function hasUnquotedBackgroundOperator(command: string): boolean {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    const prevChar = command[index - 1];
+    const nextChar = command[index + 1];
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote && prevChar !== "\\") {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if (char !== "&" || inSingleQuote || inDoubleQuote) continue;
+    if (nextChar === "&") {
+      index++;
+      continue;
+    }
+
+    const nextBoundary = !nextChar || /\s|;/.test(nextChar);
+    if (nextBoundary) return true;
+  }
+
+  return false;
+}
 
 function deny(rule: string, reasonCode: string, humanMessage: string): PolicyRuleResult {
   return { rule, action: "deny", reasonCode, humanMessage };
@@ -142,6 +169,14 @@ function createForbiddenPatternsRule(): PolicyRule {
     evaluate(request: PolicyRequest): PolicyRuleResult | null {
       const command = request.args.command as string | undefined;
       if (!command) return null;
+
+      if (hasUnquotedBackgroundOperator(command)) {
+        return deny(
+          "command.forbidden_patterns",
+          "FORBIDDEN_COMMAND",
+          "Blocked: Background operator &",
+        );
+      }
 
       for (const { pattern, description } of FORBIDDEN_COMMAND_PATTERNS) {
         if (pattern.test(command)) {
