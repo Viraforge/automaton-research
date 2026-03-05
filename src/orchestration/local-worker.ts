@@ -15,6 +15,7 @@ import { exec as execCb } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createLogger } from "../observability/logger.js";
+import { redactSensitiveText } from "../observability/redaction.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { completeTask, failTask } from "./task-graph.js";
 import type { TaskNode, TaskResult } from "./task-graph.js";
@@ -257,7 +258,7 @@ export class LocalWorkerPool {
             try {
               const args = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : fn.arguments;
               toolOutput = await tool.execute(args as Record<string, unknown>);
-              logger.info(`[WORKER ${workerId}] ${fn.name} → ${toolOutput.slice(0, 120)}`);
+              logger.info(`[WORKER ${workerId}] ${fn.name} → ${redactSensitiveText(toolOutput).slice(0, 120)}`);
 
               // Track file artifacts
               if (fn.name === "write_file" && typeof (args as any).path === "string") {
@@ -267,10 +268,11 @@ export class LocalWorkerPool {
               toolOutput = `Error: ${error instanceof Error ? error.message : String(error)}`;
             }
           }
+          const safeToolOutput = redactSensitiveText(toolOutput);
 
           messages.push({
             role: "tool",
-            content: toolOutput,
+            content: safeToolOutput,
             tool_call_id: toolCall.id,
           });
         }
@@ -360,6 +362,8 @@ RULES:
   }): void {
     const issue = {
       ...entry,
+      summary: redactSensitiveText(entry.summary),
+      command: entry.command ? redactSensitiveText(entry.command) : null,
       at: new Date().toISOString(),
     };
     this.config.db.prepare(

@@ -66,6 +66,7 @@ import { EventStream } from "../memory/event-stream.js";
 import { KnowledgeStore } from "../memory/knowledge-store.js";
 import { ProviderRegistry } from "../inference/provider-registry.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
+import { redactSensitiveText } from "../observability/redaction.js";
 
 const logger = createLogger("loop");
 const MAX_TOOL_CALLS_PER_TURN = 10;
@@ -1156,7 +1157,7 @@ async function getFinancialState(
 }
 
 function log(_config: AutomatonConfig, message: string): void {
-  logger.info(message);
+  logger.info(redactSensitiveText(message));
 }
 
 function hasTable(db: AutomatonDatabase["raw"], tableName: string): boolean {
