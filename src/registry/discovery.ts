@@ -61,6 +61,42 @@ export function isAllowedUri(uri: string): boolean {
   }
 }
 
+function decodeDataUriPayload(uri: string): string | null {
+  const match = uri.match(/^data:([^,]*?),(.*)$/i);
+  if (!match) return null;
+  const metadata = (match[1] || "").toLowerCase();
+  const payload = match[2] || "";
+  const isBase64 = metadata.includes(";base64");
+
+  try {
+    if (isBase64) {
+      return Buffer.from(payload, "base64").toString("utf8");
+    }
+    return decodeURIComponent(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseDataUriAgentCard(
+  uri: string,
+  maxCardSizeBytes: number,
+): AgentCard | null {
+  const decoded = decodeDataUriPayload(uri);
+  if (!decoded) return null;
+  if (decoded.length > maxCardSizeBytes) {
+    logger.error(`Agent card too large: ${decoded.length} bytes`);
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(decoded);
+    return validateAgentCard(data);
+  } catch {
+    return null;
+  }
+}
+
 // ─── Agent Card Validation ──────────────────────────────────────
 
 // Phase 3.2: Stricter field length limits
@@ -287,9 +323,14 @@ export async function fetchAgentCard(
 ): Promise<AgentCard | null> {
   const cfg = { ...DEFAULT_DISCOVERY_CONFIG, ...config };
 
+  // Support on-chain data URI agent cards without network fetches.
+  if (uri.startsWith("data:")) {
+    return parseDataUriAgentCard(uri, cfg.maxCardSizeBytes);
+  }
+
   // SSRF protection: validate URI before fetching
   if (!isAllowedUri(uri)) {
-    logger.error(`Blocked URI (SSRF protection): ${uri}`);
+    logger.error(`Blocked URI (SSRF protection): ${uri.slice(0, 200)}`);
     return null;
   }
 

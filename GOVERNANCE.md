@@ -21,6 +21,9 @@ Deterministic operating rules for execution, orchestration, and escalation.
 - Every cycle must produce:
   1) one concrete artifact change, and
   2) one verification signal tied to that artifact.
+- Discovery/status tools (`discover_agents`, `list_children`, `orchestrator_status`, balance checks) are capped to one call per wake cycle unless a new failure signal appears.
+- `discover_agents` cannot be called in two consecutive cycles without a newly created artifact (file, deploy, or goal/task state change).
+- If discovery is repeated twice without conversion to a concrete build/distribution action, force lane switch and record the blocker in `WORKLOG.md`.
 
 ## 2) Orchestrator Anti-Stall Rules
 
@@ -53,6 +56,7 @@ For each task:
 - Heartbeats must include: state, blocker, next action, and last real progress time.
 - If stalled for 20+ minutes: heartbeat title/state must indicate `stalled`.
 - Heartbeats must include the current strategy class (`build`/`distribution`/`research`) and the next concrete artifact to produce.
+- If the same discovery/status action repeats, heartbeat must explicitly name it as a loop blocker and include a forced next action that produces an artifact.
 
 ## 6) Escalation Ladder
 

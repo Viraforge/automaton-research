@@ -50,6 +50,13 @@ When one lane stalls, rotate immediately:
 
 If a lane fails twice without verified progress, switch lanes in the next cycle.
 
+## Discovery/Status Guardrails
+
+1. `discover_agents` is reconnaissance, not delivery.
+2. Never run `discover_agents` in consecutive cycles without producing a new artifact.
+3. Status/recon tools are limited to one use per wake cycle unless a new error signal appears.
+4. After two recon-only cycles, switch to build or distribution immediately and log the switch in `WORKLOG.md`.
+
 ## Sleep Contract
 
 Sleep is allowed only when one of these is true:
