@@ -173,15 +173,36 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         const forbidden = isForbiddenCommand(command, ctx.identity.sandboxId);
         if (forbidden) return forbidden;
 
-        let result = await ctx.conway.exec(command, timeoutMs);
+        let result;
+        try {
+          result = await ctx.conway.exec(command, timeoutMs);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/(timed out|timeout|etimedout)/i.test(message)) {
+            return `exec timeout: ${message}`;
+          }
+          return `exec error: ${message}`;
+        }
         if (
           result.exitCode !== 0 &&
           /netstat:\s*not found/i.test(result.stderr || "")
         ) {
           const fallbackCommand = buildNetstatFallback(command);
           if (fallbackCommand) {
-            result = await ctx.conway.exec(fallbackCommand, timeoutMs);
+            try {
+              result = await ctx.conway.exec(fallbackCommand, timeoutMs);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (/(timed out|timeout|etimedout)/i.test(message)) {
+                return `exec timeout: ${message}`;
+              }
+              return `exec error: ${message}`;
+            }
           }
+        }
+        const timeoutOutput = `${result.stderr || ""}\n${result.stdout || ""}`.trim();
+        if (result.exitCode !== 0 && /(timed out|timeout|etimedout)/i.test(timeoutOutput)) {
+          return `exec timeout: ${timeoutOutput.slice(0, 240)}`;
         }
         // Sanitize output: strip any Discord webhook URLs that may leak through
         // stdout/stderr (e.g. from reading config files or logs). The agent must

@@ -202,6 +202,12 @@ describe("orchestration/Orchestrator", () => {
       const orc = makeOrchestrator(db, { inference: inference as any });
       const result = await orc.tick();
       expect(result.phase).toBe("executing");
+
+      const taskRow = db.prepare(
+        "SELECT timeout_ms, estimated_cost_cents FROM task_graph WHERE goal_id = ? LIMIT 1",
+      ).get(goalId) as { timeout_ms: number; estimated_cost_cents: number } | undefined;
+      expect(taskRow?.timeout_ms).toBe(300_000);
+      expect(taskRow?.estimated_cost_cents).toBe(200);
     });
 
     it("classifying with complex goal (>3 steps) transitions to planning", async () => {
@@ -250,6 +256,12 @@ describe("orchestration/Orchestrator", () => {
       const orc = makeOrchestrator(db, { inference: inference as any });
       const result = await orc.tick();
       expect(result.phase).toBe("plan_review");
+
+      const taskRow = db.prepare(
+        "SELECT timeout_ms, estimated_cost_cents FROM task_graph WHERE goal_id = ? LIMIT 1",
+      ).get(goalId) as { timeout_ms: number; estimated_cost_cents: number } | undefined;
+      expect(taskRow?.timeout_ms).toBe(60_000);
+      expect(taskRow?.estimated_cost_cents).toBe(50);
     });
 
     it("records planner runtime issue when planning inference fails with auth-like error", async () => {
@@ -488,6 +500,51 @@ describe("orchestration/Orchestrator", () => {
       expect(result.spawned).toBe(true);
       expect(spawnAgent).toHaveBeenCalledTimes(1);
       expect(agentTracker.register).toHaveBeenCalled();
+    });
+
+    it("does not register duplicate child when spawned worker already exists in DB", async () => {
+      const goalId = insertGoal(db);
+      db.prepare(
+        "INSERT INTO children (id, name, address, sandbox_id, genesis_prompt, funded_amount_cents, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run("existing-child", "Existing", "0xspawned", "sb-2", "Role: generalist", 0, "running", new Date().toISOString());
+
+      const agentTracker = makeAgentTracker({
+        getIdle: vi.fn().mockReturnValue([]),
+        getBestForTask: vi.fn().mockReturnValue(null),
+      });
+      const spawnAgent = vi.fn().mockResolvedValue({ address: "0xspawned", name: "Spawned", sandboxId: "sb-2" });
+      const orc = makeOrchestrator(db, {
+        agentTracker,
+        config: { spawnAgent },
+      });
+
+      const result = await orc.matchTaskToAgent({
+        id: ulid(),
+        parentId: null,
+        goalId,
+        title: "Task",
+        description: "desc",
+        status: "pending",
+        assignedTo: null,
+        agentRole: "generalist",
+        priority: 50,
+        dependencies: [],
+        result: null,
+        metadata: {
+          estimatedCostCents: 10,
+          actualCostCents: 0,
+          maxRetries: 3,
+          retryCount: 0,
+          timeoutMs: 60_000,
+          createdAt: new Date().toISOString(),
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+
+      expect(result.agentAddress).toBe("0xspawned");
+      expect(result.spawned).toBe(true);
+      expect(agentTracker.register).not.toHaveBeenCalled();
     });
 
     it("falls back to busy agent when spawn is disabled", async () => {

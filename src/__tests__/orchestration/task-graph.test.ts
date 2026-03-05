@@ -10,7 +10,7 @@ import {
   getGoalProgress,
   getReadyTasks,
   pruneCompletedGoals,
-  type TaskNode,
+  type DecomposeTaskInput,
   type TaskResult,
 } from "../../orchestration/task-graph.js";
 import {
@@ -21,8 +21,6 @@ import {
   insertTask,
 } from "../../state/database.js";
 import { createInMemoryDb } from "./test-db.js";
-
-type DecomposeTaskInput = Omit<TaskNode, "id" | "metadata">;
 
 const SUCCESS_RESULT: TaskResult = {
   success: true,
@@ -164,6 +162,20 @@ describe("orchestration/task-graph", () => {
       const b = tasks.find((task) => task.title === "b");
       expect(b?.status).toBe("assigned");
       expect(b?.assignedTo).toBe("0xagent");
+    });
+
+    it("persists timeout and estimated cost metadata from decomposition input", () => {
+      const goal = createGoal(db, "Goal", "Desc");
+      decomposeGoal(db, goal.id, [
+        makeTask(goal.id, "timed", {
+          timeoutMs: 90_000,
+          estimatedCostCents: 345,
+        }),
+      ]);
+
+      const stored = getTasksByGoal(db, goal.id).find((task) => task.title === "timed");
+      expect(stored?.timeoutMs).toBe(90_000);
+      expect(stored?.estimatedCostCents).toBe(345);
     });
 
     it("starts pending when dependency is already completed", () => {
@@ -443,7 +455,7 @@ describe("orchestration/task-graph", () => {
       expect(() => completeTask(db, "missing", SUCCESS_RESULT)).toThrow("Task not found: missing");
     });
 
-    it("throws for terminal tasks", () => {
+    it("no-ops for terminal tasks", () => {
       const goal = createGoal(db, "Goal", "Desc");
       const taskId = insertTask(db, {
         goalId: goal.id,
@@ -452,7 +464,8 @@ describe("orchestration/task-graph", () => {
         status: "completed",
       });
 
-      expect(() => completeTask(db, taskId, SUCCESS_RESULT)).toThrow(/already in terminal status/);
+      expect(() => completeTask(db, taskId, SUCCESS_RESULT)).not.toThrow();
+      expect(getTaskById(db, taskId)?.status).toBe("completed");
     });
   });
 
@@ -592,7 +605,7 @@ describe("orchestration/task-graph", () => {
       expect(() => failTask(db, "missing", "err", true)).toThrow("Task not found: missing");
     });
 
-    it("throws for terminal task", () => {
+    it("no-ops for terminal task", () => {
       const goal = createGoal(db, "Goal", "Desc");
       const taskId = insertTask(db, {
         goalId: goal.id,
@@ -601,7 +614,8 @@ describe("orchestration/task-graph", () => {
         status: "completed",
       });
 
-      expect(() => failTask(db, taskId, "err", true)).toThrow(/already in terminal status/);
+      expect(() => failTask(db, taskId, "err", true)).not.toThrow();
+      expect(getTaskById(db, taskId)?.status).toBe("completed");
     });
   });
 

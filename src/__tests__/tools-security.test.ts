@@ -564,6 +564,28 @@ describe("exec tool forbidden command patterns", () => {
       expect(execMock.mock.calls[1]?.[0]).toBe("ss -ltnp | grep 9000");
     });
 
+    it("returns canonical exec timeout when conway.exec throws timeout-like error", async () => {
+      const execTool = tools.find((t) => t.name === "exec")!;
+      vi.spyOn(conway, "exec").mockRejectedValueOnce(new Error("spawnSync /bin/sh ETIMEDOUT"));
+
+      const result = await execTool.execute({ command: "npm run dev", timeout: 1000 }, ctx);
+      expect(result).toContain("exec timeout:");
+      expect(result).toContain("ETIMEDOUT");
+    });
+
+    it("returns canonical exec timeout when command output indicates timeout", async () => {
+      const execTool = tools.find((t) => t.name === "exec")!;
+      vi.spyOn(conway, "exec").mockResolvedValueOnce({
+        stdout: "",
+        stderr: "command timed out after 60000ms",
+        exitCode: 1,
+      });
+
+      const result = await execTool.execute({ command: "long-running command" }, ctx);
+      expect(result).toContain("exec timeout:");
+      expect(result).toContain("timed out");
+    });
+
     // sh -c indirection IS caught because \bnohup\b matches anywhere in the string
     it("blocks sh -c indirection: sh -c 'nohup node server.js'", async () => {
       const execTool = tools.find((t) => t.name === "exec")!;

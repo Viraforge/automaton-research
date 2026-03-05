@@ -69,9 +69,14 @@ export function createInferenceClient(
       backend !== "ollama" && /^(o[1-9]|gpt-5|gpt-4\.1)/.test(model);
     const tokenLimit = opts?.maxTokens || maxTokens;
 
+    const sanitizedMessages = sanitizeMessages(messages);
+    if (sanitizedMessages.length === 0) {
+      sanitizedMessages.push({ role: "user", content: "Continue." });
+    }
+
     const body: Record<string, unknown> = {
       model,
-      messages: sanitizeMessages(messages).map(formatMessage),
+      messages: sanitizedMessages.map(formatMessage),
       stream: false,
     };
 
@@ -186,6 +191,24 @@ function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
   let toolCallCounter = 0;
   const result: ChatMessage[] = [];
   for (const msg of messages) {
+    if (msg.role === "system") {
+      const content = typeof msg.content === "string" ? msg.content : String(msg.content ?? "");
+      if (!content) continue;
+      const previous = result[result.length - 1];
+      if (previous?.role === "system") {
+        result[result.length - 1] = {
+          ...previous,
+          content: `${previous.content}\n\n${content}`,
+        };
+      } else {
+        result.push({
+          ...msg,
+          content,
+        });
+      }
+      continue;
+    }
+
     if (msg.role === "assistant") {
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         // Once a new assistant tool call block appears, any unresolved older
@@ -241,6 +264,10 @@ function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
       ...msg,
       content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
     });
+  }
+
+  while (result[0]?.role === "tool") {
+    result.shift();
   }
 
   return result;

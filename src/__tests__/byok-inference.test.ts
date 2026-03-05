@@ -228,6 +228,118 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("coalesces consecutive system messages before BYOK request", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_system",
+          model: "glm-5",
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "glm-5",
+        maxTokens: 64,
+      });
+
+      await client.chat([
+        { role: "system", content: "policy A" },
+        { role: "system", content: "policy B" },
+        { role: "user", content: "hello" },
+      ]);
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const payload = JSON.parse(String(requestInit?.body || "{}")) as {
+        messages?: Array<{ role?: string; content?: string }>;
+      };
+      const systemMessages = (payload.messages || []).filter((m) => m.role === "system");
+      expect(systemMessages).toHaveLength(1);
+      expect(systemMessages[0]?.content).toContain("policy A");
+      expect(systemMessages[0]?.content).toContain("policy B");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("injects fallback user message when sanitization removes all messages", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_fallback",
+          model: "glm-5",
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "glm-5",
+        maxTokens: 64,
+      });
+
+      await client.chat([
+        { role: "tool", content: "{\"orphan\":true}", tool_call_id: "missing_tool_call" },
+      ]);
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const payload = JSON.parse(String(requestInit?.body || "{}")) as {
+        messages?: Array<{ role?: string; content?: string }>;
+      };
+      expect(payload.messages).toEqual([{ role: "user", content: "Continue." }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("surfaces provider 1214 invalid messages diagnostics", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "1214",
+            message: "The messages parameter is illegal.",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "glm-5",
+        maxTokens: 64,
+      });
+
+      await expect(
+        client.chat([{ role: "user", content: "hello" }]),
+      ).rejects.toThrow("1214");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 // ─── BYOK model registration in ModelRegistry ──────────────────

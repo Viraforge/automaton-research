@@ -68,7 +68,12 @@ export interface Goal {
   deadline: string | null;
 }
 
-type DecomposeTaskInput = Omit<TaskNode, "id" | "metadata">;
+export type DecomposeTaskInput = Omit<TaskNode, "id" | "metadata"> & {
+  estimatedCostCents?: number;
+  maxRetries?: number;
+  retryCount?: number;
+  timeoutMs?: number;
+};
 
 type CycleTask = {
   id?: string;
@@ -117,7 +122,7 @@ export function createGoal(
 export function decomposeGoal(
   db: Database,
   goalId: string,
-  tasks: Omit<TaskNode, "id" | "metadata">[],
+  tasks: DecomposeTaskInput[],
 ): void {
   if (!getGoalById(db, goalId)) {
     throw new Error(`Goal not found: ${goalId}`);
@@ -192,6 +197,10 @@ export function decomposeGoal(
         priority: planned.task.priority,
         dependencies: dependencyRefs,
         result: planned.task.result,
+        estimatedCostCents: planned.task.estimatedCostCents,
+        maxRetries: planned.task.maxRetries,
+        retryCount: planned.task.retryCount,
+        timeoutMs: planned.task.timeoutMs,
       });
 
       localToPersisted.set(planned.localId, taskId);
@@ -265,7 +274,7 @@ export function completeTask(db: Database, taskId: string, result: TaskResult): 
     }
 
     if (TERMINAL_TASK_STATUSES.has(task.status)) {
-      throw new Error(`Task ${taskId} is already in terminal status '${task.status}'`);
+      return;
     }
 
     updateTaskStatus(db, taskId, "completed");
@@ -286,7 +295,7 @@ export function failTask(db: Database, taskId: string, error: string, shouldRetr
     }
 
     if (TERMINAL_TASK_STATUSES.has(task.status)) {
-      throw new Error(`Task ${taskId} is already in terminal status '${task.status}'`);
+      return;
     }
 
     const failureResult: TaskResult = {

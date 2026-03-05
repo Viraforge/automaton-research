@@ -27,14 +27,18 @@ function truncateOutput(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + `\n[TRUNCATED: ${text.length - maxLen} chars omitted]`;
 }
 
-function localExec(command: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
+function localExec(command: string, timeoutMs: number): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const proc = execCb(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       if (error && !stdout && !stderr) {
         reject(error);
         return;
       }
-      resolve({ stdout: stdout ?? "", stderr: stderr ?? "" });
+      resolve({
+        stdout: stdout ?? "",
+        stderr: stderr ?? "",
+        exitCode: error && typeof (error as any).code === "number" ? (error as any).code : 0,
+      });
     });
   });
 }
@@ -57,6 +61,14 @@ const WORKER_ISSUE_ACTIVE_KEY = "orchestrator.worker_issue.active";
 
 function isTimeoutLikeError(message: string): boolean {
   return /(timed out|timeout|etimedout)/i.test(message);
+}
+
+function timeoutSummaryFromOutput(stdout: string, stderr: string): string | null {
+  const stderrTrimmed = stderr.trim();
+  const stdoutTrimmed = stdout.trim();
+  if (isTimeoutLikeError(stderrTrimmed)) return stderrTrimmed.slice(0, 200);
+  if (isTimeoutLikeError(stdoutTrimmed)) return stdoutTrimmed.slice(0, 200);
+  return null;
 }
 
 // Minimal inference interface — works with both UnifiedInferenceClient and
@@ -426,12 +438,48 @@ RULES:
           // Try Conway API first, fall back to local shell
           try {
             const result = await this.config.conway.exec(command, timeoutMs);
+            const timeoutSummary = timeoutSummaryFromOutput(result.stdout ?? "", result.stderr ?? "");
+            if (result.exitCode !== 0 && timeoutSummary) {
+              this.persistWorkerIssue({
+                type: "exec_timeout",
+                workerId,
+                taskId,
+                summary: `exec timeout (${timeoutMs}ms): ${timeoutSummary}`,
+                command,
+                isPermanent: false,
+              });
+              return `exec timeout: ${timeoutSummary}`;
+            }
             const stdout = truncateOutput(result.stdout ?? "", 16_000);
             const stderr = truncateOutput(result.stderr ?? "", 4000);
             return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
-          } catch {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (isTimeoutLikeError(message)) {
+              this.persistWorkerIssue({
+                type: "exec_timeout",
+                workerId,
+                taskId,
+                summary: `exec timeout (${timeoutMs}ms): ${message}`,
+                command,
+                isPermanent: false,
+              });
+              return `exec timeout: ${message}`;
+            }
             try {
               const result = await localExec(command, timeoutMs);
+              const timeoutSummary = timeoutSummaryFromOutput(result.stdout, result.stderr);
+              if (result.exitCode !== 0 && timeoutSummary) {
+                this.persistWorkerIssue({
+                  type: "exec_timeout",
+                  workerId,
+                  taskId,
+                  summary: `exec timeout (${timeoutMs}ms): ${timeoutSummary}`,
+                  command,
+                  isPermanent: false,
+                });
+                return `exec timeout: ${timeoutSummary}`;
+              }
               const stdout = truncateOutput(result.stdout, 16_000);
               const stderr = truncateOutput(result.stderr, 4000);
               return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
