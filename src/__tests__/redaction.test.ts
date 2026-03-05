@@ -19,5 +19,10 @@ describe("redactSensitiveText", () => {
     expect(redacted).toContain("Authorization: Be***56");
     expect(redacted).not.toContain("token-value-123456");
   });
+
+  it("does not redact non-secret keys like keyword", () => {
+    const redacted = redactSensitiveText('{"keyword":"automation","limit":5}');
+    expect(redacted).toContain('"keyword":"automation"');
+  });
 });
 

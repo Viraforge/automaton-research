@@ -713,9 +713,9 @@ describe("Agent Loop", () => {
     expect(enforcementTurn).toBeUndefined();
   });
 
-  it("discover_agents is treated as idle-only and triggers maintenance intervention", { timeout: 180_000 }, async () => {
-    // discover_agents is in IDLE_ONLY_TOOLS and now bypasses exact-pattern loop
-    // enforcement. It should trigger the maintenance idle intervention instead.
+  it("discover_agents loop triggers discovery cooldown and blocked retry", { timeout: 180_000 }, async () => {
+    // Repeated idle discovery should trigger a dedicated cooldown intervention.
+    // A subsequent discover_agents attempt should be blocked by the cooldown.
     function discoverResponse(uid: string): ReturnType<typeof toolCallResponse> {
       return {
         id: `resp_${uid}`,
@@ -742,9 +742,7 @@ describe("Agent Loop", () => {
     const inference = new MockInferenceClient([
       discoverResponse("d1"),
       discoverResponse("d2"),
-      discoverResponse("d3"),
-      discoverResponse("d4"),
-      discoverResponse("d5"), // Triggers maintenance intervention
+      discoverResponse("d3"), // should be blocked by cooldown
       noToolResponse("Processing discovery results."),
     ]);
 
@@ -759,9 +757,14 @@ describe("Agent Loop", () => {
       onTurnComplete: (turn) => turns.push(turn),
     });
 
-    const maintenanceWarning = turns.find(
-      (t) => t.input?.includes("MAINTENANCE LOOP DETECTED"),
+    const discoveryWarning = turns.find(
+      (t) => t.input?.includes("DISCOVERY LOOP DETECTED"),
     );
-    expect(maintenanceWarning).toBeDefined();
+    expect(discoveryWarning).toBeDefined();
+
+    const blockedCall = turns
+      .flatMap((t) => t.toolCalls)
+      .find((tc) => tc.name === "discover_agents" && tc.error?.includes("temporarily blocked"));
+    expect(blockedCall).toBeDefined();
   });
 });

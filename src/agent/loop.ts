@@ -74,6 +74,9 @@ const MAX_CONSECUTIVE_ERRORS = 5;
 const MAX_REPETITIVE_TURNS = 3;
 const MAX_IDLE_ONLY_TURNS = 5;
 const INFERENCE_RUNTIME_KEYS_KEY = "inference.runtime_keys";
+const DISCOVER_AGENTS_COOLDOWN_KEY = "discover_agents.cooldown_until";
+const MAX_DISCOVER_IDLE_TURNS = 2;
+const DISCOVER_AGENTS_COOLDOWN_MS = 10 * 60_000;
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
@@ -364,12 +367,16 @@ export async function runAgentLoop(
   // and detection never accumulates enough data within a single cycle.
   let lastToolPatterns: string[] = [];
   let loopWarningPattern: string | null = null;
+  let discoverIdleTurns = 0;
   try {
     const persisted = db.getKV("loop_detection_state");
     if (persisted) {
       const parsed = JSON.parse(persisted);
       if (Array.isArray(parsed.patterns)) lastToolPatterns = parsed.patterns;
       if (typeof parsed.warningPattern === "string") loopWarningPattern = parsed.warningPattern;
+      if (typeof parsed.discoverIdleTurns === "number" && Number.isFinite(parsed.discoverIdleTurns)) {
+        discoverIdleTurns = Math.max(0, Math.floor(parsed.discoverIdleTurns));
+      }
     }
   } catch { /* ignore corrupt state */ }
 
@@ -658,6 +665,26 @@ export async function runAgentLoop(
 
           log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args).slice(0, 100)})`);
 
+          if (tc.function.name === "discover_agents") {
+            const cooldownRaw = db.getKV(DISCOVER_AGENTS_COOLDOWN_KEY);
+            const cooldownMs = cooldownRaw ? Date.parse(cooldownRaw) : Number.NaN;
+            if (Number.isFinite(cooldownMs) && cooldownMs > Date.now()) {
+              const secondsLeft = Math.max(1, Math.ceil((cooldownMs - Date.now()) / 1000));
+              const result: ToolCallResult = {
+                id: tc.id,
+                name: tc.function.name,
+                arguments: args,
+                result: "",
+                durationMs: 0,
+                error: `discover_agents temporarily blocked for ${secondsLeft}s due to repetitive discovery loop; execute an artifact-producing action first.`,
+              };
+              turn.toolCalls.push(result);
+              log(config, `[TOOL RESULT] ${tc.function.name}: ERROR: ${result.error}`);
+              callCount++;
+              continue;
+            }
+          }
+
           const result = await executeTool(
             tc.function.name,
             args,
@@ -816,6 +843,21 @@ export async function runAgentLoop(
 
         if (isAllIdleTools) {
           idleToolTurns++;
+          const hasDiscoverAgentsCall = turn.toolCalls.some((tc) => tc.name === "discover_agents");
+          discoverIdleTurns = hasDiscoverAgentsCall ? discoverIdleTurns + 1 : 0;
+          if (discoverIdleTurns >= MAX_DISCOVER_IDLE_TURNS && !pendingInput) {
+            const cooldownUntil = new Date(Date.now() + DISCOVER_AGENTS_COOLDOWN_MS).toISOString();
+            db.setKV(DISCOVER_AGENTS_COOLDOWN_KEY, cooldownUntil);
+            log(config, `[LOOP] discover_agents loop detected: ${discoverIdleTurns} idle discovery turns. Applying cooldown until ${cooldownUntil}.`);
+            pendingInput = {
+              content:
+                `DISCOVERY LOOP DETECTED: You called discover_agents in ${discoverIdleTurns} idle turns. ` +
+                `discover_agents is now blocked for ${Math.round(DISCOVER_AGENTS_COOLDOWN_MS / 60000)} minutes. ` +
+                `Do not check status again. Build or ship one concrete artifact before any more discovery.`,
+              source: "system",
+            };
+            discoverIdleTurns = 0;
+          }
           if (idleToolTurns >= MAX_IDLE_ONLY_TURNS && !pendingInput) {
             log(config, `[LOOP] Maintenance loop detected: ${idleToolTurns} consecutive idle-only turns. Injecting no-idle directive.`);
             pendingInput = {
@@ -830,6 +872,7 @@ export async function runAgentLoop(
           }
         } else {
           idleToolTurns = 0;
+          discoverIdleTurns = 0;
         }
 
         // Persist loop detection state AFTER all modifications so it survives
@@ -838,6 +881,7 @@ export async function runAgentLoop(
         db.setKV("loop_detection_state", JSON.stringify({
           patterns: lastToolPatterns,
           warningPattern: loopWarningPattern,
+          discoverIdleTurns,
         }));
         db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
       }
