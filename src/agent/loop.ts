@@ -927,12 +927,35 @@ export async function runAgentLoop(
       // "stuck creating the same file" scenarios the exact-pattern check misses.
       if (!pendingInput && lastToolPatterns.length >= MAX_REPETITIVE_TURNS) {
         const toolFrequency = new Map<string, number>();
+        let discoverPatternCount = 0;
         for (const pattern of lastToolPatterns) {
-          for (const tool of pattern.split(",")) {
+          const toolsInPattern = pattern.split(",");
+          if (toolsInPattern.includes("discover_agents")) discoverPatternCount++;
+          for (const tool of toolsInPattern) {
             if (MUTATING_TOOLS.has(tool)) {
               toolFrequency.set(tool, (toolFrequency.get(tool) ?? 0) + 1);
             }
           }
+        }
+        if (discoverPatternCount >= MAX_REPETITIVE_TURNS) {
+          const cooldownUntil = new Date(Date.now() + DISCOVER_AGENTS_COOLDOWN_MS).toISOString();
+          db.setKV(DISCOVER_AGENTS_COOLDOWN_KEY, cooldownUntil);
+          log(config, `[LOOP] discover_agents frequency loop: seen in ${discoverPatternCount}/${lastToolPatterns.length} recent turns. Cooldown until ${cooldownUntil}.`);
+          pendingInput = {
+            content:
+              `DISCOVERY LOOP DETECTED: discover_agents was used in ${discoverPatternCount} consecutive turns. ` +
+              `discover_agents is blocked for ${Math.round(DISCOVER_AGENTS_COOLDOWN_MS / 60000)} minutes. ` +
+              `Stop checking and execute one concrete build/deploy task now.`,
+            source: "system",
+          };
+          lastToolPatterns = [];
+          db.setKV("loop_detection_state", JSON.stringify({
+            patterns: lastToolPatterns,
+            warningPattern: loopWarningPattern,
+            discoverIdleTurns,
+          }));
+          db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
+          continue;
         }
         for (const [tool, count] of toolFrequency) {
           if (count >= MAX_REPETITIVE_TURNS) {
