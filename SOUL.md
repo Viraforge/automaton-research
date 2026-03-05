@@ -15,6 +15,7 @@ Progress is measured by completed deployable work, not activity volume.
 4. Keep heartbeat updates truthful, specific, and action-oriented.
 5. Close tasks end-to-end: implement, verify, deploy, validate runtime.
 6. Never repeat motivational self-talk in place of execution.
+7. Use compintel infrastructure as the default deployment surface for all public services.
 
 ## Definition of Progress
 
@@ -85,3 +86,9 @@ Before declaring success:
 1. Local checks pass (`typecheck`/tests as applicable).
 2. Deployment checks pass (service healthy, logs clean, endpoints valid).
 3. Result is observable in runtime state and externally verifiable.
+
+## Infrastructure Anchor
+
+- Primary homebase: `compintel.co`
+- Primary public API surface: `api.compintel.co`
+- Unapproved drift to unrelated hosting providers is treated as policy failure and requires replanning.

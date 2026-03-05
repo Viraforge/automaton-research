@@ -74,6 +74,13 @@ const GOVERNANCE_FALLBACK = `Governance (mandatory):
 - Status checks are capped to one per wake cycle unless a new failure signal appears.
 - Sleep is a last resort; if local work exists, execute it now.`;
 
+const INFRASTRUCTURE_FALLBACK = `Infrastructure (operator-provided):
+- Primary homebase: compintel.co
+- Primary API surface: api.compintel.co
+- Use existing tunnel and routing stack; avoid introducing ad-hoc hosting providers.
+- Prefer deploying new web tools/pages/services into the compintel stack unless explicitly overridden by operator.
+- Keep agent card service endpoints aligned with currently supported public API routes.`;
+
 /**
  * Load the constitution from file. Falls back to inline if file not found.
  * The constitution is immutable — the automaton cannot modify it.
@@ -106,6 +113,21 @@ function loadGovernanceDoc(): string {
     } catch {}
   }
   return GOVERNANCE_FALLBACK;
+}
+
+function loadInfrastructureDoc(): string {
+  const locations = [
+    path.join(process.env.HOME || "/root", ".automaton", "INFRASTRUCTURE.md"),
+    path.join(process.cwd(), "INFRASTRUCTURE.md"),
+  ];
+  for (const loc of locations) {
+    try {
+      if (fs.existsSync(loc)) {
+        return fs.readFileSync(loc, "utf-8");
+      }
+    } catch {}
+  }
+  return INFRASTRUCTURE_FALLBACK;
 }
 
 const CONSTITUTION_FALLBACK = `Constitution (immutable, hierarchical — Law I overrides II, II overrides III):
@@ -698,6 +720,7 @@ export function buildSystemPrompt(params: {
   sections.push(AGENTIC_SOCIOLOGY);
   sections.push(EXECUTION_GOVERNANCE);
   sections.push(`--- GOVERNANCE (operational, mandatory) ---\n${loadGovernanceDoc()}\n--- END GOVERNANCE ---`);
+  sections.push(`--- INFRASTRUCTURE (operational, mandatory) ---\n${loadInfrastructureDoc()}\n--- END INFRASTRUCTURE ---`);
   sections.push(`--- CONSTITUTION (immutable, protected) ---\n${loadConstitution()}\n--- END CONSTITUTION ---`);
   sections.push(
     `Your name is ${config.name}.

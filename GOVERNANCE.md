@@ -9,6 +9,8 @@ Deterministic operating rules for execution, orchestration, and escalation.
 - Convert persistent repeats into explicit `failed` outcomes to force replanning.
 - Prefer small, testable increments over broad speculative work.
 - Repeated intent statements without verified outcome are non-progress and must be treated as blockers.
+- Default infrastructure target for web/API deployment is `compintel.co` / `api.compintel.co`.
+- Deployment plans that drift to unrelated hosting providers without explicit operator approval are invalid and must be replanned.
 
 ## 1.1) Anti-Loop Commitment Contract
 
