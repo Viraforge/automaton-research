@@ -56,15 +56,15 @@ const DEFAULT_EMERGENCY_STOP_CREDITS = 100;
 const DEFAULT_TIER_DEFAULTS: Record<ModelTier, TierDefault> = {
   reasoning: {
     preferredProvider: "zai",
-    fallbackOrder: ["minimax", "openai", "groq", "together"],
+    fallbackOrder: ["minimax"],
   },
   fast: {
     preferredProvider: "zai",
-    fallbackOrder: ["minimax", "groq", "openai", "together", "local"],
+    fallbackOrder: ["minimax"],
   },
   cheap: {
     preferredProvider: "zai",
-    fallbackOrder: ["groq", "together", "local", "openai"],
+    fallbackOrder: ["minimax"],
   },
 };
 
@@ -256,6 +256,18 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
         supportsStreaming: true,
       },
       {
+        id: "MiniMax-M2.5-highspeed",
+        // Reuse the fast model for cheap mode to keep provider routing on MiniMax.
+        tier: "cheap",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+        costPerInputToken: 0.5,
+        costPerOutputToken: 1.0,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      },
+      {
         id: "MiniMax-M2.5",
         tier: "reasoning",
         contextWindow: 128000,
@@ -293,6 +305,18 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
         id: "glm-5",
         // Same model is mapped to both tiers to keep fallback behavior consistent.
         tier: "fast",
+        contextWindow: 128000,
+        maxOutputTokens: 16384,
+        costPerInputToken: 0.5,
+        costPerOutputToken: 1.0,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      },
+      {
+        id: "glm-5",
+        // Keep cheap routing on ZAI instead of falling through to Groq/OpenAI.
+        tier: "cheap",
         contextWindow: 128000,
         maxOutputTokens: 16384,
         costPerInputToken: 0.5,
@@ -472,10 +496,6 @@ export class ProviderRegistry {
     const orderedIds = [
       preferred.preferredProvider,
       ...preferred.fallbackOrder,
-      ...this.providers
-        .slice()
-        .sort((a, b) => a.priority - b.priority)
-        .map((provider) => provider.id),
     ];
 
     const seen = new Set<string>();
@@ -493,6 +513,14 @@ export class ProviderRegistry {
       }
 
       orderedProviders.push(provider);
+    }
+
+    // If the tier default list does not reference any known provider IDs
+    // (common in tests/custom registries), fall back to priority order.
+    if (orderedProviders.length === 0) {
+      return this.providers
+        .slice()
+        .sort((a, b) => a.priority - b.priority);
     }
 
     return orderedProviders;

@@ -209,8 +209,8 @@ describe("UnifiedInferenceClient", () => {
   it("stops retrying after max retry budget", async () => {
     const client = createClient();
 
-    // reasoning providers exhausted (minimax, zai, openai, groq)
-    for (const providerId of ["minimax", "zai", "openai", "groq"]) {
+    // reasoning providers exhausted (zai, minimax)
+    for (const providerId of ["zai", "minimax"]) {
       for (let i = 1; i <= 4; i += 1) {
         queueError(429, `${providerId}-${i}`);
       }

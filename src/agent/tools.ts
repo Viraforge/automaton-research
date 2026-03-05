@@ -131,6 +131,17 @@ function isForbiddenCommand(command: string, sandboxId: string): string | null {
   return null;
 }
 
+function buildNetstatFallback(command: string): string | null {
+  const trimmed = command.trim();
+  if (!/^netstat\b/i.test(trimmed)) return null;
+
+  // Minimal compatibility shim for common Linux checks.
+  // netstat -tlnp         -> ss -ltnp
+  // netstat -tlnp | grep  -> ss -ltnp | grep
+  const rewritten = trimmed.replace(/^netstat\b(?:\s+-[^\s]+)?/i, "ss -ltnp");
+  return rewritten;
+}
+
 // ─── Built-in Tools ────────────────────────────────────────────
 
 export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
@@ -158,13 +169,20 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       },
       execute: async (args, ctx) => {
         const command = args.command as string;
+        const timeoutMs = (args.timeout as number) || 30000;
         const forbidden = isForbiddenCommand(command, ctx.identity.sandboxId);
         if (forbidden) return forbidden;
 
-        const result = await ctx.conway.exec(
-          command,
-          (args.timeout as number) || 30000,
-        );
+        let result = await ctx.conway.exec(command, timeoutMs);
+        if (
+          result.exitCode !== 0 &&
+          /netstat:\s*not found/i.test(result.stderr || "")
+        ) {
+          const fallbackCommand = buildNetstatFallback(command);
+          if (fallbackCommand) {
+            result = await ctx.conway.exec(fallbackCommand, timeoutMs);
+          }
+        }
         // Sanitize output: strip any Discord webhook URLs that may leak through
         // stdout/stderr (e.g. from reading config files or logs). The agent must
         // never see the raw webhook URL — the heartbeat system manages it internally.

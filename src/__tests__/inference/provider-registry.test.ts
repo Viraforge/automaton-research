@@ -183,13 +183,13 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
     const resolved = registry.resolveModel("cheap");
 
-    expect(resolved.provider.id).toBe("groq");
-    expect(resolved.model.id).toBe("llama-3.1-8b-instant");
+    expect(resolved.provider.id).toBe("zai");
+    expect(resolved.model.id).toBe("glm-5");
   });
 
   it("resolveCandidates returns fallback order for reasoning tier", () => {
     const registry = createRegistryFromDefaults();
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax", "openai", "groq"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
   });
 
   it("resolveCandidates skips providers disabled in config", () => {
@@ -213,7 +213,7 @@ describe("ProviderRegistry", () => {
     const resolved = registry.resolveModel("fast", true);
 
     expect(resolved.model.tier).toBe("cheap");
-    expect(resolved.model.id).toBe("llama-3.1-8b-instant");
+    expect(resolved.model.id).toBe("glm-5");
   });
 
   it("resolveModel in survival mode keeps cheap as cheap", () => {
@@ -260,10 +260,10 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
 
     registry.disableProvider("openai", "manual", 60_000);
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax", "groq"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
 
     registry.enableProvider("openai");
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax", "openai", "groq"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
   });
 
   it("disableProvider ignores unknown provider IDs", () => {
@@ -275,7 +275,7 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
 
     registry.disableProvider("openai", "temporary", 0);
-    expect(providerIdsForTier(registry, "reasoning")).toContain("openai");
+    expect(() => registry.getModel("openai", "gpt-4.1")).not.toThrow();
   });
 
   it("temporary disablement expires after duration", () => {
@@ -284,10 +284,10 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
     registry.disableProvider("openai", "maintenance", 5_000);
 
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax", "groq"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
 
     vi.advanceTimersByTime(5_001);
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax", "openai", "groq"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
 
     vi.useRealTimers();
   });
@@ -403,6 +403,6 @@ describe("ProviderRegistry", () => {
     registry.resolveModel("reasoning");
     registry.resolveModel("fast");
 
-    expect(openAiCtor).toHaveBeenCalledTimes(8);
+    expect(openAiCtor).toHaveBeenCalledTimes(4);
   });
 });

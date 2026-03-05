@@ -543,6 +543,27 @@ describe("exec tool forbidden command patterns", () => {
       expect(conway.execCalls.length).toBe(1);
     });
 
+    it("falls back to ss when netstat is unavailable", async () => {
+      const execTool = tools.find((t) => t.name === "exec")!;
+      const execMock = vi
+        .spyOn(conway, "exec")
+        .mockResolvedValueOnce({
+          stdout: "",
+          stderr: "/bin/sh: 1: netstat: not found\n",
+          exitCode: 1,
+        })
+        .mockResolvedValueOnce({
+          stdout: "LISTEN 0 4096 0.0.0.0:9000",
+          stderr: "",
+          exitCode: 0,
+        });
+
+      const result = await execTool.execute({ command: "netstat -tlnp | grep 9000" }, ctx);
+      expect(result).toContain("LISTEN");
+      expect(execMock).toHaveBeenCalledTimes(2);
+      expect(execMock.mock.calls[1]?.[0]).toBe("ss -ltnp | grep 9000");
+    });
+
     // sh -c indirection IS caught because \bnohup\b matches anywhere in the string
     it("blocks sh -c indirection: sh -c 'nohup node server.js'", async () => {
       const execTool = tools.find((t) => t.name === "exec")!;

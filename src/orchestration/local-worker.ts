@@ -336,13 +336,13 @@ RULES:
           type: "object",
           properties: {
             command: { type: "string", description: "The shell command to execute" },
-            timeout_ms: { type: "number", description: "Timeout in milliseconds (default: 30000)" },
+            timeout_ms: { type: "number", description: "Timeout in milliseconds (default: 60000)" },
           },
           required: ["command"],
         },
         execute: async (args) => {
           const command = args.command as string;
-          const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 30_000;
+          const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 60_000;
 
           // Try Conway API first, fall back to local shell
           try {
