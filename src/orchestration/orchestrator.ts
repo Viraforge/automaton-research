@@ -10,6 +10,7 @@ import {
   getGoalProgress,
   getReadyTasks,
   type Goal,
+  type DecomposeTaskInput,
   type TaskNode,
   type TaskResult,
   normalizeTaskResult,
@@ -25,6 +26,7 @@ import { ColonyMessaging, type AgentMessage } from "./messaging.js";
 import { generateTodoMd } from "./attention.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { reviewPlan } from "./plan-mode.js";
+import { parseUtcTimestamp } from "./time.js";
 import {
   getActiveGoals,
   getGoalById,
@@ -52,6 +54,7 @@ const ORCHESTRATOR_CHILD_FAILURES_KEY = "orchestrator.child_failures";
 const DEFAULT_TASK_FUNDING_CENTS = 25;
 const DEFAULT_MAX_REPLANS = 3;
 const DEAD_WORKER_QUARANTINE_MS = 30 * 60_000;
+const CHILD_LIVENESS_STALE_MS = 30 * 60_000;
 const EXECUTION_STALL_THRESHOLD_MS = 10 * 60_000;
 
 type ExecutionPhase =
@@ -392,6 +395,8 @@ export class Orchestrator {
         priority: 50,
         dependencies: [],
         result: null,
+          estimatedCostCents: 200,
+          timeoutMs: 300_000,
       },
     ]);
 
@@ -927,13 +932,22 @@ export class Orchestrator {
 
     const rows = this.params.db.prepare(
       `SELECT name, address, status
+      , created_at, last_checked
        FROM children
        WHERE status IN ('running', 'healthy')
        ORDER BY created_at ASC`,
-    ).all() as { name: string; address: string; status: string }[];
+    ).all() as {
+      name: string;
+      address: string;
+      status: string;
+      created_at: string | null;
+      last_checked: string | null;
+    }[];
 
     const candidate = rows.find((row) =>
-      !idleAddresses.has(row.address) && !this.isWorkerQuarantined(row.address));
+      !idleAddresses.has(row.address)
+      && !this.isWorkerQuarantined(row.address)
+      && isChildRecent(row.last_checked, row.created_at));
     if (!candidate) {
       return null;
     }
@@ -959,12 +973,18 @@ export class Orchestrator {
       return null;
     }
 
-    this.params.agentTracker.register({
-      address: spawned.address,
-      name: spawned.name,
-      role: task.agentRole ?? "generalist",
-      sandboxId: typeof spawned.sandboxId === "string" ? spawned.sandboxId : ulid(),
-    });
+    const sandboxId = typeof spawned.sandboxId === "string" ? spawned.sandboxId : ulid();
+    const existing = this.params.db.prepare(
+      "SELECT id FROM children WHERE address = ? OR sandbox_id = ? LIMIT 1",
+    ).get(spawned.address, sandboxId) as { id: string } | undefined;
+    if (!existing) {
+      this.params.agentTracker.register({
+        address: spawned.address,
+        name: spawned.name,
+        role: task.agentRole ?? "generalist",
+        sandboxId,
+      });
+    }
 
     this.params.agentTracker.updateStatus(spawned.address, "running");
 
@@ -1258,7 +1278,7 @@ export class Orchestrator {
   }
 }
 
-function plannerOutputToTasks(goalId: string, output: PlannerOutput): Omit<TaskNode, "id" | "metadata">[] {
+function plannerOutputToTasks(goalId: string, output: PlannerOutput): DecomposeTaskInput[] {
   return output.tasks.map((task, index) => ({
     parentId: null,
     goalId,
@@ -1270,7 +1290,15 @@ function plannerOutputToTasks(goalId: string, output: PlannerOutput): Omit<TaskN
     priority: clampPriority(task.priority, index),
     dependencies: task.dependencies.map((dep) => String(dep)),
     result: null,
+    estimatedCostCents: task.estimatedCostCents,
+    timeoutMs: task.timeoutMs,
   }));
+}
+
+function isChildRecent(lastChecked: string | null | undefined, createdAt: string | null | undefined): boolean {
+  const latest = parseUtcTimestamp(lastChecked) ?? parseUtcTimestamp(createdAt);
+  if (latest === null) return false;
+  return Date.now() - latest <= CHILD_LIVENESS_STALE_MS;
 }
 
 function goalRowToGoal(goal: GoalRow): Goal {

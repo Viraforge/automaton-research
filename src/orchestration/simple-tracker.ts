@@ -7,8 +7,16 @@ import type {
 } from "../types.js";
 import type { AgentTracker, FundingProtocol } from "./types.js";
 import type { Address } from "viem";
+import { parseUtcTimestamp } from "./time.js";
 
 const IDLE_STATUSES = new Set<ChildStatus>(["running", "healthy"]);
+const CHILD_LIVENESS_STALE_MS = 30 * 60_000;
+
+function isChildRecent(lastChecked: string | null | undefined, createdAt: string | null | undefined): boolean {
+  const latest = parseUtcTimestamp(lastChecked) ?? parseUtcTimestamp(createdAt);
+  if (latest === null) return false;
+  return Date.now() - latest <= CHILD_LIVENESS_STALE_MS;
+}
 
 export class SimpleAgentTracker implements AgentTracker {
   constructor(private readonly db: AutomatonDatabase) {}
@@ -28,13 +36,24 @@ export class SimpleAgentTracker implements AgentTracker {
     );
 
     const children = this.db.raw.prepare(
-      `SELECT id, name, address, status, COALESCE(role, 'generalist') AS role
+      `SELECT id, name, address, status, COALESCE(role, 'generalist') AS role, created_at, last_checked
        FROM children
        WHERE status IN ('running', 'healthy')`,
-    ).all() as { id: string; name: string; address: string; status: string; role: string }[];
+    ).all() as {
+      id: string;
+      name: string;
+      address: string;
+      status: string;
+      role: string;
+      created_at: string | null;
+      last_checked: string | null;
+    }[];
 
     return children
-      .filter((child) => IDLE_STATUSES.has(child.status as ChildStatus) && !assignedAddresses.has(child.address))
+      .filter((child) =>
+        IDLE_STATUSES.has(child.status as ChildStatus)
+        && !assignedAddresses.has(child.address)
+        && isChildRecent(child.last_checked, child.created_at))
       .map((child) => ({
         address: child.address,
         name: child.name,
@@ -65,6 +84,29 @@ export class SimpleAgentTracker implements AgentTracker {
   }
 
   register(agent: { address: string; name: string; role: string; sandboxId: string }): void {
+    const existing = this.db.raw
+      .prepare("SELECT id FROM children WHERE address = ? LIMIT 1")
+      .get(agent.address) as { id: string } | undefined;
+    if (existing) {
+      this.db.raw.prepare(
+        `UPDATE children
+         SET name = ?,
+             sandbox_id = ?,
+             role = ?,
+             status = 'running',
+             genesis_prompt = ?,
+             last_checked = datetime('now')
+         WHERE id = ?`,
+      ).run(
+        agent.name,
+        agent.sandboxId,
+        agent.role,
+        `Role: ${agent.role}`,
+        existing.id,
+      );
+      return;
+    }
+
     this.db.insertChild({
       id: ulid(),
       name: agent.name,

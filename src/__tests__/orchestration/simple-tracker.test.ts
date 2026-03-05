@@ -124,6 +124,31 @@ describe("orchestration/simple-tracker", () => {
 
       expect(idle).toHaveLength(0);
     });
+
+    it("excludes stale running children with old last_checked", () => {
+      insertChild(db, "c1", "Stale", "0xstale", "running");
+      db.prepare("UPDATE children SET created_at = ?, last_checked = ? WHERE id = ?").run(
+        "2020-01-01T00:00:00.000Z",
+        "2020-01-01T00:00:00.000Z",
+        "c1",
+      );
+
+      const idle = tracker.getIdle();
+      expect(idle).toHaveLength(0);
+    });
+
+    it("treats sqlite utc timestamps as recent when within liveness window", () => {
+      insertChild(db, "c1", "Fresh", "0xfresh", "running");
+      const nowSqlite = db.prepare("SELECT datetime('now') AS now").get() as { now: string };
+      db.prepare("UPDATE children SET created_at = ?, last_checked = ? WHERE id = ?").run(
+        nowSqlite.now,
+        nowSqlite.now,
+        "c1",
+      );
+
+      const idle = tracker.getIdle();
+      expect(idle.map((child) => child.address)).toContain("0xfresh");
+    });
   });
 
   describe("getBestForTask", () => {
@@ -190,6 +215,31 @@ describe("orchestration/simple-tracker", () => {
         | { genesis_prompt: string }
         | undefined;
       expect(row?.genesis_prompt).toContain("security-expert");
+    });
+
+    it("updates existing child instead of inserting duplicates", () => {
+      tracker.register({
+        address: "0xdup",
+        name: "Original",
+        role: "generalist",
+        sandboxId: "sb-1",
+      });
+
+      tracker.register({
+        address: "0xdup",
+        name: "Updated",
+        role: "researcher",
+        sandboxId: "sb-2",
+      });
+
+      const rows = db.prepare(
+        "SELECT id, name, sandbox_id, role, status FROM children WHERE address = ?",
+      ).all("0xdup") as Array<{ id: string; name: string; sandbox_id: string; role: string; status: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.name).toBe("Updated");
+      expect(rows[0]?.sandbox_id).toBe("sb-2");
+      expect(rows[0]?.role).toBe("researcher");
+      expect(rows[0]?.status).toBe("running");
     });
   });
 });
