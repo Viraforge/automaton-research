@@ -117,10 +117,23 @@ jobs:
                 sudo apt-get update -qq
                 sudo apt-get install -y -qq certbot
                 sudo systemctl stop caddy || true
-                sudo certbot certonly --standalone -d relay.compintel.co -m ops@compintel.co --agree-tos --no-eff-email --non-interactive || true
+
+                CERTBOT_OK=0
+                if sudo certbot certonly --standalone -d relay.compintel.co -m ops@compintel.co --agree-tos --no-eff-email --non-interactive; then
+                  CERTBOT_OK=1
+                else
+                  echo "⚠️ apt certbot failed, trying snap certbot"
+                  sudo apt-get install -y -qq snapd || true
+                  sudo snap install core || true
+                  sudo snap refresh core || true
+                  sudo snap install --classic certbot || true
+                  if [ -x /snap/bin/certbot ]; then
+                    sudo /snap/bin/certbot certonly --standalone -d relay.compintel.co -m ops@compintel.co --agree-tos --no-eff-email --non-interactive && CERTBOT_OK=1 || true
+                  fi
+                fi
                 sudo systemctl start caddy || true
 
-                if [ -f /etc/letsencrypt/live/relay.compintel.co/fullchain.pem ] && [ -f /etc/letsencrypt/live/relay.compintel.co/privkey.pem ]; then
+                if [ "$CERTBOT_OK" -eq 1 ] && [ -f /etc/letsencrypt/live/relay.compintel.co/fullchain.pem ] && [ -f /etc/letsencrypt/live/relay.compintel.co/privkey.pem ]; then
                   cat <<'CADDY_CERT_CONF' | sudo tee /etc/caddy/Caddyfile.relay >/dev/null
             relay.compintel.co {
                 tls /etc/letsencrypt/live/relay.compintel.co/fullchain.pem /etc/letsencrypt/live/relay.compintel.co/privkey.pem
