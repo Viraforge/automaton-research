@@ -110,7 +110,28 @@ jobs:
 
               echo ""
               echo "=== Verification ==="
-              curl -fsS https://relay.compintel.co/health && echo "✅ Public relay health OK" || echo "⚠️ Public health check (may be pending DNS)"
+              if curl -fsS https://relay.compintel.co/health; then
+                echo "✅ Public relay health OK"
+              else
+                echo "⚠️ Public health check failed; attempting certbot standalone fallback for relay.compintel.co"
+                sudo apt-get update -qq
+                sudo apt-get install -y -qq certbot
+                sudo systemctl stop caddy || true
+                sudo certbot certonly --standalone -d relay.compintel.co -m ops@compintel.co --agree-tos --no-eff-email --non-interactive || true
+                sudo systemctl start caddy || true
+
+                if [ -f /etc/letsencrypt/live/relay.compintel.co/fullchain.pem ] && [ -f /etc/letsencrypt/live/relay.compintel.co/privkey.pem ]; then
+                  cat <<'CADDY_CERT_CONF' | sudo tee /etc/caddy/Caddyfile.relay >/dev/null
+            relay.compintel.co {
+                tls /etc/letsencrypt/live/relay.compintel.co/fullchain.pem /etc/letsencrypt/live/relay.compintel.co/privkey.pem
+                reverse_proxy http://127.0.0.1:8787
+            }
+            CADDY_CERT_CONF
+                  sudo systemctl reload caddy || true
+                fi
+
+                curl -fsS https://relay.compintel.co/health && echo "✅ Public relay health OK after fallback" || echo "⚠️ Public health check still failing after fallback"
+              fi
 
             else
               echo ""
