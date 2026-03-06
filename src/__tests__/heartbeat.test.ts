@@ -580,6 +580,86 @@ describe("Heartbeat Tasks", () => {
       globalThis.fetch = origFetch;
     });
 
+    it("includes portfolio and blocked-channel fields when data exists", async () => {
+      const tickCtx = createMockTickContext(db, {
+        creditBalance: 5000,
+        usdcBalance: 2.5,
+        survivalTier: "normal",
+      });
+      db.raw.prepare(
+        `INSERT INTO projects
+         (id, name, status, lane, offer, target_customer, monetization_hypothesis, next_monetization_step, created_at, updated_at)
+         VALUES ('p-hb', 'HB Project', 'shipping', 'distribution', 'Offer', 'Customer', 'Hypothesis', 'Message first target', datetime('now'), datetime('now'))`,
+      ).run();
+      db.raw.prepare(
+        `INSERT INTO distribution_channels
+         (id, name, status, blocker_reason, created_at, updated_at)
+         VALUES ('social_relay', 'Social Relay', 'misconfigured', 'social relay not configured', datetime('now'), datetime('now'))`,
+      ).run();
+
+      const origFetch = globalThis.fetch;
+      let capturedBody: any = null;
+      globalThis.fetch = async (_url: any, opts: any) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+      const fieldNames = capturedBody.embeds[0].fields.map((f: any) => f.name);
+      expect(fieldNames).toContain("📦 Portfolio");
+      expect(fieldNames).toContain("💰 Next Monetization");
+      expect(fieldNames).toContain("📣 Blocked Channels");
+      globalThis.fetch = origFetch;
+    });
+
+    it("shows revenue coverage warning when active revenue project lacks pending class coverage", async () => {
+      const tickCtx = createMockTickContext(db, {
+        creditBalance: 5000,
+        usdcBalance: 2.5,
+        survivalTier: "normal",
+      });
+      db.raw.prepare(
+        `INSERT INTO projects
+         (id, name, status, lane, offer, target_customer, monetization_hypothesis, next_monetization_step, created_at, updated_at)
+         VALUES ('p-gap', 'Gap Project', 'distribution', 'distribution', 'Offer', 'Customer', 'Hypothesis', 'Close first paid user', datetime('now'), datetime('now'))`,
+      ).run();
+      db.raw.prepare(
+        "INSERT INTO goals (id, title, description, status, project_id, created_at) VALUES ('g-gap', 'Rev goal', 'Revenue push', 'active', 'p-gap', datetime('now'))",
+      ).run();
+      db.raw.prepare(
+        `INSERT INTO task_graph (id, goal_id, project_id, title, description, status, task_class, priority, dependencies, created_at)
+         VALUES ('t-gap-1', 'g-gap', 'p-gap', 'Distribute', 'Post updates', 'pending', 'distribution', 50, '[]', datetime('now'))`,
+      ).run();
+
+      const origFetch = globalThis.fetch;
+      let capturedBody: any = null;
+      globalThis.fetch = async (_url: any, opts: any) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+      const coverageField = capturedBody.embeds[0].fields.find((f: any) => f.name === "⚠️ Revenue Coverage");
+      expect(coverageField).toBeDefined();
+      expect(coverageField.value).toContain("Gap Project");
+      expect(coverageField.value).toContain("monetization");
+      globalThis.fetch = origFetch;
+    });
+
     it("records error on webhook failure", async () => {
       const tickCtx = createMockTickContext(db);
 

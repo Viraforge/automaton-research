@@ -1,0 +1,18 @@
+[
+  {
+    "project_id": "legacy-import",
+    "channel_id": "social_relay",
+    "target_key": "clawnews",
+    "target_label": "ClawNews",
+    "priority": 100,
+    "tags": ["llm-agents", "distribution", "operator"]
+  },
+  {
+    "project_id": "legacy-import",
+    "channel_id": "erc8004_registry",
+    "target_key": "erc8004-directory",
+    "target_label": "ERC-8004 Directory",
+    "priority": 90,
+    "tags": ["registry", "listing"]
+  }
+]

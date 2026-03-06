@@ -751,6 +751,10 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     let recentActivity = "";
     let currentGoal = "";
     let revenue = "";
+    let portfolioSummary = "";
+    let channelSummary = "";
+    let nextMonetization = "";
+    let revenueCoverageWarning = "";
     try {
       const recentTurns = taskCtx.db.getRecentTurns(5);
       // Thinking from most recent turn
@@ -794,6 +798,81 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
       }
     } catch { /* ignore */ }
 
+    try {
+      const projectRows = taskCtx.db.raw.prepare(
+        `SELECT id, name, status, lane, next_monetization_step
+         FROM projects
+         WHERE status NOT IN ('killed', 'archived')
+         ORDER BY updated_at DESC`,
+      ).all() as Array<{
+        id: string;
+        name: string;
+        status: string;
+        lane: string;
+        next_monetization_step: string | null;
+      }>;
+      if (projectRows.length > 0) {
+        const active = projectRows.filter((p) => ["incubating", "shipping", "distribution", "monetizing"].includes(p.status));
+        portfolioSummary = active
+          .slice(0, 3)
+          .map((p) => `${p.name} [${p.status}/${p.lane}]`)
+          .join("\n");
+        const top = active.find((p) => !!p.next_monetization_step)?.next_monetization_step;
+        if (top) nextMonetization = top.slice(0, 160);
+      }
+    } catch {
+      // projects table may not exist.
+    }
+
+    try {
+      const gaps = taskCtx.db.raw.prepare(
+        `SELECT p.name AS projectName,
+                SUM(CASE WHEN t.task_class = 'distribution' AND t.status = 'pending' THEN 1 ELSE 0 END) AS pendingDistribution,
+                SUM(CASE WHEN t.task_class = 'monetization' AND t.status = 'pending' THEN 1 ELSE 0 END) AS pendingMonetization
+         FROM projects p
+         LEFT JOIN goals g ON g.project_id = p.id AND g.status = 'active'
+         LEFT JOIN task_graph t ON t.goal_id = g.id
+         WHERE p.status IN ('shipping', 'distribution', 'monetizing')
+         GROUP BY p.id, p.name`,
+      ).all() as Array<{
+        projectName: string;
+        pendingDistribution: number;
+        pendingMonetization: number;
+      }>;
+      const warnings = gaps
+        .map((row) => {
+          const missing: string[] = [];
+          if ((row.pendingDistribution ?? 0) <= 0) missing.push("distribution");
+          if ((row.pendingMonetization ?? 0) <= 0) missing.push("monetization");
+          if (missing.length === 0) return null;
+          return `${row.projectName}: missing pending ${missing.join(" + ")} task(s)`;
+        })
+        .filter((line): line is string => !!line)
+        .slice(0, 3);
+      if (warnings.length > 0) {
+        revenueCoverageWarning = warnings.join("\n");
+      }
+    } catch {
+      // tables may not exist.
+    }
+
+    try {
+      const channelRows = taskCtx.db.raw.prepare(
+        `SELECT id, status, blocker_reason
+         FROM distribution_channels
+         WHERE status != 'ready'
+         ORDER BY updated_at DESC
+         LIMIT 3`,
+      ).all() as Array<{ id: string; status: string; blocker_reason: string | null }>;
+      if (channelRows.length > 0) {
+        channelSummary = channelRows
+          .map((c) => `${c.id}: ${c.status}${c.blocker_reason ? ` (${c.blocker_reason})` : ""}`)
+          .join("\n");
+      }
+    } catch {
+      // distribution table may not exist.
+    }
+
     // Color based on survival tier
     const tierColors: Record<string, number> = {
       high: 0x22c55e,     // green
@@ -826,6 +905,18 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
     // Current goal — what she's trying to accomplish
     if (currentGoal) {
       fields.push({ name: "🎯 Goal", value: currentGoal, inline: false });
+    }
+    if (portfolioSummary) {
+      fields.push({ name: "📦 Portfolio", value: portfolioSummary, inline: false });
+    }
+    if (nextMonetization) {
+      fields.push({ name: "💰 Next Monetization", value: nextMonetization, inline: false });
+    }
+    if (channelSummary) {
+      fields.push({ name: "📣 Blocked Channels", value: channelSummary, inline: false });
+    }
+    if (revenueCoverageWarning) {
+      fields.push({ name: "⚠️ Revenue Coverage", value: revenueCoverageWarning, inline: false });
     }
 
     // Recent tool calls — what she's been doing

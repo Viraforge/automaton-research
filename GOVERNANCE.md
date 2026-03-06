@@ -90,3 +90,69 @@ If any fail, rollback criteria apply immediately.
   - Expected failure mode prevented.
   - Validation method.
 - Keep rules short, operational, and testable.
+
+## 9) Project Governance
+
+- `Project Activation Rule`: a project cannot be active without offer, target customer, primary channel, monetization hypothesis, and next monetization step.
+- `WIP Cap Rule`: enforce configured limits for active/shipping/distribution projects at activation time.
+- `Paused vs Blocked Rule`:
+  - `blocked`: unmet dependency, may auto-resume when dependency clears.
+  - `paused`: intentional stop by policy/operator, no auto-resume.
+- `Budget Rule`: enforce compute/token/time budgets before expensive tool calls, before activation, and at loop boundaries.
+- `Kill Rule`: if configured kill conditions are met (budget exhaustion or repeated no-progress), move project to `killed`.
+
+## 10) Channel Governance
+
+Supported states:
+- `ready`
+- `misconfigured`
+- `quota_exhausted`
+- `funding_required`
+- `blocked_by_policy`
+- `cooldown`
+- `disabled`
+
+Transition and recovery rules:
+- `misconfigured`: enter on deterministic config failure, exit only when validation passes.
+- `funding_required`: enter on deterministic funding failure, exit only when balance precheck passes.
+- `quota_exhausted`: enter on provider limit exhaustion, auto-exit at `cooldown_until`.
+- `cooldown`: enter on transient failure, auto-exit at `cooldown_until`.
+- `blocked_by_policy`: no auto-recovery; requires governing condition change.
+- `disabled`: manual/operator state; no auto-recovery.
+
+Tool gating rule:
+- If channel is not currently usable, tool execution must return blocked decision and record state; no churn retries.
+
+## 11) Distribution Governance
+
+- `Operator Priority Rule`: operator-provided targets outrank discovered targets unless exhausted, blocked, or explicitly reprioritized.
+- `Discovery Follow-Through Rule`: discovery results must be converted in the next turn to one of:
+  - target creation
+  - target execution (`publish`/`contact`)
+  - explicit blocked/skipped outcome with reason
+- `Follow-Through Escalation Rule`: if correction is ignored twice, fail current distribution attempt and replan or pause the project lane.
+
+## 12) Goal Validity Rules
+
+- `No Ghost Goal Rule`: active goals with `0/0` executable tasks are invalid.
+- Enforce at three points:
+  - after planner/replanner normalization
+  - at orchestrator tick preflight
+  - after fallback single-task synthesis
+- Invalid goals must be failed, blocked, or replanned; they must not stay active silently.
+
+## 13) Portfolio Reporting Rules
+
+- Heartbeats must include:
+  - current portfolio lane/context
+  - blockers by channel/project
+  - next monetization step
+  - last verified progress signal
+- If no verified progress for 20+ minutes, heartbeat must declare `stalled`.
+
+## 14) Operator Intent Materialization
+
+- Operator-provided distribution targets must load from configured path at boot (and refresh path when requested).
+- Missing target file is non-fatal with warning.
+- Malformed target file must produce clear diagnostics and continue safely without crashing.
+- Valid targets must persist into structured distribution target state.

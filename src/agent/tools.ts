@@ -143,6 +143,45 @@ function buildNetstatFallback(command: string): string | null {
   return rewritten;
 }
 
+async function channelGuard(
+  ctx: ToolContext,
+  channelId: string,
+): Promise<{ blocked: boolean; message?: string }> {
+  const { getChannelUseDecision } = await import("../distribution/channels.js");
+  const decision = getChannelUseDecision(ctx.db.raw, channelId, ctx.config);
+  if (decision.allowed) return { blocked: false };
+  return {
+    blocked: true,
+    message: `Blocked by distribution channel state: ${channelId} is ${decision.status}${decision.reason ? ` (${decision.reason})` : ""}.`,
+  };
+}
+
+async function recordChannelIssue(
+  ctx: ToolContext,
+  channelId: string,
+  message: string,
+): Promise<void> {
+  const { recordChannelOutcome } = await import("../distribution/channels.js");
+  recordChannelOutcome(ctx.db.raw, channelId, message, ctx.config);
+}
+
+async function checkProjectBudget(
+  ctx: ToolContext,
+  projectId: string,
+): Promise<{ blocked: boolean; message?: string }> {
+  const { getProjectById } = await import("../state/database.js");
+  const { isProjectBudgetExceeded } = await import("../portfolio/policy.js");
+  const project = getProjectById(ctx.db.raw, projectId);
+  if (!project) return { blocked: false };
+  if (!isProjectBudgetExceeded(project)) return { blocked: false };
+  return {
+    blocked: true,
+    message:
+      `Blocked: project ${projectId} exceeded budget (compute ${project.spentComputeCents}/${project.budgetComputeCents}, ` +
+      `tokens ${project.spentTokens}/${project.budgetTokens}).`,
+  };
+}
+
 // ─── Built-in Tools ────────────────────────────────────────────
 
 export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
@@ -1706,6 +1745,10 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["agent_uri"],
       },
       execute: async (args, ctx) => {
+        const { DISTRIBUTION_CHANNEL_IDS } = await import("../distribution/channels.js");
+        const guard = await channelGuard(ctx, DISTRIBUTION_CHANNEL_IDS.erc8004);
+        if (guard.blocked) return guard.message || "Blocked by distribution channel policy.";
+
         // Check if already registered in local database
         const existingEntry = ctx.db.getRegistryEntry();
         if (existingEntry) {
@@ -1721,11 +1764,14 @@ Model: ${ctx.inference.getDefaultModel()}
             ((args.network as string) || "mainnet") as any,
             ctx.db,
           );
+          await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.erc8004, "registration succeeded");
           return `Registered on-chain! Agent ID: ${entry.agentId}, TX: ${entry.txHash}`;
         } catch (err: any) {
           if (err.message?.includes("Insufficient ETH")) {
+            await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.erc8004, err.message);
             return `Registration failed: ${err.message}. Please fund your wallet with ETH for gas.`;
           }
+          await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.erc8004, err?.message || String(err));
           throw err;
         }
       },
@@ -1759,6 +1805,10 @@ Model: ${ctx.inference.getDefaultModel()}
         },
       },
       execute: async (args, ctx) => {
+        const { DISTRIBUTION_CHANNEL_IDS } = await import("../distribution/channels.js");
+        const guard = await channelGuard(ctx, DISTRIBUTION_CHANNEL_IDS.discovery);
+        if (guard.blocked) return guard.message || "Blocked by distribution channel policy.";
+
         const { discoverAgents, searchAgents } =
           await import("../registry/discovery.js");
         const network = ((args.network as string) || "mainnet") as any;
@@ -1771,6 +1821,7 @@ Model: ${ctx.inference.getDefaultModel()}
           : await discoverAgents(limit, network, undefined, ctx.db.raw);
 
         if (agents.length === 0) return "No agents found.";
+        await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.discovery, "discovery call succeeded");
         return agents
           .map(
             (a) =>
@@ -2211,7 +2262,12 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["child_id", "content"],
       },
       execute: async (args, ctx) => {
+        const { DISTRIBUTION_CHANNEL_IDS } = await import("../distribution/channels.js");
+        const guard = await channelGuard(ctx, DISTRIBUTION_CHANNEL_IDS.socialRelay);
+        if (guard.blocked) return guard.message || "Blocked by distribution channel policy.";
+
         if (!ctx.social) {
+          await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.socialRelay, "Social relay not configured");
           return "Social relay not configured. Set socialRelayUrl in config.";
         }
 
@@ -2225,6 +2281,7 @@ Model: ${ctx.inference.getDefaultModel()}
           args.content as string,
           (args.type as string) || "parent_message",
         );
+        await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.socialRelay, "message child succeeded");
         return `Message sent to child ${child.name} (id: ${result.id})`;
       },
     },
@@ -2327,11 +2384,26 @@ Model: ${ctx.inference.getDefaultModel()}
             type: "string",
             description: "Optional message ID to reply to",
           },
+          project_id: {
+            type: "string",
+            description: "Optional project ID for budget enforcement context.",
+          },
         },
         required: ["to_address", "content"],
       },
       execute: async (args, ctx) => {
+        const { DISTRIBUTION_CHANNEL_IDS } = await import("../distribution/channels.js");
+        const guard = await channelGuard(ctx, DISTRIBUTION_CHANNEL_IDS.socialRelay);
+        if (guard.blocked) return guard.message || "Blocked by distribution channel policy.";
+
+        const projectId = typeof args.project_id === "string" ? args.project_id.trim() : "";
+        if (projectId) {
+          const budgetCheck = await checkProjectBudget(ctx, projectId);
+          if (budgetCheck.blocked) return budgetCheck.message || "Blocked: project budget exceeded.";
+        }
+
         if (!ctx.social) {
+          await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.socialRelay, "Social relay not configured");
           return "Social relay not configured. Set socialRelayUrl in config.";
         }
         // Phase 3.2: Enforce MESSAGE_LIMITS size check
@@ -2345,6 +2417,7 @@ Model: ${ctx.inference.getDefaultModel()}
           content,
           args.reply_to as string | undefined,
         );
+        await recordChannelIssue(ctx, DISTRIBUTION_CHANNEL_IDS.socialRelay, "send message succeeded");
         return `Message sent (id: ${result.id})`;
       },
     },
@@ -3219,6 +3292,291 @@ Model: ${ctx.inference.getDefaultModel()}
 
     // === Orchestration Tools ===
     {
+      name: "create_project",
+      description:
+        "Create a portfolio project with offer, customer, channel, and monetization hypothesis.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "caution" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Optional project ID (defaults to generated ULID)." },
+          name: { type: "string", description: "Project name." },
+          description: { type: "string", description: "What will be built/distributed." },
+          lane: { type: "string", description: "build | distribution | research (default: build)." },
+          offer: { type: "string", description: "Offer this project is selling." },
+          target_customer: { type: "string", description: "Primary target customer." },
+          monetization_hypothesis: { type: "string", description: "How this project makes money." },
+          next_monetization_step: { type: "string", description: "Concrete next monetization action." },
+          success_metric: { type: "string", description: "Main success metric." },
+          kill_criteria: { type: "string", description: "Condition to kill project if unmet." },
+          budget_compute_cents: { type: "number", description: "Optional compute budget in cents." },
+          budget_tokens: { type: "number", description: "Optional token budget." },
+          budget_time_minutes: { type: "number", description: "Optional time budget in minutes." },
+        },
+        required: ["name", "offer", "target_customer", "monetization_hypothesis"],
+      },
+      execute: async (args, ctx) => {
+        const { insertProject } = await import("../state/database.js");
+        const { canCreateActiveProject } = await import("../portfolio/policy.js");
+
+        const name = String(args.name || "").trim();
+        const offer = String(args.offer || "").trim();
+        const targetCustomer = String(args.target_customer || "").trim();
+        const monetizationHypothesis = String(args.monetization_hypothesis || "").trim();
+        if (!name || !offer || !targetCustomer || !monetizationHypothesis) {
+          return "Error: create_project requires non-empty name, offer, target_customer, and monetization_hypothesis.";
+        }
+
+        if (!canCreateActiveProject(ctx.db.raw, ctx.config)) {
+          return "Blocked: portfolio max active projects reached. Pause/kill an existing project first.";
+        }
+
+        const projectId = insertProject(ctx.db.raw, {
+          id: typeof args.id === "string" && args.id.trim() ? args.id.trim() : undefined,
+          name,
+          description: typeof args.description === "string" ? args.description : "",
+          status: "incubating",
+          lane: (args.lane === "distribution" || args.lane === "research") ? args.lane : "build",
+          offer,
+          targetCustomer,
+          monetizationHypothesis,
+          nextMonetizationStep: typeof args.next_monetization_step === "string" ? args.next_monetization_step : "",
+          successMetric: typeof args.success_metric === "string" ? args.success_metric : "",
+          killCriteria: typeof args.kill_criteria === "string" ? args.kill_criteria : "",
+          budgetComputeCents: Number.isFinite(args.budget_compute_cents as number)
+            ? Math.max(0, Math.floor(args.budget_compute_cents as number))
+            : 0,
+          budgetTokens: Number.isFinite(args.budget_tokens as number)
+            ? Math.max(0, Math.floor(args.budget_tokens as number))
+            : 0,
+          budgetTimeMinutes: Number.isFinite(args.budget_time_minutes as number)
+            ? Math.max(0, Math.floor(args.budget_time_minutes as number))
+            : 0,
+        });
+        return `Project created: ${name} (id: ${projectId}).`;
+      },
+    },
+    {
+      name: "list_projects",
+      description: "List portfolio projects and their lane/status.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "safe" as RiskLevel,
+      parameters: { type: "object", properties: {} },
+      execute: async (_args, ctx) => {
+        const { listProjects } = await import("../state/database.js");
+        const rows = listProjects(ctx.db.raw);
+        if (rows.length === 0) return "No projects found.";
+        return rows
+          .map((p) => `${p.id} | ${p.name} | status=${p.status} lane=${p.lane} | next=${p.nextMonetizationStep || "n/a"}`)
+          .join("\n");
+      },
+    },
+    {
+      name: "pause_project",
+      description: "Pause a project intentionally.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "caution" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project ID." },
+        },
+        required: ["project_id"],
+      },
+      execute: async (args, ctx) => {
+        const { getProjectById, updateProjectStatus } = await import("../state/database.js");
+        const projectId = String(args.project_id || "").trim();
+        if (!projectId) return "Error: project_id is required.";
+        const project = getProjectById(ctx.db.raw, projectId);
+        if (!project) return `Project ${projectId} not found.`;
+        updateProjectStatus(ctx.db.raw, projectId, "paused");
+        return `Project paused: ${project.name} (${projectId}).`;
+      },
+    },
+    {
+      name: "kill_project",
+      description: "Kill a project that should no longer consume resources.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "dangerous" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project ID." },
+        },
+        required: ["project_id"],
+      },
+      execute: async (args, ctx) => {
+        const { getProjectById, updateProjectStatus } = await import("../state/database.js");
+        const projectId = String(args.project_id || "").trim();
+        if (!projectId) return "Error: project_id is required.";
+        const project = getProjectById(ctx.db.raw, projectId);
+        if (!project) return `Project ${projectId} not found.`;
+        updateProjectStatus(ctx.db.raw, projectId, "killed");
+        return `Project killed: ${project.name} (${projectId}).`;
+      },
+    },
+    {
+      name: "set_project_lane",
+      description: "Set project lane: build, distribution, or research.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "caution" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project ID." },
+          lane: { type: "string", description: "build | distribution | research" },
+        },
+        required: ["project_id", "lane"],
+      },
+      execute: async (args, ctx) => {
+        const lane = String(args.lane || "").trim();
+        if (!["build", "distribution", "research"].includes(lane)) {
+          return `Error: invalid lane "${lane}". Use build|distribution|research.`;
+        }
+        const projectId = String(args.project_id || "").trim();
+        const row = ctx.db.raw.prepare("SELECT id, name FROM projects WHERE id = ?").get(projectId) as
+          | { id: string; name: string }
+          | undefined;
+        if (!row) return `Project ${projectId} not found.`;
+        ctx.db.raw.prepare("UPDATE projects SET lane = ?, updated_at = ? WHERE id = ?").run(
+          lane,
+          new Date().toISOString(),
+          projectId,
+        );
+        return `Project lane updated: ${row.name} (${projectId}) -> ${lane}.`;
+      },
+    },
+    {
+      name: "list_distribution_channels",
+      description: "List distribution channels and availability state.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "safe" as RiskLevel,
+      parameters: { type: "object", properties: {} },
+      execute: async (_args, ctx) => {
+        const { listDistributionChannelsWithRecovery } = await import("../distribution/channels.js");
+        const rows = listDistributionChannelsWithRecovery(ctx.db.raw, ctx.config);
+        if (rows.length === 0) return "No distribution channels configured.";
+        return rows
+          .map((row) => `${row.id} | ${row.name} | ${row.status}${row.blockerReason ? ` (${row.blockerReason})` : ""}`)
+          .join("\n");
+      },
+    },
+    {
+      name: "list_distribution_targets",
+      description: "List distribution targets by project (or all pending).",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "safe" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Optional project ID." },
+        },
+      },
+      execute: async (args, ctx) => {
+        const { listDistributionTargetsByProject, listPendingDistributionTargets } =
+          await import("../state/database.js");
+        const projectId = typeof args.project_id === "string" ? args.project_id.trim() : "";
+        const rows = projectId
+          ? listDistributionTargetsByProject(ctx.db.raw, projectId)
+          : listPendingDistributionTargets(ctx.db.raw);
+        if (rows.length === 0) return "No distribution targets found.";
+        return rows
+          .map((row) =>
+            `${row.id} | project=${row.projectId} channel=${row.channelId} key=${row.targetKey} status=${row.status} priority=${row.priority}${row.operatorProvided ? " [operator]" : ""}`,
+          )
+          .join("\n");
+      },
+    },
+    {
+      name: "add_distribution_target",
+      description: "Add a distribution target for a project/channel.",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "caution" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project ID." },
+          channel_id: { type: "string", description: "Channel ID." },
+          target_key: { type: "string", description: "Stable target key or URL." },
+          target_label: { type: "string", description: "Human-readable label." },
+          priority: { type: "number", description: "Priority (higher first)." },
+        },
+        required: ["project_id", "channel_id", "target_key"],
+      },
+      execute: async (args, ctx) => {
+        const { getProjectById, insertDistributionTarget } = await import("../state/database.js");
+        const projectId = String(args.project_id || "").trim();
+        const channelId = String(args.channel_id || "").trim();
+        const targetKey = String(args.target_key || "").trim();
+        if (!projectId || !channelId || !targetKey) {
+          return "Error: project_id, channel_id, and target_key are required.";
+        }
+        if (!getProjectById(ctx.db.raw, projectId)) {
+          return `Project ${projectId} not found.`;
+        }
+        const budgetCheck = await checkProjectBudget(ctx, projectId);
+        if (budgetCheck.blocked) return budgetCheck.message || "Blocked: project budget exceeded.";
+        const targetId = insertDistributionTarget(ctx.db.raw, {
+          id: ulid(),
+          projectId,
+          channelId,
+          targetKey,
+          targetLabel: typeof args.target_label === "string" ? args.target_label : targetKey,
+          priority: Number.isFinite(args.priority as number) ? Math.floor(args.priority as number) : 50,
+          status: "pending",
+          operatorProvided: false,
+        });
+        return `Distribution target added: ${targetId}.`;
+      },
+    },
+    {
+      name: "record_project_metric",
+      description: "Record a project metric event (lead/reply/trial/payment/deploy/listing/message/usage).",
+      category: "orchestration" as ToolCategory,
+      riskLevel: "caution" as RiskLevel,
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project ID." },
+          metric_type: { type: "string", description: "lead|reply|trial|payment|deploy|listing|message|usage" },
+          value: { type: "number", description: "Metric value (default 1)." },
+          metadata: { type: "string", description: "Optional JSON metadata." },
+        },
+        required: ["project_id", "metric_type"],
+      },
+      execute: async (args, ctx) => {
+        const { getProjectById, recordProjectMetric } = await import("../state/database.js");
+        const projectId = String(args.project_id || "").trim();
+        if (!projectId || !getProjectById(ctx.db.raw, projectId)) {
+          return `Project ${projectId} not found.`;
+        }
+        const metricType = String(args.metric_type || "").trim();
+        if (!["lead", "reply", "trial", "payment", "deploy", "listing", "message", "usage"].includes(metricType)) {
+          return `Error: invalid metric_type "${metricType}".`;
+        }
+        let metadata: Record<string, unknown> = {};
+        if (typeof args.metadata === "string" && args.metadata.trim()) {
+          try {
+            const parsed = JSON.parse(args.metadata);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              metadata = parsed as Record<string, unknown>;
+            }
+          } catch {
+            return "Error: metadata must be valid JSON object string.";
+          }
+        }
+        recordProjectMetric(ctx.db.raw, {
+          id: ulid(),
+          projectId,
+          metricType: metricType as any,
+          value: Number.isFinite(args.value as number) ? Math.floor(args.value as number) : 1,
+          metadata,
+        });
+        return `Metric recorded: ${metricType} for project ${projectId}.`;
+      },
+    },
+    {
       name: "create_goal",
       description:
         "Create a new goal for the orchestrator to plan and execute. " +
@@ -3243,20 +3601,50 @@ Model: ${ctx.inference.getDefaultModel()}
             description:
               "Optional strategic guidance for the planner (e.g., 'prioritize speed over cost')",
           },
+          project_id: {
+            type: "string",
+            description: "Optional project ID. Required when multiple active projects exist.",
+          },
         },
         required: ["title", "description"],
       },
       execute: async (args, ctx) => {
         const { createGoal } = await import("../orchestration/task-graph.js");
-        const { getActiveGoals } = await import("../state/database.js");
+        const { getActiveGoals, getProjectById, listActiveProjects } = await import("../state/database.js");
+        const { findSingleEligibleProject } = await import("../portfolio/policy.js");
 
         const title = (args.title as string).trim();
         const description = (args.description as string).trim();
         const strategy =
           typeof args.strategy === "string" ? args.strategy.trim() : undefined;
+        let projectId =
+          typeof args.project_id === "string" && args.project_id.trim()
+            ? args.project_id.trim()
+            : null;
 
         if (!title) return "Error: goal title cannot be empty.";
         if (!description) return "Error: goal description cannot be empty.";
+
+        if (projectId) {
+          const project = getProjectById(ctx.db.raw, projectId);
+          if (!project) {
+            return `Error: project_id ${projectId} not found.`;
+          }
+          if (project.status === "paused" || project.status === "blocked" || project.status === "killed" || project.status === "archived") {
+            return `Blocked: project ${projectId} is ${project.status}.`;
+          }
+          const budgetCheck = await checkProjectBudget(ctx, projectId);
+          if (budgetCheck.blocked) return budgetCheck.message || "Blocked: project budget exceeded.";
+        } else {
+          const singleProject = findSingleEligibleProject(listActiveProjects(ctx.db.raw));
+          if (singleProject) {
+            projectId = singleProject.id;
+            const budgetCheck = await checkProjectBudget(ctx, projectId);
+            if (budgetCheck.blocked) return budgetCheck.message || "Blocked: project budget exceeded.";
+          } else {
+            return "Blocked: project_id is required when zero or multiple active projects exist. Use create_project/list_projects first.";
+          }
+        }
 
         // Dedup: reject if a similar active goal already exists
         const activeGoals = getActiveGoals(ctx.db.raw);
@@ -3275,23 +3663,14 @@ Model: ${ctx.inference.getDefaultModel()}
           );
         }
 
-        // Cap active goals to prevent accumulation.
-        // Only 1 goal at a time — the orchestrator processes goals sequentially.
-        if (activeGoals.length >= 1) {
-          const current = activeGoals[0];
-          return (
-            `BLOCKED: A goal is already being processed by the orchestrator and worker agents:\n` +
-            `"${current.title}" (id: ${current.id})\n\n` +
-            `ACTION REQUIRED: DO NOTHING. Go to sleep. The worker agents are executing tasks in the background.\n` +
-            `They will complete autonomously. You will see progress on your next wake-up.\n` +
-            `Do NOT call create_goal, orchestrator_status, list_goals, or get_plan again this turn.\n` +
-            `Just sleep and let the workers finish.`
-          );
+        const maxActiveGoals = Math.max(1, Math.floor(ctx.config.portfolio?.maxActiveProjects ?? 3));
+        if (activeGoals.length >= maxActiveGoals) {
+          return `Blocked: active goal cap reached (${activeGoals.length}/${maxActiveGoals}). Complete/pause existing work before creating more.`;
         }
 
-        const goal = createGoal(ctx.db.raw, title, description, strategy);
+        const goal = createGoal(ctx.db.raw, title, description, strategy, projectId);
         return (
-          `Goal created: "${goal.title}" (id: ${goal.id}, status: ${goal.status})\n` +
+          `Goal created: "${goal.title}" (id: ${goal.id}, project: ${projectId}, status: ${goal.status})\n` +
           `The orchestrator will pick this up on the next tick and begin planning.\n` +
           `Monitor progress via the todo.md block in your context.`
         );
@@ -3320,7 +3699,7 @@ Model: ${ctx.inference.getDefaultModel()}
           const tasks = getTasksByGoal(ctx.db.raw, goal.id);
           const failedCount = tasks.filter((t) => t.status === "failed").length;
           return (
-            `- ${goal.title} [${goal.status}] (id: ${goal.id})\n` +
+            `- ${goal.title} [${goal.status}] (id: ${goal.id}, project: ${goal.projectId ?? "none"})\n` +
             `  Tasks: ${progress.completed}/${progress.total} completed, ` +
             `${progress.running} running, ${progress.blocked} blocked, ${failedCount} failed`
           );

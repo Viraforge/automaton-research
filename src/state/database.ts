@@ -45,6 +45,14 @@ import {
   MIGRATION_V9,
   MIGRATION_V9_ALTER_CHILDREN_ROLE,
   MIGRATION_V10,
+  MIGRATION_V11,
+  MIGRATION_V11_ALTER_GOALS_NEXT_STEP,
+  MIGRATION_V11_ALTER_GOALS_PROJECT,
+  MIGRATION_V11_ALTER_GOALS_STAGE_HINT,
+  MIGRATION_V11_ALTER_TASKS_BLOCKED_REASON,
+  MIGRATION_V11_ALTER_TASKS_CLASS,
+  MIGRATION_V11_ALTER_TASKS_PROJECT,
+  MIGRATION_V11_ALTER_TASKS_SIGNATURE,
 } from "./schema.js";
 import type {
   RiskLevel,
@@ -564,6 +572,61 @@ export function createDatabase(dbPath: string): AutomatonDatabase {
 
 // ─── Migration Runner ───────────────────────────────────────────
 
+function migrateLegacyActiveGoalsToProject(db: DatabaseType): void {
+  const hasAnyLegacy = db
+    .prepare("SELECT COUNT(*) AS c FROM goals WHERE status = 'active' AND project_id IS NULL")
+    .get() as { c: number };
+  if ((hasAnyLegacy.c ?? 0) === 0) {
+    return;
+  }
+
+  const legacyProjectId = "legacy-import";
+  const hasGhostActive = db.prepare(
+    `SELECT COUNT(*) AS c
+     FROM goals g
+     LEFT JOIN (
+       SELECT goal_id, COUNT(*) AS task_count FROM task_graph GROUP BY goal_id
+     ) t ON t.goal_id = g.id
+     WHERE g.status = 'active' AND g.project_id IS NULL AND COALESCE(t.task_count, 0) = 0`,
+  ).get() as { c: number };
+
+  const projectStatus: ProjectStatus = (hasGhostActive.c ?? 0) > 0 ? "blocked" : "shipping";
+  db.prepare(
+    `INSERT OR IGNORE INTO projects
+     (id, name, description, status, lane, monetization_hypothesis, success_metric, kill_criteria, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+  ).run(
+    legacyProjectId,
+    "legacy-import",
+    "Auto-created project for goals migrated during schema v11.",
+    projectStatus,
+    "build",
+    "Migrate legacy active goals into managed project lifecycle.",
+    "No orphan active goals remain after migration.",
+    "Kill when all migrated goals are completed or archived.",
+  );
+
+  db.prepare(
+    `UPDATE projects
+     SET status = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(projectStatus, legacyProjectId);
+
+  db.prepare(
+    `UPDATE goals
+     SET project_id = ?
+     WHERE status = 'active' AND project_id IS NULL`,
+  ).run(legacyProjectId);
+
+  db.prepare(
+    `UPDATE task_graph
+     SET project_id = ?
+     WHERE goal_id IN (
+       SELECT id FROM goals WHERE project_id = ?
+     ) AND project_id IS NULL`,
+  ).run(legacyProjectId, legacyProjectId);
+}
+
 function applyMigrations(db: DatabaseType): void {
   const versionRow = db
     .prepare("SELECT MAX(version) as v FROM schema_version")
@@ -616,6 +679,20 @@ function applyMigrations(db: DatabaseType): void {
     {
       version: 10,
       apply: () => db.exec(MIGRATION_V10),
+    },
+    {
+      version: 11,
+      apply: () => {
+        db.exec(MIGRATION_V11);
+        try { db.exec(MIGRATION_V11_ALTER_GOALS_PROJECT); } catch { logger.debug("V11 ALTER (goals.project_id) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V11_ALTER_GOALS_STAGE_HINT); } catch { logger.debug("V11 ALTER (goals.stage_hint) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V11_ALTER_GOALS_NEXT_STEP); } catch { logger.debug("V11 ALTER (goals.next_monetization_step) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V11_ALTER_TASKS_PROJECT); } catch { logger.debug("V11 ALTER (task_graph.project_id) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V11_ALTER_TASKS_CLASS); } catch { logger.debug("V11 ALTER (task_graph.task_class) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V11_ALTER_TASKS_SIGNATURE); } catch { logger.debug("V11 ALTER (task_graph.failure_signature) skipped — column likely exists"); }
+        try { db.exec(MIGRATION_V11_ALTER_TASKS_BLOCKED_REASON); } catch { logger.debug("V11 ALTER (task_graph.blocked_reason) skipped — column likely exists"); }
+        migrateLegacyActiveGoalsToProject(db);
+      },
     },
   ];
 
@@ -683,6 +760,9 @@ export interface GoalRow {
   description: string;
   status: GoalStatus;
   strategy: string | null;
+  projectId: string | null;
+  stageHint: string | null;
+  nextMonetizationStep: string | null;
   expectedRevenueCents: number;
   actualRevenueCents: number;
   createdAt: string;
@@ -694,11 +774,15 @@ export interface TaskGraphRow {
   id: string;
   parentId: string | null;
   goalId: string;
+  projectId: string | null;
   title: string;
   description: string;
   status: TaskGraphStatus;
+  taskClass: string | null;
   assignedTo: string | null;
   agentRole: string | null;
+  failureSignature: string | null;
+  blockedReason: string | null;
   priority: number;
   dependencies: string[];
   result: unknown | null;
@@ -736,6 +820,102 @@ export interface KnowledgeStoreRow {
   tokenCount: number;
   createdAt: string;
   expiresAt: string | null;
+}
+
+export type ProjectStatus =
+  | "incubating"
+  | "shipping"
+  | "distribution"
+  | "monetizing"
+  | "paused"
+  | "blocked"
+  | "killed"
+  | "archived";
+
+export type ProjectLane = "build" | "distribution" | "research";
+
+export interface ProjectRow {
+  id: string;
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  lane: ProjectLane;
+  offer: string;
+  targetCustomer: string;
+  primaryChannelId: string | null;
+  monetizationHypothesis: string;
+  nextMonetizationStep: string;
+  successMetric: string;
+  killCriteria: string;
+  budgetTokens: number;
+  budgetComputeCents: number;
+  budgetTimeMinutes: number;
+  spentTokens: number;
+  spentComputeCents: number;
+  createdAt: string;
+  updatedAt: string;
+  pausedAt: string | null;
+  killedAt: string | null;
+}
+
+export type DistributionChannelStatus =
+  | "ready"
+  | "misconfigured"
+  | "quota_exhausted"
+  | "funding_required"
+  | "blocked_by_policy"
+  | "cooldown"
+  | "disabled";
+
+export interface DistributionChannelRow {
+  id: string;
+  name: string;
+  channelType: string;
+  requiresConfig: boolean;
+  requiresFunding: boolean;
+  supportsListing: boolean;
+  supportsMessaging: boolean;
+  supportsPublish: boolean;
+  status: DistributionChannelStatus;
+  blockerReason: string | null;
+  cooldownUntil: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DistributionTargetStatus =
+  | "pending"
+  | "attempted"
+  | "published"
+  | "contacted"
+  | "replied"
+  | "converted"
+  | "blocked"
+  | "skipped";
+
+export interface DistributionTargetRow {
+  id: string;
+  projectId: string;
+  channelId: string;
+  targetKey: string;
+  targetLabel: string;
+  priority: number;
+  status: DistributionTargetStatus;
+  operatorProvided: boolean;
+  lastAttemptAt: string | null;
+  lastResult: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectMetricRow {
+  id: string;
+  projectId: string;
+  metricType: "lead" | "reply" | "trial" | "payment" | "deploy" | "listing" | "message" | "usage";
+  value: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 // ─── Policy Decision Helpers ────────────────────────────────────
@@ -850,6 +1030,9 @@ export function insertGoal(
     description: string;
     status?: GoalStatus;
     strategy?: string | null;
+    projectId?: string | null;
+    stageHint?: string | null;
+    nextMonetizationStep?: string | null;
     expectedRevenueCents?: number;
     actualRevenueCents?: number;
     deadline?: string | null;
@@ -861,14 +1044,17 @@ export function insertGoal(
   const status = row.status ?? "active";
   const completedAt = row.completedAt ?? (status === "completed" ? now : null);
   db.prepare(
-    `INSERT INTO goals (id, title, description, status, strategy, expected_revenue_cents, actual_revenue_cents, created_at, deadline, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO goals (id, title, description, status, strategy, project_id, stage_hint, next_monetization_step, expected_revenue_cents, actual_revenue_cents, created_at, deadline, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     row.title,
     row.description,
     status,
     row.strategy ?? null,
+    row.projectId ?? null,
+    row.stageHint ?? null,
+    row.nextMonetizationStep ?? null,
     row.expectedRevenueCents ?? 0,
     row.actualRevenueCents ?? 0,
     now,
@@ -899,16 +1085,311 @@ export function getActiveGoals(db: DatabaseType): GoalRow[] {
   return rows.map(deserializeGoalRow);
 }
 
+export function insertProject(
+  db: DatabaseType,
+  row: {
+    id?: string;
+    name: string;
+    description?: string;
+    status?: ProjectStatus;
+    lane?: ProjectLane;
+    offer?: string;
+    targetCustomer?: string;
+    primaryChannelId?: string | null;
+    monetizationHypothesis?: string;
+    nextMonetizationStep?: string;
+    successMetric?: string;
+    killCriteria?: string;
+    budgetTokens?: number;
+    budgetComputeCents?: number;
+    budgetTimeMinutes?: number;
+    spentTokens?: number;
+    spentComputeCents?: number;
+    pausedAt?: string | null;
+    killedAt?: string | null;
+  },
+): string {
+  const id = row.id ?? ulid();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO projects
+     (id, name, description, status, lane, offer, target_customer, primary_channel_id,
+      monetization_hypothesis, next_monetization_step, success_metric, kill_criteria,
+      budget_tokens, budget_compute_cents, budget_time_minutes, spent_tokens, spent_compute_cents,
+      created_at, updated_at, paused_at, killed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    row.name,
+    row.description ?? "",
+    row.status ?? "incubating",
+    row.lane ?? "build",
+    row.offer ?? "",
+    row.targetCustomer ?? "",
+    row.primaryChannelId ?? null,
+    row.monetizationHypothesis ?? "",
+    row.nextMonetizationStep ?? "",
+    row.successMetric ?? "",
+    row.killCriteria ?? "",
+    row.budgetTokens ?? 0,
+    row.budgetComputeCents ?? 0,
+    row.budgetTimeMinutes ?? 0,
+    row.spentTokens ?? 0,
+    row.spentComputeCents ?? 0,
+    now,
+    now,
+    row.pausedAt ?? null,
+    row.killedAt ?? null,
+  );
+  return id;
+}
+
+export function getProjectById(db: DatabaseType, id: string): ProjectRow | undefined {
+  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as any | undefined;
+  return row ? deserializeProjectRow(row) : undefined;
+}
+
+export function listProjects(db: DatabaseType): ProjectRow[] {
+  const rows = db.prepare("SELECT * FROM projects ORDER BY created_at ASC").all() as any[];
+  return rows.map(deserializeProjectRow);
+}
+
+export function listActiveProjects(db: DatabaseType): ProjectRow[] {
+  const rows = db
+    .prepare("SELECT * FROM projects WHERE status NOT IN ('killed','archived') ORDER BY updated_at DESC")
+    .all() as any[];
+  return rows.map(deserializeProjectRow);
+}
+
+export function updateProjectStatus(db: DatabaseType, id: string, status: ProjectStatus): void {
+  const now = new Date().toISOString();
+  const pausedAt = status === "paused" ? now : null;
+  const killedAt = status === "killed" ? now : null;
+  db.prepare(
+    "UPDATE projects SET status = ?, paused_at = COALESCE(?, paused_at), killed_at = COALESCE(?, killed_at), updated_at = ? WHERE id = ?",
+  ).run(status, pausedAt, killedAt, now, id);
+}
+
+export function updateProjectSpend(
+  db: DatabaseType,
+  id: string,
+  delta: { tokens?: number; computeCents?: number },
+): void {
+  const tokens = delta.tokens ?? 0;
+  const compute = delta.computeCents ?? 0;
+  db.prepare(
+    `UPDATE projects
+     SET spent_tokens = spent_tokens + ?,
+         spent_compute_cents = spent_compute_cents + ?,
+         updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(tokens, compute, id);
+}
+
+export function upsertDistributionChannel(
+  db: DatabaseType,
+  row: {
+    id: string;
+    name: string;
+    channelType?: string;
+    requiresConfig?: boolean;
+    requiresFunding?: boolean;
+    supportsListing?: boolean;
+    supportsMessaging?: boolean;
+    supportsPublish?: boolean;
+    status?: DistributionChannelStatus;
+    blockerReason?: string | null;
+    cooldownUntil?: string | null;
+    lastCheckedAt?: string | null;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO distribution_channels
+     (id, name, channel_type, requires_config, requires_funding, supports_listing, supports_messaging, supports_publish,
+      status, blocker_reason, cooldown_until, last_checked_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       channel_type = excluded.channel_type,
+       requires_config = excluded.requires_config,
+       requires_funding = excluded.requires_funding,
+       supports_listing = excluded.supports_listing,
+       supports_messaging = excluded.supports_messaging,
+       supports_publish = excluded.supports_publish,
+       status = excluded.status,
+       blocker_reason = excluded.blocker_reason,
+       cooldown_until = excluded.cooldown_until,
+       last_checked_at = excluded.last_checked_at,
+       updated_at = datetime('now')`,
+  ).run(
+    row.id,
+    row.name,
+    row.channelType ?? "custom",
+    row.requiresConfig ? 1 : 0,
+    row.requiresFunding ? 1 : 0,
+    row.supportsListing ? 1 : 0,
+    row.supportsMessaging ? 1 : 0,
+    row.supportsPublish ? 1 : 0,
+    row.status ?? "ready",
+    row.blockerReason ?? null,
+    row.cooldownUntil ?? null,
+    row.lastCheckedAt ?? null,
+  );
+}
+
+export function getDistributionChannel(db: DatabaseType, id: string): DistributionChannelRow | undefined {
+  const row = db.prepare("SELECT * FROM distribution_channels WHERE id = ?").get(id) as any | undefined;
+  return row ? deserializeDistributionChannelRow(row) : undefined;
+}
+
+export function listDistributionChannels(db: DatabaseType): DistributionChannelRow[] {
+  const rows = db.prepare("SELECT * FROM distribution_channels ORDER BY name ASC").all() as any[];
+  return rows.map(deserializeDistributionChannelRow);
+}
+
+export function markDistributionChannelStatus(
+  db: DatabaseType,
+  id: string,
+  status: DistributionChannelStatus,
+  opts?: { blockerReason?: string | null; cooldownUntil?: string | null; lastCheckedAt?: string | null },
+): void {
+  db.prepare(
+    `UPDATE distribution_channels
+     SET status = ?,
+         blocker_reason = ?,
+         cooldown_until = ?,
+         last_checked_at = ?,
+         updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(
+    status,
+    opts?.blockerReason ?? null,
+    opts?.cooldownUntil ?? null,
+    opts?.lastCheckedAt ?? new Date().toISOString(),
+    id,
+  );
+}
+
+export function insertDistributionTarget(
+  db: DatabaseType,
+  row: {
+    id?: string;
+    projectId: string;
+    channelId: string;
+    targetKey: string;
+    targetLabel?: string;
+    priority?: number;
+    status?: DistributionTargetStatus;
+    operatorProvided?: boolean;
+    lastAttemptAt?: string | null;
+    lastResult?: string | null;
+  },
+): string {
+  const id = row.id ?? ulid();
+  db.prepare(
+    `INSERT INTO distribution_targets
+     (id, project_id, channel_id, target_key, target_label, priority, status, operator_provided, last_attempt_at, last_result, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+  ).run(
+    id,
+    row.projectId,
+    row.channelId,
+    row.targetKey,
+    row.targetLabel ?? "",
+    row.priority ?? 50,
+    row.status ?? "pending",
+    row.operatorProvided ? 1 : 0,
+    row.lastAttemptAt ?? null,
+    row.lastResult ?? null,
+  );
+  return id;
+}
+
+export function listDistributionTargetsByProject(db: DatabaseType, projectId: string): DistributionTargetRow[] {
+  const rows = db
+    .prepare("SELECT * FROM distribution_targets WHERE project_id = ? ORDER BY priority DESC, created_at ASC")
+    .all(projectId) as any[];
+  return rows.map(deserializeDistributionTargetRow);
+}
+
+export function listPendingDistributionTargets(db: DatabaseType): DistributionTargetRow[] {
+  const rows = db
+    .prepare("SELECT * FROM distribution_targets WHERE status = 'pending' ORDER BY priority DESC, created_at ASC")
+    .all() as any[];
+  return rows.map(deserializeDistributionTargetRow);
+}
+
+export function updateDistributionTargetStatus(
+  db: DatabaseType,
+  id: string,
+  status: DistributionTargetStatus,
+  opts?: { lastAttemptAt?: string | null; lastResult?: string | null },
+): void {
+  db.prepare(
+    `UPDATE distribution_targets
+     SET status = ?,
+         last_attempt_at = ?,
+         last_result = ?,
+         updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(
+    status,
+    opts?.lastAttemptAt ?? null,
+    opts?.lastResult ?? null,
+    id,
+  );
+}
+
+export function recordProjectMetric(
+  db: DatabaseType,
+  row: {
+    id?: string;
+    projectId: string;
+    metricType: ProjectMetricRow["metricType"];
+    value?: number;
+    metadata?: Record<string, unknown>;
+  },
+): string {
+  const id = row.id ?? ulid();
+  db.prepare(
+    `INSERT INTO project_metrics (id, project_id, metric_type, value, metadata, created_at)
+     VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+  ).run(
+    id,
+    row.projectId,
+    row.metricType,
+    row.value ?? 0,
+    JSON.stringify(row.metadata ?? {}),
+  );
+  return id;
+}
+
+export function getProjectMetricsSummary(db: DatabaseType, projectId: string): Array<{ metricType: string; total: number }> {
+  const rows = db
+    .prepare(
+      `SELECT metric_type AS metricType, COALESCE(SUM(value), 0) AS total
+       FROM project_metrics
+       WHERE project_id = ?
+       GROUP BY metric_type`,
+    )
+    .all(projectId) as Array<{ metricType: string; total: number }>;
+  return rows;
+}
+
 export function insertTask(
   db: DatabaseType,
   row: {
     parentId?: string | null;
     goalId: string;
+    projectId?: string | null;
     title: string;
     description: string;
     status?: TaskGraphStatus;
+    taskClass?: string | null;
     assignedTo?: string | null;
     agentRole?: string | null;
+    failureSignature?: string | null;
+    blockedReason?: string | null;
     priority?: number;
     dependencies?: string[];
     result?: unknown | null;
@@ -925,19 +1406,23 @@ export function insertTask(
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO task_graph
-     (id, parent_id, goal_id, title, description, status, assigned_to, agent_role, priority,
+     (id, parent_id, goal_id, project_id, title, description, status, task_class, assigned_to, agent_role, failure_signature, blocked_reason, priority,
       dependencies, result, estimated_cost_cents, actual_cost_cents, max_retries, retry_count,
       timeout_ms, created_at, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     row.parentId ?? null,
     row.goalId,
+    row.projectId ?? null,
     row.title,
     row.description,
     row.status ?? "pending",
+    row.taskClass ?? null,
     row.assignedTo ?? null,
     row.agentRole ?? null,
+    row.failureSignature ?? null,
+    row.blockedReason ?? null,
     row.priority ?? 50,
     JSON.stringify(row.dependencies ?? []),
     row.result == null ? null : JSON.stringify(row.result),
@@ -2236,6 +2721,68 @@ function deserializeModelRegistryRow(row: any): ModelRegistryRow {
   };
 }
 
+function deserializeProjectRow(row: any): ProjectRow {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    status: row.status as ProjectStatus,
+    lane: row.lane as ProjectLane,
+    offer: row.offer,
+    targetCustomer: row.target_customer,
+    primaryChannelId: row.primary_channel_id ?? null,
+    monetizationHypothesis: row.monetization_hypothesis,
+    nextMonetizationStep: row.next_monetization_step,
+    successMetric: row.success_metric,
+    killCriteria: row.kill_criteria,
+    budgetTokens: row.budget_tokens,
+    budgetComputeCents: row.budget_compute_cents,
+    budgetTimeMinutes: row.budget_time_minutes,
+    spentTokens: row.spent_tokens,
+    spentComputeCents: row.spent_compute_cents,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    pausedAt: row.paused_at ?? null,
+    killedAt: row.killed_at ?? null,
+  };
+}
+
+function deserializeDistributionChannelRow(row: any): DistributionChannelRow {
+  return {
+    id: row.id,
+    name: row.name,
+    channelType: row.channel_type,
+    requiresConfig: !!row.requires_config,
+    requiresFunding: !!row.requires_funding,
+    supportsListing: !!row.supports_listing,
+    supportsMessaging: !!row.supports_messaging,
+    supportsPublish: !!row.supports_publish,
+    status: row.status as DistributionChannelStatus,
+    blockerReason: row.blocker_reason ?? null,
+    cooldownUntil: row.cooldown_until ?? null,
+    lastCheckedAt: row.last_checked_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function deserializeDistributionTargetRow(row: any): DistributionTargetRow {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    channelId: row.channel_id,
+    targetKey: row.target_key,
+    targetLabel: row.target_label,
+    priority: row.priority,
+    status: row.status as DistributionTargetStatus,
+    operatorProvided: !!row.operator_provided,
+    lastAttemptAt: row.last_attempt_at ?? null,
+    lastResult: row.last_result ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function deserializeGoalRow(row: any): GoalRow {
   return {
     id: row.id,
@@ -2243,6 +2790,9 @@ function deserializeGoalRow(row: any): GoalRow {
     description: row.description,
     status: row.status as GoalStatus,
     strategy: row.strategy ?? null,
+    projectId: row.project_id ?? null,
+    stageHint: row.stage_hint ?? null,
+    nextMonetizationStep: row.next_monetization_step ?? null,
     expectedRevenueCents: row.expected_revenue_cents,
     actualRevenueCents: row.actual_revenue_cents,
     createdAt: row.created_at,
@@ -2256,11 +2806,15 @@ function deserializeTaskGraphRow(row: any): TaskGraphRow {
     id: row.id,
     parentId: row.parent_id ?? null,
     goalId: row.goal_id,
+    projectId: row.project_id ?? null,
     title: row.title,
     description: row.description,
     status: row.status as TaskGraphStatus,
+    taskClass: row.task_class ?? null,
     assignedTo: row.assigned_to ?? null,
     agentRole: row.agent_role ?? null,
+    failureSignature: row.failure_signature ?? null,
+    blockedReason: row.blocked_reason ?? null,
     priority: row.priority,
     dependencies: safeJsonParse(row.dependencies || "[]", [] as string[], "taskGraph.dependencies"),
     result: row.result ? safeJsonParse(row.result, null as unknown | null, "taskGraph.result") : null,

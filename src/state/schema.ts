@@ -5,7 +5,7 @@
  * The database IS the automaton's memory.
  */
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const CREATE_TABLES = `
   -- Schema version tracking
@@ -670,4 +670,114 @@ export const MIGRATION_V10 = `
 
   CREATE INDEX idx_knowledge_category ON knowledge_store(category);
   CREATE INDEX idx_knowledge_key ON knowledge_store(key);
+`;
+
+export const MIGRATION_V11 = `
+  -- Schema version: 11
+  -- Tables: projects, distribution_channels, distribution_targets, project_metrics
+
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'incubating'
+      CHECK(status IN ('incubating','shipping','distribution','monetizing','paused','blocked','killed','archived')),
+    lane TEXT NOT NULL DEFAULT 'build'
+      CHECK(lane IN ('build','distribution','research')),
+    offer TEXT NOT NULL DEFAULT '',
+    target_customer TEXT NOT NULL DEFAULT '',
+    primary_channel_id TEXT,
+    monetization_hypothesis TEXT NOT NULL DEFAULT '',
+    next_monetization_step TEXT NOT NULL DEFAULT '',
+    success_metric TEXT NOT NULL DEFAULT '',
+    kill_criteria TEXT NOT NULL DEFAULT '',
+    budget_tokens INTEGER NOT NULL DEFAULT 0,
+    budget_compute_cents INTEGER NOT NULL DEFAULT 0,
+    budget_time_minutes INTEGER NOT NULL DEFAULT 0,
+    spent_tokens INTEGER NOT NULL DEFAULT 0,
+    spent_compute_cents INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    paused_at TEXT,
+    killed_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS distribution_channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    channel_type TEXT NOT NULL DEFAULT 'custom',
+    requires_config INTEGER NOT NULL DEFAULT 0,
+    requires_funding INTEGER NOT NULL DEFAULT 0,
+    supports_listing INTEGER NOT NULL DEFAULT 0,
+    supports_messaging INTEGER NOT NULL DEFAULT 0,
+    supports_publish INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ready'
+      CHECK(status IN ('ready','misconfigured','quota_exhausted','funding_required','blocked_by_policy','cooldown','disabled')),
+    blocker_reason TEXT,
+    cooldown_until TEXT,
+    last_checked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS distribution_targets (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    channel_id TEXT NOT NULL REFERENCES distribution_channels(id),
+    target_key TEXT NOT NULL,
+    target_label TEXT NOT NULL DEFAULT '',
+    priority INTEGER NOT NULL DEFAULT 50,
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK(status IN ('pending','attempted','published','contacted','replied','converted','blocked','skipped')),
+    operator_provided INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    last_result TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS project_metrics (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    metric_type TEXT NOT NULL
+      CHECK(metric_type IN ('lead','reply','trial','payment','deploy','listing','message','usage')),
+    value INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+  CREATE INDEX IF NOT EXISTS idx_projects_lane ON projects(lane);
+  CREATE INDEX IF NOT EXISTS idx_distribution_channels_status ON distribution_channels(status);
+  CREATE INDEX IF NOT EXISTS idx_distribution_targets_project ON distribution_targets(project_id, status);
+  CREATE INDEX IF NOT EXISTS idx_distribution_targets_channel ON distribution_targets(channel_id, status);
+  CREATE INDEX IF NOT EXISTS idx_project_metrics_project ON project_metrics(project_id, metric_type);
+`;
+
+export const MIGRATION_V11_ALTER_GOALS_PROJECT = `
+  ALTER TABLE goals ADD COLUMN project_id TEXT;
+`;
+
+export const MIGRATION_V11_ALTER_GOALS_STAGE_HINT = `
+  ALTER TABLE goals ADD COLUMN stage_hint TEXT;
+`;
+
+export const MIGRATION_V11_ALTER_GOALS_NEXT_STEP = `
+  ALTER TABLE goals ADD COLUMN next_monetization_step TEXT;
+`;
+
+export const MIGRATION_V11_ALTER_TASKS_PROJECT = `
+  ALTER TABLE task_graph ADD COLUMN project_id TEXT;
+`;
+
+export const MIGRATION_V11_ALTER_TASKS_CLASS = `
+  ALTER TABLE task_graph ADD COLUMN task_class TEXT;
+`;
+
+export const MIGRATION_V11_ALTER_TASKS_SIGNATURE = `
+  ALTER TABLE task_graph ADD COLUMN failure_signature TEXT;
+`;
+
+export const MIGRATION_V11_ALTER_TASKS_BLOCKED_REASON = `
+  ALTER TABLE task_graph ADD COLUMN blocked_reason TEXT;
 `;

@@ -38,6 +38,7 @@ export interface TaskNode {
   title: string;
   description: string;
   status: TaskStatus;
+  taskClass?: "build" | "distribution" | "research" | "ops" | "monetization" | null;
   assignedTo: string | null;
   agentRole: string | null;
   priority: number;
@@ -69,6 +70,7 @@ export interface Goal {
 }
 
 export type DecomposeTaskInput = Omit<TaskNode, "id" | "metadata"> & {
+  taskClass?: "build" | "distribution" | "research" | "ops" | "monetization";
   estimatedCostCents?: number;
   maxRetries?: number;
   retryCount?: number;
@@ -93,6 +95,7 @@ export function createGoal(
   title: string,
   description: string,
   strategy?: string,
+  projectId?: string | null,
 ): Goal {
   const normalizedTitle = title.trim();
   const normalizedDescription = description.trim();
@@ -109,6 +112,7 @@ export function createGoal(
     title: normalizedTitle,
     description: normalizedDescription,
     strategy: strategy ?? null,
+    projectId: projectId ?? null,
   });
 
   const row = getGoalById(db, id);
@@ -117,6 +121,23 @@ export function createGoal(
   }
 
   return goalRowToGoal(row, []);
+}
+
+export function invalidateGhostGoal(db: Database, goalId: string, reason: string): boolean {
+  const goal = getGoalById(db, goalId);
+  if (!goal || goal.status !== "active") {
+    return false;
+  }
+  const progress = getGoalProgress(db, goalId);
+  if (progress.total > 0) {
+    return false;
+  }
+  updateGoalStatus(db, goalId, "failed");
+  db.prepare(
+    `INSERT INTO event_stream (id, type, agent_address, goal_id, task_id, content, token_count, created_at)
+     VALUES (?, 'task_failed', 'orchestrator', ?, NULL, ?, 0, ?)`,
+  ).run(ulid(), goalId, `ghost_goal_invalidated: ${reason}`, new Date().toISOString());
+  return true;
 }
 
 export function decomposeGoal(
@@ -192,6 +213,7 @@ export function decomposeGoal(
         title: planned.task.title,
         description: planned.task.description,
         status: planned.task.status,
+        taskClass: planned.task.taskClass ?? null,
         assignedTo: planned.task.assignedTo,
         agentRole: planned.task.agentRole,
         priority: planned.task.priority,
@@ -479,6 +501,7 @@ function taskRowToTaskNode(row: TaskGraphRow): TaskNode {
     title: row.title,
     description: row.description,
     status: row.status,
+    taskClass: row.taskClass as TaskNode["taskClass"],
     assignedTo: row.assignedTo,
     agentRole: row.agentRole,
     priority: row.priority,

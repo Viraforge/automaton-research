@@ -9,6 +9,7 @@ import {
   failTask,
   getGoalProgress,
   getReadyTasks,
+  invalidateGhostGoal,
   type Goal,
   type DecomposeTaskInput,
   type TaskNode,
@@ -30,10 +31,12 @@ import { isChildRecent } from "./time.js";
 import {
   getActiveGoals,
   getGoalById,
+  getProjectById,
   getTaskById,
   getTasksByGoal,
   updateGoalStatus,
   type GoalRow,
+  type ProjectLane,
   type TaskGraphRow,
 } from "../state/database.js";
 import type {
@@ -345,7 +348,17 @@ export class Orchestrator {
       };
     }
 
-    const goal = pickGoal(activeGoals, state.goalId);
+    const goal = this.pickGoalByPortfolio(activeGoals, state.goalId);
+    const goalTasks = getTasksByGoal(this.params.db, goal.id);
+    // Fresh goals legitimately have 0 tasks before classifying/planning.
+    // Ghost-goal invalidation is enforced after planning/fallback and during executing.
+    if (goalTasks.length > 0 && invalidateGhostGoal(this.params.db, goal.id, "idle_phase_validation")) {
+      return {
+        ...state,
+        phase: "idle",
+        goalId: null,
+      };
+    }
     return {
       ...state,
       phase: "classifying",
@@ -404,6 +417,14 @@ export class Orchestrator {
         timeoutMs: this.getDefaultTaskTimeoutMs(),
       },
     ]);
+
+    if (invalidateGhostGoal(this.params.db, goal.id, "classifying_fallback_validation")) {
+      return {
+        ...state,
+        phase: "failed",
+        failedError: "Goal invalidated: no executable tasks after fallback synthesis.",
+      };
+    }
 
     return {
       ...state,
@@ -480,6 +501,13 @@ export class Orchestrator {
     }
 
     decomposeGoal(this.params.db, goal.id, plannerOutputToTasks(goal.id, output));
+    if (invalidateGhostGoal(this.params.db, goal.id, "planning_output_validation")) {
+      return {
+        ...state,
+        phase: "failed",
+        failedError: "Goal invalidated: planner output produced no executable tasks.",
+      };
+    }
     this.persistPlannerOutput(goal.id, output, "plan");
 
     return {
@@ -553,6 +581,14 @@ export class Orchestrator {
       };
     }
 
+    if (invalidateGhostGoal(this.params.db, goal.id, "executing_phase_validation")) {
+      return {
+        ...state,
+        phase: "failed",
+        failedError: "Goal invalidated: active goal has no executable tasks.",
+      };
+    }
+
     // Recover stale tasks: workers that died (process restart, sandbox crash)
     // leave tasks stuck in 'assigned' forever. Detect and reset them.
     let staleRecoveries = 0;
@@ -575,8 +611,10 @@ export class Orchestrator {
       }
     }
 
-    const ready = getReadyTasks(this.params.db)
-      .filter((task) => task.goalId === goal.id);
+    const ready = this.prioritizeReadyTasksForGoal(
+      goal,
+      getReadyTasks(this.params.db).filter((task) => task.goalId === goal.id),
+    );
 
     for (const task of ready) {
       try {
@@ -813,6 +851,13 @@ export class Orchestrator {
     updateGoalStatus(this.params.db, goal.id, "active");
 
     decomposeGoal(this.params.db, goal.id, plannerOutputToTasks(goal.id, output));
+    if (invalidateGhostGoal(this.params.db, goal.id, "replanning_output_validation")) {
+      return {
+        ...state,
+        phase: "failed",
+        failedError: "Goal invalidated: replan output produced no executable tasks.",
+      };
+    }
     this.persistPlannerOutput(goal.id, output, "replan");
 
     return {
@@ -1301,6 +1346,133 @@ export class Orchestrator {
     ).get(assignedTo) as { exists_flag?: number } | undefined;
     return row?.exists_flag === 1;
   }
+
+  private prioritizeReadyTasksForGoal(goal: GoalRow, tasks: TaskNode[]): TaskNode[] {
+    if (tasks.length <= 1) return tasks;
+    if (!goal.projectId) return tasks;
+
+    const project = getProjectById(this.params.db, goal.projectId);
+    if (!project) return tasks;
+
+    const scored = tasks.map((task, index) => ({
+      task,
+      index,
+      score: laneTaskClassScore(project.lane, task.taskClass),
+    }));
+
+    scored.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      if (a.task.priority !== b.task.priority) return b.task.priority - a.task.priority;
+      const aTs = Date.parse(a.task.metadata.createdAt);
+      const bTs = Date.parse(b.task.metadata.createdAt);
+      const aTime = Number.isFinite(aTs) ? aTs : 0;
+      const bTime = Number.isFinite(bTs) ? bTs : 0;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.index - b.index;
+    });
+
+    return scored.map((entry) => entry.task);
+  }
+
+  private pickGoalByPortfolio(goals: GoalRow[], preferredId: string | null): GoalRow {
+    if (goals.length === 1) return goals[0];
+
+    const readyByGoal = new Map<string, number>();
+    for (const ready of getReadyTasks(this.params.db)) {
+      readyByGoal.set(ready.goalId, (readyByGoal.get(ready.goalId) ?? 0) + 1);
+    }
+
+    const monetizationCoverageByGoal = new Map<string, number>();
+    const coverageRows = this.params.db.prepare(
+      `SELECT goal_id AS goalId,
+              SUM(CASE WHEN task_class = 'distribution' AND status = 'pending' THEN 1 ELSE 0 END) AS pendingDistribution,
+              SUM(CASE WHEN task_class = 'monetization' AND status = 'pending' THEN 1 ELSE 0 END) AS pendingMonetization
+       FROM task_graph
+       WHERE goal_id IN (${goals.map(() => "?").join(",")})
+       GROUP BY goal_id`,
+    ).all(...goals.map((goal) => goal.id)) as Array<{
+      goalId: string;
+      pendingDistribution: number;
+      pendingMonetization: number;
+    }>;
+    for (const row of coverageRows) {
+      let score = 0;
+      if ((row.pendingDistribution ?? 0) > 0) score += 6;
+      if ((row.pendingMonetization ?? 0) > 0) score += 6;
+      monetizationCoverageByGoal.set(row.goalId, score);
+    }
+
+    const scored = goals.map((goal, index) => {
+      const project = goal.projectId ? getProjectById(this.params.db, goal.projectId) : undefined;
+      const readyCount = readyByGoal.get(goal.id) ?? 0;
+      const projectStatusScore = project ? projectStatusPriority(project.status) : 0;
+      const laneScore = project ? projectLanePriority(project.lane) : 0;
+      const coverageScore = monetizationCoverageByGoal.get(goal.id) ?? 0;
+      const preferredBonus = preferredId && goal.id === preferredId && readyCount > 0 ? 5 : 0;
+      const total = readyCount * 20 + projectStatusScore + laneScore + coverageScore + preferredBonus;
+      return { goal, index, total };
+    });
+
+    scored.sort((a, b) => {
+      if (a.total !== b.total) return b.total - a.total;
+      const aCreated = Date.parse(a.goal.createdAt);
+      const bCreated = Date.parse(b.goal.createdAt);
+      const aTime = Number.isFinite(aCreated) ? aCreated : 0;
+      const bTime = Number.isFinite(bCreated) ? bCreated : 0;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.index - b.index;
+    });
+
+    return scored[0].goal;
+  }
+}
+
+function laneTaskClassScore(
+  lane: ProjectLane,
+  taskClass: TaskNode["taskClass"],
+): number {
+  const normalized = taskClass ?? "build";
+  if (lane === "distribution") {
+    if (normalized === "distribution" || normalized === "monetization") return 0;
+    if (normalized === "ops" || normalized === "build") return 1;
+    return 2;
+  }
+  if (lane === "research") {
+    if (normalized === "research") return 0;
+    if (normalized === "ops" || normalized === "build") return 1;
+    return 2;
+  }
+  if (normalized === "build" || normalized === "ops") return 0;
+  if (normalized === "monetization") return 1;
+  return 2;
+}
+
+function projectStatusPriority(status: string): number {
+  switch (status) {
+    case "monetizing":
+      return 20;
+    case "distribution":
+      return 16;
+    case "shipping":
+      return 12;
+    case "incubating":
+      return 8;
+    default:
+      return 0;
+  }
+}
+
+function projectLanePriority(lane: ProjectLane): number {
+  switch (lane) {
+    case "distribution":
+      return 8;
+    case "build":
+      return 5;
+    case "research":
+      return 2;
+    default:
+      return 0;
+  }
 }
 
 function plannerOutputToTasks(goalId: string, output: PlannerOutput): DecomposeTaskInput[] {
@@ -1310,6 +1482,7 @@ function plannerOutputToTasks(goalId: string, output: PlannerOutput): DecomposeT
     title: task.title,
     description: task.description,
     status: "pending",
+    taskClass: task.taskClass,
     assignedTo: null,
     agentRole: task.agentRole,
     priority: clampPriority(task.priority, index),
@@ -1351,6 +1524,7 @@ function taskRowToTaskNode(task: TaskGraphRow): TaskNode {
     title: task.title,
     description: task.description,
     status: task.status,
+    taskClass: task.taskClass as TaskNode["taskClass"],
     assignedTo: task.assignedTo,
     agentRole: task.agentRole,
     priority: task.priority,

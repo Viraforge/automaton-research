@@ -104,6 +104,7 @@ describe("validatePlannerOutput", () => {
     expect(result.strategy).toBe("Strategy text");
     expect(result.tasks).toHaveLength(1);
     expect(result.tasks[0].title).toBe("Task 1");
+    expect(result.tasks[0].taskClass).toBe("build");
   });
 
   it("rejects non-object input", () => {
@@ -180,6 +181,93 @@ describe("validatePlannerOutput", () => {
       ],
     });
     expect(() => validatePlannerOutput(output)).toThrow("timeoutMs");
+  });
+
+  it("accepts explicit taskClass values", () => {
+    const output = validOutput({
+      tasks: [
+        {
+          title: "Price page and checkout",
+          description: "Add billing copy and connect payment flow.",
+          agentRole: "generalist",
+          taskClass: "monetization",
+          dependencies: [],
+          estimatedCostCents: 100,
+          priority: 1,
+          timeoutMs: 60_000,
+        },
+      ],
+    });
+    const result = validatePlannerOutput(output);
+    expect(result.tasks[0].taskClass).toBe("monetization");
+  });
+
+  it("rejects invalid taskClass", () => {
+    const output = validOutput({
+      tasks: [
+        {
+          title: "Task 1",
+          description: "Do something specific and validate the result.",
+          agentRole: "generalist",
+          taskClass: "invalid",
+          dependencies: [],
+          estimatedCostCents: 100,
+          priority: 1,
+          timeoutMs: 60000,
+        },
+      ],
+    });
+    expect(() => validatePlannerOutput(output)).toThrow("taskClass");
+  });
+
+  it("requires distribution and monetization classes for revenue goals", () => {
+    const output = validOutput({
+      tasks: [
+        {
+          title: "Build landing page",
+          description: "Ship website with CTA.",
+          agentRole: "generalist",
+          taskClass: "build",
+          dependencies: [],
+          estimatedCostCents: 100,
+          priority: 1,
+          timeoutMs: 60000,
+        },
+      ],
+    });
+    const revenueGoal = { ...goal, expectedRevenueCents: 1000 };
+    expect(() => validatePlannerOutput(output, { goal: revenueGoal })).toThrow(
+      "Revenue goal plans must include both distribution and monetization task classes",
+    );
+  });
+
+  it("accepts revenue goals when both required task classes exist", () => {
+    const output = validOutput({
+      tasks: [
+        {
+          title: "Post launch thread",
+          description: "Publish launch update to target communities.",
+          agentRole: "generalist",
+          taskClass: "distribution",
+          dependencies: [],
+          estimatedCostCents: 100,
+          priority: 1,
+          timeoutMs: 60000,
+        },
+        {
+          title: "Enable billing",
+          description: "Connect pricing and checkout to convert trials.",
+          agentRole: "generalist",
+          taskClass: "monetization",
+          dependencies: [],
+          estimatedCostCents: 100,
+          priority: 1,
+          timeoutMs: 60000,
+        },
+      ],
+    });
+    const revenueGoal = { ...goal, expectedRevenueCents: 1000 };
+    expect(() => validatePlannerOutput(output, { goal: revenueGoal })).not.toThrow();
   });
 
   it("detects dependency cycle (A depends on B depends on A)", () => {

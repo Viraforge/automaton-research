@@ -105,15 +105,17 @@ function insertGoal(db: BetterSqlite3.Database, overrides: {
   title?: string;
   description?: string;
   status?: string;
+  projectId?: string | null;
 } = {}): string {
   const id = overrides.id ?? ulid();
   db.prepare(
-    "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO goals (id, title, description, status, project_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(
     id,
     overrides.title ?? "Test Goal",
     overrides.description ?? "A test goal",
     overrides.status ?? "active",
+    overrides.projectId ?? null,
     new Date().toISOString(),
   );
   return id;
@@ -127,20 +129,22 @@ function insertTask(db: BetterSqlite3.Database, overrides: {
   status?: string;
   assignedTo?: string | null;
   agentRole?: string;
+  taskClass?: string | null;
   priority?: number;
   dependencies?: string[];
 }): string {
   const id = overrides.id ?? ulid();
   db.prepare(
     `INSERT INTO task_graph
-     (id, goal_id, title, description, status, assigned_to, agent_role, priority, dependencies, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, goal_id, title, description, status, task_class, assigned_to, agent_role, priority, dependencies, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     overrides.goalId,
     overrides.title ?? "Test Task",
     overrides.description ?? "A test task",
     overrides.status ?? "pending",
+    overrides.taskClass ?? null,
     overrides.assignedTo ?? null,
     overrides.agentRole ?? "generalist",
     overrides.priority ?? 50,
@@ -186,13 +190,64 @@ describe("orchestration/Orchestrator", () => {
     });
 
     it("idle with active goal transitions to classifying", async () => {
-      insertGoal(db, { status: "active" });
+      const goalId = insertGoal(db, { status: "active" });
+      insertTask(db, { goalId, status: "pending" });
       // Force inference to return low step count so classifying resolves cleanly
       const inference = makeInference({ estimatedSteps: 2 });
       const orc = makeOrchestrator(db, { inference: inference as any });
       const result = await orc.tick();
       // After classifying (simple goal) -> executing phase saved; result shows executing
       expect(["classifying", "executing"]).toContain(result.phase);
+    });
+
+    it("prioritizes portfolio-relevant goal selection in idle phase", async () => {
+      db.prepare(
+        `INSERT INTO projects
+         (id, name, description, status, lane, offer, target_customer, monetization_hypothesis, success_metric, kill_criteria, created_at, updated_at)
+         VALUES
+         ('p-build', 'Build Project', '', 'shipping', 'build', 'Offer', 'Customer', 'Hypothesis', '', '', datetime('now'), datetime('now')),
+         ('p-dist', 'Distribution Project', '', 'distribution', 'distribution', 'Offer', 'Customer', 'Hypothesis', '', '', datetime('now'), datetime('now'))`,
+      ).run();
+
+      const buildGoalId = insertGoal(db, { status: "active", projectId: "p-build", title: "Build Goal" });
+      const distributionGoalId = insertGoal(db, { status: "active", projectId: "p-dist", title: "Distribution Goal" });
+
+      insertTask(db, {
+        goalId: buildGoalId,
+        status: "pending",
+        taskClass: "build",
+        priority: 90,
+      });
+      insertTask(db, {
+        goalId: distributionGoalId,
+        status: "pending",
+        taskClass: "distribution",
+        priority: 20,
+      });
+      insertTask(db, {
+        goalId: distributionGoalId,
+        status: "pending",
+        taskClass: "monetization",
+        priority: 20,
+      });
+
+      const orc = makeOrchestrator(db);
+      const result = await orc.tick();
+      expect(result.phase).toBe("classifying");
+
+      const state = getOrchestratorState(db);
+      expect(state?.goalId).toBe(distributionGoalId);
+    });
+
+    it("does not invalidate fresh 0-task goal during idle selection pre-planning", async () => {
+      const goalId = insertGoal(db, { status: "active", title: "Ghost Goal" });
+      const inference = makeInference({ estimatedSteps: 5 });
+      const orc = makeOrchestrator(db, { inference: inference as any });
+      const result = await orc.tick();
+
+      const goalStatus = db.prepare("SELECT status FROM goals WHERE id = ?").get(goalId) as { status: string } | undefined;
+      expect(goalStatus?.status).toBe("active");
+      expect(["classifying", "planning"]).toContain(result.phase);
     });
 
     it("classifying with simple goal (<=3 steps) transitions to executing", async () => {
@@ -413,6 +468,61 @@ describe("orchestration/Orchestrator", () => {
         "SELECT assigned_to FROM task_graph WHERE goal_id = ? AND status = 'assigned' LIMIT 1",
       ).get(goalId) as { assigned_to: string | null } | undefined;
       expect(assigned?.assigned_to).toBe(deadWorker);
+    });
+
+    it("prioritizes lane-aligned task class over raw priority for distribution projects", async () => {
+      const projectId = "p_distribution";
+      db.prepare(
+        `INSERT INTO projects
+         (id, name, description, status, lane, offer, target_customer, monetization_hypothesis, success_metric, kill_criteria, created_at, updated_at)
+         VALUES (?, ?, '', 'distribution', 'distribution', 'Offer', 'Customer', 'Hypothesis', '', '', datetime('now'), datetime('now'))`,
+      ).run(projectId, "Distribution Project");
+      const goalId = insertGoal(db, { status: "active", projectId });
+
+      const distributionTaskId = insertTask(db, {
+        goalId,
+        title: "Distribution task",
+        taskClass: "distribution",
+        priority: 10,
+      });
+      const buildTaskId = insertTask(db, {
+        goalId,
+        title: "Build task",
+        taskClass: "build",
+        priority: 95,
+      });
+
+      setOrchestratorState(db, {
+        phase: "executing",
+        goalId,
+        replanCount: 0,
+        failedTaskId: null,
+        failedError: null,
+      });
+
+      const preferredAgent = { address: "0xlane", name: "Lane Agent", role: "generalist", status: "healthy" };
+      const agentTracker = makeAgentTracker({
+        getIdle: vi.fn()
+          .mockReturnValueOnce([preferredAgent])
+          .mockReturnValue([]),
+        getBestForTask: vi.fn().mockReturnValue(null),
+      });
+
+      const orc = makeOrchestrator(db, {
+        agentTracker,
+        config: { disableSpawn: true },
+      });
+      await orc.tick();
+
+      const distributionAssigned = db.prepare(
+        "SELECT assigned_to FROM task_graph WHERE id = ?",
+      ).get(distributionTaskId) as { assigned_to: string | null } | undefined;
+      const buildAssigned = db.prepare(
+        "SELECT assigned_to FROM task_graph WHERE id = ?",
+      ).get(buildTaskId) as { assigned_to: string | null } | undefined;
+
+      expect(distributionAssigned?.assigned_to).toBe(preferredAgent.address);
+      expect(buildAssigned?.assigned_to).toBe(IDENTITY.address);
     });
 
     it("uses configured quarantine ttl when recording dead worker", async () => {

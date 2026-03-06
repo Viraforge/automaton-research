@@ -85,6 +85,21 @@ export interface AutomatonConfig {
     /** Dead-worker quarantine duration before eligibility for reassignment. Default: 30m. */
     workerQuarantineTtlMs?: number;
   };
+  /** Portfolio controls for multi-project execution. */
+  portfolio?: {
+    maxActiveProjects?: number;
+    maxShippingProjects?: number;
+    maxDistributionProjects?: number;
+    stalledProjectTtlMs?: number;
+    noProgressCycleLimit?: number;
+    killOnBudgetExhaustion?: boolean;
+  };
+  /** Distribution controls for operator-specified channels/targets. */
+  distribution?: {
+    operatorTargetsPath?: string;
+    enforceKnownVenueFollowThrough?: boolean;
+    channelCooldownDefaultMs?: number;
+  };
 }
 
 export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {
@@ -590,6 +605,111 @@ export interface LimitCheckResult {
   currentDailySpend: number;
   limitHourly: number;
   limitDaily: number;
+}
+
+export type ProjectStatus =
+  | "incubating"
+  | "shipping"
+  | "distribution"
+  | "monetizing"
+  | "paused"
+  | "blocked"
+  | "killed"
+  | "archived";
+
+export type ProjectLane = "build" | "distribution" | "research";
+
+export type DistributionChannelStatus =
+  | "ready"
+  | "misconfigured"
+  | "quota_exhausted"
+  | "funding_required"
+  | "blocked_by_policy"
+  | "cooldown"
+  | "disabled";
+
+export type DistributionTargetStatus =
+  | "pending"
+  | "attempted"
+  | "published"
+  | "contacted"
+  | "replied"
+  | "converted"
+  | "blocked"
+  | "skipped";
+
+export interface ProjectRow {
+  id: string;
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  lane: ProjectLane;
+  offer: string;
+  targetCustomer: string;
+  primaryChannelId: string | null;
+  monetizationHypothesis: string;
+  nextMonetizationStep: string;
+  successMetric: string;
+  killCriteria: string;
+  budgetTokens: number;
+  budgetComputeCents: number;
+  budgetTimeMinutes: number;
+  spentTokens: number;
+  spentComputeCents: number;
+  createdAt: string;
+  updatedAt: string;
+  pausedAt: string | null;
+  killedAt: string | null;
+}
+
+export interface DistributionChannelRow {
+  id: string;
+  name: string;
+  channelType: string;
+  requiresConfig: boolean;
+  requiresFunding: boolean;
+  supportsListing: boolean;
+  supportsMessaging: boolean;
+  supportsPublish: boolean;
+  status: DistributionChannelStatus;
+  blockerReason: string | null;
+  cooldownUntil: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DistributionTargetRow {
+  id: string;
+  projectId: string;
+  channelId: string;
+  targetKey: string;
+  targetLabel: string;
+  priority: number;
+  status: DistributionTargetStatus;
+  operatorProvided: boolean;
+  lastAttemptAt: string | null;
+  lastResult: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OperatorDistributionTarget {
+  projectId: string;
+  channelId: string;
+  targetKey: string;
+  targetLabel?: string;
+  priority?: number;
+  tags?: string[];
+}
+
+export interface ProjectMetricRow {
+  id: string;
+  projectId: string;
+  metricType: "lead" | "reply" | "trial" | "payment" | "deploy" | "listing" | "message" | "usage";
+  value: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface TreasuryPolicy {

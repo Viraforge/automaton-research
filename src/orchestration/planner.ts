@@ -32,11 +32,14 @@ export interface PlannedTask {
   title: string;
   description: string;
   agentRole: string;
+  taskClass?: PlannedTaskClass;
   dependencies: number[];
   estimatedCostCents: number;
   priority: number;
   timeoutMs: number;
 }
+
+export type PlannedTaskClass = "build" | "distribution" | "research" | "ops" | "monetization";
 
 export interface PlannerContext {
   creditsCents: number;
@@ -76,7 +79,7 @@ export async function planGoal(
   });
 
   const parsed = parsePlannerResponse(result.content);
-  return validatePlannerOutput(parsed);
+  return validatePlannerOutput(parsed, { goal });
 }
 
 export async function replanAfterFailure(
@@ -102,7 +105,7 @@ export async function replanAfterFailure(
   });
 
   const parsed = parsePlannerResponse(result.content);
-  return validatePlannerOutput(parsed);
+  return validatePlannerOutput(parsed, { goal });
 }
 
 export function buildPlannerPrompt(context: PlannerContext): string {
@@ -245,6 +248,7 @@ You CANNOT:
 12. No task should take more than 4 hours - split longer tasks
 13. Include at least one checkpoint task per 5 execution tasks
 14. Parallelizable tasks should have no mutual dependencies
+15. For revenue goals, include at least one \`distribution\` task and one \`monetization\` task
 </decomposition_rules>
 
 <custom_roles>
@@ -321,6 +325,7 @@ Respond with a JSON object matching the PlannerOutput schema:
       "title": "Clear, actionable task title",
       "description": "Detailed spec: what to do, inputs, expected outputs, success criteria",
       "agentRole": "predefined_role or custom-role-name",
+      "taskClass": "build|distribution|research|ops|monetization",
       "dependencies": [0, 1],
       "estimatedCostCents": 15000,
       "priority": 1,
@@ -386,7 +391,10 @@ Before producing ANY plan:
 ${toolList}`;
 }
 
-export function validatePlannerOutput(output: unknown): PlannerOutput {
+export function validatePlannerOutput(
+  output: unknown,
+  options?: { goal?: Goal },
+): PlannerOutput {
   const record = asRecord(output, "planner output");
   const analysis = requiredString(record.analysis, "analysis");
   const strategy = requiredString(record.strategy, "strategy");
@@ -419,6 +427,7 @@ export function validatePlannerOutput(output: unknown): PlannerOutput {
   }
 
   validateTaskDependencies(tasks);
+  validateRevenueTaskCoverage(tasks, options?.goal);
 
   return {
     analysis,
@@ -545,11 +554,74 @@ function validatePlannedTask(value: unknown, path: string): PlannedTask {
     title: requiredString(record.title, `${path}.title`),
     description: requiredString(record.description, `${path}.description`),
     agentRole: requiredString(record.agentRole, `${path}.agentRole`),
+    taskClass: parseTaskClass(record.taskClass, path, record.title, record.description),
     dependencies: dedupedDependencies,
     estimatedCostCents: requiredNonNegativeNumber(record.estimatedCostCents, `${path}.estimatedCostCents`),
     priority: requiredNonNegativeInteger(record.priority, `${path}.priority`),
     timeoutMs: requiredPositiveInteger(record.timeoutMs, `${path}.timeoutMs`),
   };
+}
+
+function parseTaskClass(
+  value: unknown,
+  path: string,
+  title: unknown,
+  description: unknown,
+): PlannedTaskClass {
+  if (value === undefined || value === null || value === "") {
+    const titleText = typeof title === "string" ? title : "";
+    const descriptionText = typeof description === "string" ? description : "";
+    return inferTaskClass(titleText, descriptionText);
+  }
+  const normalized = requiredString(value, `${path}.taskClass`).trim().toLowerCase();
+  if (
+    normalized === "build"
+    || normalized === "distribution"
+    || normalized === "research"
+    || normalized === "ops"
+    || normalized === "monetization"
+  ) {
+    return normalized;
+  }
+  throw new Error(`${path}.taskClass must be one of: build, distribution, research, ops, monetization`);
+}
+
+function inferTaskClass(title: string, description: string): PlannedTaskClass {
+  const text = `${title} ${description}`.toLowerCase();
+  if (/(pricing|payment|checkout|invoice|billing|trial|conversion|close deal|monetiz|revenue)/.test(text)) {
+    return "monetization";
+  }
+  if (/(publish|post|message|outreach|distribut|listing|announce|launch thread|dm|community)/.test(text)) {
+    return "distribution";
+  }
+  if (/(research|analy|validate market|customer interview|discovery)/.test(text)) {
+    return "research";
+  }
+  if (/(deploy|monitor|\bops\b|infra|\bci\b|\bcd\b|health check|incident)/.test(text)) {
+    return "ops";
+  }
+  return "build";
+}
+
+function validateRevenueTaskCoverage(tasks: PlannedTask[], goal?: Goal): void {
+  if (!goal || tasks.length === 0) {
+    return;
+  }
+  const isRevenueGoal = goal.expectedRevenueCents > 0
+    || /(revenue|monetiz|sell|paying|billing|pricing|customer acquisition)/i.test(
+      `${goal.title} ${goal.description}`,
+    );
+  if (!isRevenueGoal) {
+    return;
+  }
+
+  const hasDistribution = tasks.some((task) => task.taskClass === "distribution");
+  const hasMonetization = tasks.some((task) => task.taskClass === "monetization");
+  if (!hasDistribution || !hasMonetization) {
+    throw new Error(
+      "Revenue goal plans must include both distribution and monetization task classes",
+    );
+  }
 }
 
 function validateTaskDependencies(tasks: PlannedTask[]): void {

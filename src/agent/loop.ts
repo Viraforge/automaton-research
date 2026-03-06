@@ -67,6 +67,19 @@ import { KnowledgeStore } from "../memory/knowledge-store.js";
 import { ProviderRegistry } from "../inference/provider-registry.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { redactSensitiveText } from "../observability/redaction.js";
+import { evaluateProgress } from "../governance/progress.js";
+import {
+  DISTRIBUTION_CHANNEL_IDS,
+  ensureCoreDistributionChannels,
+  getChannelUseDecision,
+  recordChannelOutcome,
+} from "../distribution/channels.js";
+import { loadOperatorTargets } from "../distribution/targets.js";
+import { enforceProjectBudgetStates, resolvePortfolioPolicy } from "../portfolio/policy.js";
+import {
+  evaluateDiscoveryFollowThrough,
+  type DiscoveryFollowThroughState,
+} from "../governance/discovery-followthrough.js";
 
 const logger = createLogger("loop");
 const MAX_TOOL_CALLS_PER_TURN = 10;
@@ -81,6 +94,8 @@ const INFERENCE_429_BACKOFF_MS_KEY = "inference.429_backoff_ms";
 const INFERENCE_429_MIN_BACKOFF_MS = 5 * 60_000;
 const INFERENCE_429_MAX_BACKOFF_MS = 60 * 60_000;
 const INFERENCE_429_RESET_CAP_MS = 14 * 24 * 60 * 60_000;
+const PROJECT_NO_PROGRESS_CYCLES_KEY = "portfolio.no_progress_cycles";
+const DISCOVERY_FOLLOW_THROUGH_KEY = "distribution.discovery_follow_through";
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
@@ -364,6 +379,13 @@ export async function runAgentLoop(
   if (!db.getKV("start_time")) {
     db.setKV("start_time", new Date().toISOString());
   }
+  ensureCoreDistributionChannels(db.raw, config);
+  const loadedTargets = loadOperatorTargets(db.raw, config);
+  if (loadedTargets.warning) {
+    log(config, `[DISTRIBUTION] operator targets: ${loadedTargets.warning} (${loadedTargets.path})`);
+  } else if (loadedTargets.inserted > 0) {
+    log(config, `[DISTRIBUTION] loaded operator targets: inserted=${loadedTargets.inserted} from ${loadedTargets.path}`);
+  }
 
   let consecutiveErrors = 0;
   let running = true;
@@ -397,6 +419,22 @@ export async function runAgentLoop(
   }
 
   let idleToolTurns = 0;
+  let noProgressCycles = Number.parseInt(db.getKV(PROJECT_NO_PROGRESS_CYCLES_KEY) || "0", 10);
+  if (!Number.isFinite(noProgressCycles) || noProgressCycles < 0) {
+    noProgressCycles = 0;
+  }
+  let followThroughState: DiscoveryFollowThroughState | null = null;
+  try {
+    const raw = db.getKV(DISCOVERY_FOLLOW_THROUGH_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as DiscoveryFollowThroughState;
+      if (parsed && Array.isArray(parsed.pendingVenues) && typeof parsed.misses === "number") {
+        followThroughState = parsed;
+      }
+    }
+  } catch {
+    followThroughState = null;
+  }
   // blockedGoalTurns removed — replaced by immediate sleep + exponential backoff
 
   // Drain any stale wake events from before this loop started,
@@ -461,6 +499,14 @@ export async function runAgentLoop(
     let claimedMessages: InboxMessageRow[] = [];
 
     try {
+      const budgetTransitions = enforceProjectBudgetStates(db.raw, config);
+      if (budgetTransitions.length > 0) {
+        log(
+          config,
+          `[PORTFOLIO] Budget enforcement changed projects: ${budgetTransitions.map((b) => `${b.projectId}:${b.status}`).join(", ")}`,
+        );
+      }
+
       // Check if we should be sleeping
       const sleepUntil = db.getKV("sleep_until");
       if (sleepUntil && new Date(sleepUntil) > new Date()) {
@@ -799,7 +845,7 @@ export async function runAgentLoop(
       // Force sleep immediately with exponential backoff so the agent doesn't
       // wake every 2 minutes just to get BLOCKED again.
       const blockedGoalCall = turn.toolCalls.find(
-        (tc) => tc.name === "create_goal" && tc.result?.includes("BLOCKED"),
+        (tc) => tc.name === "create_goal" && /\bblocked\b/i.test(tc.result || ""),
       );
       if (blockedGoalCall) {
         // Exponential backoff: 2min → 4min → 8min → cap at 10min
@@ -934,9 +980,77 @@ export async function runAgentLoop(
         log(config, `[THOUGHT] ${turn.thinking.slice(0, 300)}`);
       }
 
+      const progress = evaluateProgress({
+        toolCalls: turn.toolCalls,
+        message: turn.thinking,
+        metricRecorded: turn.toolCalls.some((tc) => tc.name === "record_project_metric" && !tc.error),
+      });
+      if (progress.progressed) {
+        noProgressCycles = 0;
+      } else {
+        noProgressCycles += 1;
+      }
+      db.setKV(PROJECT_NO_PROGRESS_CYCLES_KEY, String(noProgressCycles));
+
+      const pendingTarget = db.raw.prepare(
+        `SELECT t.id, t.channel_id AS channelId
+         FROM distribution_targets t
+         JOIN projects p ON p.id = t.project_id
+         WHERE t.status = 'pending'
+           AND p.status NOT IN ('paused', 'killed', 'archived')
+         ORDER BY t.priority DESC, t.created_at ASC
+         LIMIT 1`,
+      ).get() as { id: string; channelId: string } | undefined;
+      const hasReadyDistributionWork = !!pendingTarget
+        && getChannelUseDecision(db.raw, pendingTarget.channelId, config).allowed;
+
+      const portfolioPolicy = resolvePortfolioPolicy(config);
+      if (!progress.progressed && noProgressCycles >= portfolioPolicy.noProgressCycleLimit && hasReadyDistributionWork && !pendingInput) {
+        pendingInput = {
+          content:
+            `NO-PROGRESS GOVERNOR: ${noProgressCycles} consecutive non-progress cycles while distribution work is ready. ` +
+            `Execute one pending distribution target now, or explicitly mark it blocked with evidence.`,
+          source: "system",
+        };
+      }
+
+      const knownTargets = db.raw.prepare(
+        `SELECT target_key AS targetKey, target_label AS targetLabel
+         FROM distribution_targets
+         WHERE operator_provided = 1`,
+      ).all() as Array<{ targetKey: string; targetLabel: string | null }>;
+      const knownVenueKeys = knownTargets.flatMap((target) =>
+        [target.targetKey, target.targetLabel || ""].filter(Boolean));
+      const followThroughDecision = evaluateDiscoveryFollowThrough(
+        followThroughState,
+        turn.toolCalls,
+        knownVenueKeys,
+        new Date().toISOString(),
+      );
+      followThroughState = followThroughDecision.nextState;
+      if (followThroughState) {
+        db.setKV(DISCOVERY_FOLLOW_THROUGH_KEY, JSON.stringify(followThroughState));
+      } else {
+        db.deleteKV(DISCOVERY_FOLLOW_THROUGH_KEY);
+      }
+      if (followThroughDecision.injectMessage && !pendingInput) {
+        pendingInput = {
+          content: followThroughDecision.injectMessage,
+          source: "system",
+        };
+      }
+
       // ── Check for sleep command ──
       const sleepTool = turn.toolCalls.find((tc) => tc.name === "sleep");
       if (sleepTool && !sleepTool.error) {
+        if (hasReadyDistributionWork) {
+          pendingInput = {
+            content:
+              "SLEEP DENIED: pending distribution target is executable right now. Run a distribution action before sleeping.",
+            source: "system",
+          };
+          continue;
+        }
         log(config, "[SLEEP] Agent chose to sleep.");
         db.setAgentState("sleeping");
         onStateChange?.("sleeping");
@@ -1068,6 +1182,7 @@ export async function runAgentLoop(
 
       consecutiveErrors = 0;
       db.deleteKV(INFERENCE_429_BACKOFF_MS_KEY);
+      recordChannelOutcome(db.raw, DISTRIBUTION_CHANNEL_IDS.byokInference, "inference cycle healthy", config);
       // Mark error resolved (don't delete — heartbeat needs to see it)
       const prevError = db.getKV("last_error");
       if (prevError) {
@@ -1109,6 +1224,7 @@ export async function runAgentLoop(
 
       const errorMessage = err?.message ?? String(err);
       if (isByokInvalidMessages1214(errorMessage)) {
+        recordChannelOutcome(db.raw, DISTRIBUTION_CHANNEL_IDS.byokInference, errorMessage, config);
         log(config, "[RECOVERY] Detected BYOK 1214 invalid-messages response. Resetting turn history immediately.");
         clearTurnHistoryForRecovery(db, config);
         consecutiveErrors = 0;
@@ -1126,6 +1242,7 @@ export async function runAgentLoop(
       }
 
       if (isInferenceRateLimit429(errorMessage)) {
+        recordChannelOutcome(db.raw, DISTRIBUTION_CHANNEL_IDS.byokInference, errorMessage, config);
         const sleepMs = computeInference429SleepMs(db, errorMessage);
         log(
           config,

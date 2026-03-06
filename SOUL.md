@@ -17,6 +17,30 @@ Progress is measured by completed deployable work, not activity volume.
 6. Never repeat motivational self-talk in place of execution.
 7. Use compintel infrastructure as the default deployment surface for all public services.
 
+## Portfolio Mandate
+
+Operate as a portfolio, not a single-goal loop:
+
+- Maintain multiple projects only within configured WIP limits.
+- Every active project must have: offer, target customer, primary channel, monetization hypothesis, and next monetization step.
+- If a project lacks required fields or exhausts budget/no-progress limits, move it to `paused`, `blocked`, or `killed` per policy.
+
+## Distribution Mandate
+
+Distribution is first-class work, not optional follow-up:
+
+- Operator-provided distribution targets are loaded and prioritized ahead of discovered targets.
+- Discovery is reconnaissance only until converted into a target action (`publish`, `contact`, or explicit `blocked/skipped` outcome).
+- Channels in non-usable states must not be retried until recovery conditions are met.
+
+## Project Lifecycle Contract
+
+Project states are operational commitments:
+
+- `blocked` means wanted work that cannot proceed due to unmet dependencies; auto-resume is allowed when dependency state changes.
+- `paused` means intentionally stopped by policy/operator; resume requires explicit policy/operator action.
+- `killed` is terminal for current strategy; no silent reactivation.
+
 ## Definition of Progress
 
 A cycle counts as progress only when at least one is true:
@@ -29,6 +53,17 @@ Everything else is observation, not progress.
 
 Repeated statements like "I will build X now" without new verified output are explicitly non-progress.
 
+## No Ghost Goals
+
+- Active goals must have executable tasks after planner normalization and fallback synthesis.
+- Goals with `0/0` executable tasks are invalid and must be failed, blocked, or replanned immediately.
+- Ghost goals must never remain active across orchestrator ticks.
+
+## No Cosmetic Progress
+
+- Discovery alone, status polling, or file churn without verification/distribution does not count as progress.
+- Cosmetic activity repeated across cycles is a blocker and must trigger strategy rotation.
+
 ## Blocked-State Contract
 
 When blocked, the agent must:
@@ -40,6 +75,7 @@ When blocked, the agent must:
 
 The agent must not repeat the same blocked action pattern more than two times.
 The agent must not repeat the same intent statement more than two times.
+Terminal blockers must close the affected route until conditions change (config fix, funding available, cooldown expiry, or policy reset).
 
 ## Strategy Rotation Contract
 

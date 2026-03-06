@@ -9,6 +9,7 @@ import {
   failTask,
   getGoalProgress,
   getReadyTasks,
+  invalidateGhostGoal,
   pruneCompletedGoals,
   type DecomposeTaskInput,
   type TaskResult,
@@ -88,6 +89,25 @@ describe("orchestration/task-graph", () => {
       ["title", "   ", "Goal description cannot be empty"],
     ])("rejects invalid inputs", (title, description, message) => {
       expect(() => createGoal(db, title, description)).toThrow(message);
+    });
+
+    it("supports linking goal to project_id", () => {
+      db.prepare(
+        `INSERT INTO projects (id, name, offer, target_customer, monetization_hypothesis, created_at, updated_at)
+         VALUES ('p1', 'Project 1', 'Offer', 'Customer', 'Monetize', datetime('now'), datetime('now'))`,
+      ).run();
+      const goal = createGoal(db, "Launch", "Desc", undefined, "p1");
+      const stored = getGoalById(db, goal.id);
+      expect(stored?.projectId).toBe("p1");
+    });
+  });
+
+  describe("ghost goal invalidation", () => {
+    it("fails active goal with zero tasks", () => {
+      const goal = createGoal(db, "Ghost", "No tasks");
+      const changed = invalidateGhostGoal(db, goal.id, "test");
+      expect(changed).toBe(true);
+      expect(getGoalById(db, goal.id)?.status).toBe("failed");
     });
   });
 
@@ -176,6 +196,18 @@ describe("orchestration/task-graph", () => {
       const stored = getTasksByGoal(db, goal.id).find((task) => task.title === "timed");
       expect(stored?.timeoutMs).toBe(90_000);
       expect(stored?.estimatedCostCents).toBe(345);
+    });
+
+    it("persists taskClass from decomposition input", () => {
+      const goal = createGoal(db, "Goal", "Desc");
+      decomposeGoal(db, goal.id, [
+        makeTask(goal.id, "distribution-step", {
+          taskClass: "distribution",
+        }),
+      ]);
+
+      const stored = getTasksByGoal(db, goal.id).find((task) => task.title === "distribution-step");
+      expect(stored?.taskClass).toBe("distribution");
     });
 
     it("starts pending when dependency is already completed", () => {
