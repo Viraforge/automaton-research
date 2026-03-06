@@ -21,13 +21,47 @@ jobs:
             CONFIG="$CONFIG" python3 -c "
             import json, os
             c = json.load(open(os.environ['CONFIG']))
-            for k in ['discordWebhookUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
+            for k in ['discordWebhookUrl', 'socialRelayUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
                 v = c.get(k)
                 if k in ['discordWebhookUrl', 'vultrApiKey']:
+                    print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
+                elif k == 'socialRelayUrl':
                     print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
                 else:
                     print(f'{k}: {v}')
             "
+
+            echo ""
+            echo "=== Applying optional distribution config from secrets ==="
+            SOCIAL_RELAY_URL='${{ secrets.SOCIAL_RELAY_URL }}'
+            OPERATOR_TARGETS_JSON='${{ secrets.OPERATOR_TARGETS_JSON }}'
+            TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
+
+            if [ -n "$SOCIAL_RELAY_URL" ]; then
+              CONFIG="$CONFIG" SOCIAL_RELAY_URL="$SOCIAL_RELAY_URL" python3 -c "
+            import json, os
+            p = os.environ['CONFIG']
+            c = json.load(open(p))
+            c['socialRelayUrl'] = os.environ['SOCIAL_RELAY_URL']
+            json.dump(c, open(p, 'w'), indent=2)
+            print('Set socialRelayUrl from SOCIAL_RELAY_URL secret')
+            "
+            else
+              echo "SOCIAL_RELAY_URL secret not set; leaving existing socialRelayUrl unchanged"
+            fi
+
+            if [ -n "$OPERATOR_TARGETS_JSON" ]; then
+              mkdir -p "$(dirname "$TARGETS_PATH")"
+              TARGETS_PATH="$TARGETS_PATH" OPERATOR_TARGETS_JSON="$OPERATOR_TARGETS_JSON" python3 -c "
+            import json, os, pathlib
+            obj = json.loads(os.environ['OPERATOR_TARGETS_JSON'])
+            p = pathlib.Path(os.environ['TARGETS_PATH'])
+            p.write_text(json.dumps(obj, indent=2) + '\n', encoding='utf-8')
+            print(f'Wrote operator targets JSON to {p}')
+            "
+            else
+              echo "OPERATOR_TARGETS_JSON secret not set; leaving distribution-targets.json unchanged"
+            fi
 
             echo ""
             echo "=== Configuring Discord webhook (systemd env var) ==="
@@ -230,13 +264,21 @@ jobs:
             CONFIG="$CONFIG" python3 -c "
             import json, os
             c = json.load(open(os.environ['CONFIG']))
-            for k in ['discordWebhookUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
+            for k in ['discordWebhookUrl', 'socialRelayUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
                 v = c.get(k)
                 if k in ['discordWebhookUrl', 'vultrApiKey']:
+                    print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
+                elif k == 'socialRelayUrl':
                     print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
                 else:
                     print(f'{k}: {v}')
             "
+            TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
+            if [ -f "$TARGETS_PATH" ]; then
+              echo "distribution-targets.json: PRESENT ($TARGETS_PATH)"
+            else
+              echo "distribution-targets.json: MISSING ($TARGETS_PATH)"
+            fi
             echo ""
             echo "=== Webhook security verification ==="
             # Verify webhook URL is NOT in automaton.json

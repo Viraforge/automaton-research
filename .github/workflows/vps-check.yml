@@ -103,6 +103,17 @@ jobs:
             fi
 
             echo ""
+            echo "=== 8.25 Distribution Config ==="
+            python3 -c "import json; c=json.load(open('$CONNIE_HOME/.automaton/automaton.json')); print('socialRelayUrl:', 'SET' if c.get('socialRelayUrl') else 'NOT SET')" 2>/dev/null || echo "socialRelayUrl: unknown"
+            TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
+            if [ -f "$TARGETS_PATH" ]; then
+              echo "distribution-targets.json: PRESENT ($TARGETS_PATH)"
+              python3 -c "import json; t=json.load(open('$TARGETS_PATH')); print('distribution-targets entries:', len(t) if isinstance(t, list) else 'non-list-json')" 2>/dev/null || echo "distribution-targets.json: INVALID JSON"
+            else
+              echo "distribution-targets.json: MISSING ($TARGETS_PATH)"
+            fi
+
+            echo ""
             echo "=== 8.5 Discord Heartbeat JSONL (tail) ==="
             HEARTBEAT_LOG="$CONNIE_HOME/.automaton/discord-heartbeat.log"
             if [ -f "$HEARTBEAT_LOG" ]; then
