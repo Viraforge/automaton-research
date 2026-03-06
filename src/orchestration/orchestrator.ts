@@ -26,7 +26,7 @@ import { ColonyMessaging, type AgentMessage } from "./messaging.js";
 import { generateTodoMd } from "./attention.js";
 import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { reviewPlan } from "./plan-mode.js";
-import { parseUtcTimestamp } from "./time.js";
+import { isChildRecent } from "./time.js";
 import {
   getActiveGoals,
   getGoalById,
@@ -54,7 +54,6 @@ const ORCHESTRATOR_CHILD_FAILURES_KEY = "orchestrator.child_failures";
 const DEFAULT_TASK_FUNDING_CENTS = 25;
 const DEFAULT_MAX_REPLANS = 3;
 const DEAD_WORKER_QUARANTINE_MS = 30 * 60_000;
-const CHILD_LIVENESS_STALE_MS = 30 * 60_000;
 const EXECUTION_STALL_THRESHOLD_MS = 10 * 60_000;
 
 type ExecutionPhase =
@@ -1293,12 +1292,6 @@ function plannerOutputToTasks(goalId: string, output: PlannerOutput): DecomposeT
     estimatedCostCents: task.estimatedCostCents,
     timeoutMs: task.timeoutMs,
   }));
-}
-
-function isChildRecent(lastChecked: string | null | undefined, createdAt: string | null | undefined): boolean {
-  const latest = parseUtcTimestamp(lastChecked) ?? parseUtcTimestamp(createdAt);
-  if (latest === null) return false;
-  return Date.now() - latest <= CHILD_LIVENESS_STALE_MS;
 }
 
 function goalRowToGoal(goal: GoalRow): Goal {
