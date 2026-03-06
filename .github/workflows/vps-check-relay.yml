@@ -56,6 +56,9 @@ jobs:
               echo "--- caddy validate ---"
               caddy validate --config /etc/caddy/Caddyfile || true
               echo ""
+              echo "--- caddy relay-specific tls logs ---"
+              journalctl -u caddy --no-pager --since '2 hours ago' | grep -E 'relay\.compintel\.co|tls\.obtain|acme|certificate' | tail -120 || true
+              echo ""
               echo "--- caddy recent logs ---"
               journalctl -u caddy --no-pager -n 120 || true
             fi

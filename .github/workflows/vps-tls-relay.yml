@@ -48,6 +48,12 @@ jobs:
               echo "1) Creating relay config..."
               cat <<'CADDY_CONF' | sudo tee /etc/caddy/Caddyfile.relay >/dev/null
             relay.compintel.co {
+                tls {
+                    issuer acme {
+                        dir https://acme-v02.api.letsencrypt.org/directory
+                        email ops@compintel.co
+                    }
+                }
                 reverse_proxy http://127.0.0.1:8787
             }
             CADDY_CONF
