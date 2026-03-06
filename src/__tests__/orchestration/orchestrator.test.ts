@@ -356,10 +356,15 @@ describe("orchestration/Orchestrator", () => {
       await orc.tick();
 
       const taskRow = db
-        .prepare("SELECT status, assigned_to FROM task_graph WHERE id = ?")
-        .get(taskId) as { status: string; assigned_to: string | null } | undefined;
+        .prepare("SELECT status, assigned_to, retry_count FROM task_graph WHERE id = ?")
+        .get(taskId) as {
+          status: string;
+          assigned_to: string | null;
+          retry_count: number;
+        } | undefined;
       expect(taskRow?.status).toBe("assigned");
       expect(taskRow?.assigned_to).toBe(IDENTITY.address);
+      expect(taskRow?.retry_count).toBe(1);
 
       const quarantine = db
         .prepare("SELECT value FROM kv WHERE key = 'orchestrator.dead_workers'")

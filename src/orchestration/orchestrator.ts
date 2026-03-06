@@ -307,8 +307,12 @@ export class Orchestrator {
     return this.pendingTaskResults.map((entry) => entry.result);
   }
 
-  async handleFailure(task: TaskNode, error: string): Promise<void> {
-    failTask(this.params.db, task.id, error, true);
+  async handleFailure(
+    task: Pick<TaskNode, "id" | "goalId">,
+    error: string,
+    shouldRetry = true,
+  ): Promise<void> {
+    failTask(this.params.db, task.id, error, shouldRetry);
 
     const latest = getTaskById(this.params.db, task.id);
     if (!latest || latest.status !== "failed") {
@@ -563,11 +567,10 @@ export class Orchestrator {
             taskId: task.id,
             worker: task.assignedTo,
           });
+          const staleError = `Task recovered from stale worker assignment (${task.assignedTo})`;
           this.rememberDeadWorker(task.assignedTo!, task.id, "stale-assignment");
           this.params.agentTracker.updateStatus(task.assignedTo!, "failed");
-          this.params.db.prepare(
-            "UPDATE task_graph SET status = 'pending', assigned_to = NULL, started_at = NULL WHERE id = ?",
-          ).run(task.id);
+          await this.handleFailure(task, staleError, true);
         }
       }
     }

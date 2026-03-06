@@ -273,6 +273,40 @@ describe("Circuit Breaker", () => {
     expect(escalationTurn!.input).toContain('"exec"');
   });
 
+  it("policy-denied exec does not trip breaker", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolCallResponse([
+        { name: "exec", arguments: { command: "node server.js &" } },
+        { name: "check_credits", arguments: {} },
+      ], "pd1"),
+      uniqueToolCallResponse([
+        { name: "exec", arguments: { command: "node server.js &" } },
+        { name: "system_synopsis", arguments: {} },
+      ], "pd2"),
+      uniqueToolCallResponse([
+        { name: "exec", arguments: { command: "node server.js &" } },
+        { name: "check_balance", arguments: {} },
+      ], "pd3"),
+      noToolResponse("Done."),
+    ]);
+
+    const turns: AgentTurn[] = [];
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const escalationTurn = turns.find(
+      (t) => t.input?.includes("TOOL FAILURE ESCALATION"),
+    );
+    expect(escalationTurn).toBeUndefined();
+  });
+
   it("persists across sleep cycles", async () => {
     // Phase 1: exec fails 2×, then agent sleeps.
     // The circuit breaker state should persist to KV.

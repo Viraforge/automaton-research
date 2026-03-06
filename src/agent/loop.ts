@@ -711,11 +711,17 @@ export async function runAgentLoop(
 
           // Circuit breaker: track per-tool failure counts. The built-in exec
           // tool reports runtime failures as a canonical result string
-          // ("exec error: ...") rather than throwing.
+          // ("exec error: ...") rather than throwing. Policy-denied exec
+          // commands are expected safety stops and should not trip breaker state.
           const isExecStringFailure =
             tc.function.name === "exec"
             && /^exec error:/i.test((result.result || "").trim());
-          if (result.error || isExecStringFailure) {
+          const isExecPolicyDenied =
+            tc.function.name === "exec"
+            && /(^|\b)Policy denied:\s*FORBIDDEN_COMMAND\b/i.test(
+              (result.error || result.result || "").trim(),
+            );
+          if ((result.error || isExecStringFailure) && !isExecPolicyDenied) {
             const count = (failedToolCounts.get(tc.function.name) ?? 0) + 1;
             failedToolCounts.set(tc.function.name, count);
             if (count >= 3) {
