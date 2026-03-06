@@ -63,7 +63,15 @@ jobs:
               # Add the import
               echo 'import /etc/caddy/Caddyfile.relay' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
 
-              echo "3) Testing Caddy config..."
+              echo "3) Diagnostics - Checking Caddyfile..."
+              echo "--- Last 15 lines of Main Caddyfile ---"
+              sudo tail -15 /etc/caddy/Caddyfile
+              echo ""
+              echo "--- Relay Import File ---"
+              sudo cat /etc/caddy/Caddyfile.relay
+              echo ""
+
+              echo "3b) Testing Caddy config..."
               sudo caddy validate --config /etc/caddy/Caddyfile || true
 
               echo "4) Reloading Caddy..."
