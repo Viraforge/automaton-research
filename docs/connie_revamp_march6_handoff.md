@@ -689,3 +689,120 @@ Post-Epic 11 runtime gate:
 - require `gate_result.json` with `"pass": true`
 - archive evidence directory and attach to release notes
 - optional CI automation via [.github/workflows/vps-phase11-gate.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-phase11-gate.yml)
+
+---
+
+## Phase 11 Quota Reset Gate Execution Report
+
+**Scheduled Execution**: 2026-03-12 05:05:53 UTC
+
+**Pre-Gate Checklist** (complete before gate time):
+- [ ] PR #28 merged to main (✅ done: commit a4fc04b)
+- [ ] VPS services verified stable (Caddy + relay running)
+- [ ] DNS propagated (relay.compintel.co → 66.135.29.159)
+- [ ] TLS certificate valid (Let's Encrypt)
+- [ ] GitHub secrets available (VPS_HOST, VPS_USER, VPS_SSH_KEY)
+
+### Gate Execution
+
+**Execution Method** (choose one):
+- [ ] GitHub Actions: `gh workflow run vps-phase11-gate.yml --ref main`
+- [ ] Manual script: `VPS_HOST=... VPS_USER=... VPS_SSH_KEY=... scripts/verify-phase11-quota-reset.sh`
+
+**Workflow/Run Details**:
+- Execution Timestamp: [FILL: YYYY-MM-DDTHH:MM:SSZ]
+- GitHub Run ID: [FILL: workflow run number]
+- GitHub Workflow URL: [FILL: https://github.com/nydamon/automaton-research/actions/runs/...]
+- Artifact Name: [FILL: phase11-gate-evidence-XXXXXXX]
+
+### Gate Result
+
+**Result**: [FILL: PASS / FAIL]
+
+**gate_result.json Summary**:
+```json
+{
+  "timestamp": "[FILL]",
+  "quota_reset_gate": "2026-03-12T05:05:53Z",
+  "results": {
+    "social_relay_ready": [FILL: true/false],
+    "relay_routing_operational": [FILL: true/false],
+    "all_services_active": [FILL: true/false]
+  },
+  "pass": [FILL: true/false],
+  "evidence_directory": "[FILL]"
+}
+```
+
+**Evidence Artifacts**:
+- [ ] relay_health.json [FILL: PASS/FAIL]
+- [ ] tls_certificate.txt [FILL: valid/expired/wrong-issuer]
+- [ ] channel_heartbeat.log [FILL: ready/cooldown/misconfigured/quota_exhausted]
+- [ ] message_endpoint_probe.json [FILL: 401/403/404/200/5xx]
+- [ ] caddy_recent_logs.log [FILL: no-errors/has-errors]
+- [ ] gate_result.json [FILL: path]
+
+**Evidence Archive Location**:
+- Local: [FILL: /tmp/phase11_evidence_...]
+- GitHub Artifacts: [FILL: artifacts/phase11-gate-evidence-...]
+
+### First-Cycle Observations (Post-Gate, If PASS)
+
+**Channel State Progression**:
+- Observation Time: [FILL: YYYY-MM-DDTHH:MM:SSZ]
+- social_relay State: [FILL: ready/cooldown/misconfigured/quota_exhausted/error]
+- Channel Error Keywords: [FILL: none/present - list any]
+- Heartbeat Snapshot Path: [FILL: path to captured heartbeat.log]
+
+**Relay Traffic Verification**:
+- Real /v1/messages/* Operations Observed: [FILL: YES/NO]
+- Message Count (first cycle): [FILL: N messages]
+- Sample Message Operation: [FILL: timestamp + response code]
+- Relay Service Logs: [FILL: path to captured relay logs]
+
+**Governance Behavior Check**:
+- Wake-Sleep Churn Detected: [FILL: YES/NO]
+- Dead-Channel Retries: [FILL: YES/NO]
+- Project No-Progress Pauses Triggered: [FILL: YES/NO/N/A]
+- Blocking Event Summary: [FILL: description or "none"]
+
+**Inference Operations**:
+- Connie Wake Cycle Completed: [FILL: YES/NO]
+- Active Projects in Portfolio: [FILL: N projects]
+- First Task Execution: [FILL: timestamp + task type]
+- Inference Success Rate: [FILL: N/M successful]
+
+### Decision & Sign-Off
+
+**Gate Status**: [FILL: PASSED / FAILED]
+
+**Decision**:
+- [ ] PASS → Proceed with normal operations (resume quota cycle)
+- [ ] FAIL → DO NOT resume; investigate blockers before retry
+
+**Blocker Summary** (if FAIL):
+```
+[FILL: description of failed conditions and root causes]
+```
+
+**Remediation Steps Taken** (if retrying):
+```
+[FILL: any fixes applied before re-running gate]
+```
+
+**Executed By**: [FILL: operator name or automation]
+**Timestamp**: [FILL: YYYY-MM-DDTHH:MM:SSZ]
+**Approved By**: [FILL: reviewer name, if required]
+
+**Notes**:
+```
+[FILL: any observations, anomalies, or follow-up items]
+```
+
+---
+
+**Reference Documentation**:
+- Procedure: [docs/phase11_quota_reset_gate_procedure.md](/Users/damondecrescenzo/automaton-research/docs/phase11_quota_reset_gate_procedure.md)
+- Runbook: [docs/social_relay_compintel_runbook.md](/Users/damondecrescenzo/automaton-research/docs/social_relay_compintel_runbook.md)
+- Workflow: [.github/workflows/vps-phase11-gate.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-phase11-gate.yml)
+- Script: [scripts/verify-phase11-quota-reset.sh](/Users/damondecrescenzo/automaton-research/scripts/verify-phase11-quota-reset.sh)
