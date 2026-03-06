@@ -81,6 +81,12 @@ jobs:
               echo "3b) Testing Caddy config..."
               sudo caddy validate --config /etc/caddy/Caddyfile || true
 
+              echo "3c) Repairing Caddy storage permissions..."
+              sudo install -d -o caddy -g caddy /var/lib/caddy/.local/share/caddy
+              sudo install -d -o caddy -g caddy /var/lib/caddy/.local/share/caddy/certificates
+              sudo chown -R caddy:caddy /var/lib/caddy/.local/share/caddy
+              sudo chown -R caddy:caddy /var/log/caddy 2>/dev/null || true
+
               echo "4) Reloading Caddy..."
               sudo systemctl reload caddy
 
@@ -97,6 +103,8 @@ jobs:
               echo ""
               echo "7) Checking cert storage..."
               sudo ls -la /var/lib/caddy/.local/share/caddy/certificates/ 2>/dev/null || true
+              echo "8) Storage ownership..."
+              sudo stat -c '%U:%G %n' /var/lib/caddy/.local/share/caddy /var/lib/caddy/.local/share/caddy/certificates 2>/dev/null || true
 
               echo ""
               echo "=== Verification ==="
