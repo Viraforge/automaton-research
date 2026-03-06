@@ -37,7 +37,7 @@ jobs:
               echo "1) Creating relay config..."
               cat <<'CADDY_CONF' | sudo tee /etc/caddy/Caddyfile.relay >/dev/null
             relay.compintel.co {
-                reverse_proxy 127.0.0.1:8787
+                reverse_proxy http://127.0.0.1:8787
             }
             CADDY_CONF
 
