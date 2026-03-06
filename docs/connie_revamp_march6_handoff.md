@@ -683,3 +683,9 @@ Epic 11 gate:
 - Connie production config uses `https://relay.compintel.co` for `socialRelayUrl`
 - `social_relay` channel state is `ready` under normal operation
 - signed send/poll/count smoke test passes end-to-end
+
+Post-Epic 11 runtime gate:
+- run [`scripts/verify-phase11-quota-reset.sh`](/Users/damondecrescenzo/automaton-research/scripts/verify-phase11-quota-reset.sh) at quota-reset time
+- require `gate_result.json` with `"pass": true`
+- archive evidence directory and attach to release notes
+- optional CI automation via [.github/workflows/vps-phase11-gate.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-phase11-gate.yml)
