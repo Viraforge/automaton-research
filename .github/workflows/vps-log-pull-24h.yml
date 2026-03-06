@@ -1,0 +1,97 @@
+name: VPS Pull Logs 24h
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pull:
+    name: Pull 24h app and heartbeat logs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull logs via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            APP_LOG="/tmp/connie-research.log"
+            HEARTBEAT_LOG="$CONNIE_HOME/.automaton/discord-heartbeat.log"
+
+            echo "CONNIE_HOME=$CONNIE_HOME"
+            echo "APP_LOG=$APP_LOG"
+            echo "HEARTBEAT_LOG=$HEARTBEAT_LOG"
+
+            python3 - <<'PY'
+            import json, os, re
+            from datetime import datetime, timezone, timedelta
+
+            app_log = '/tmp/connie-research.log'
+            home = os.popen("grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//'").read().strip()
+            heartbeat_log = os.path.join(home, '.automaton', 'discord-heartbeat.log') if home else ''
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+            redact_patterns = [
+                (re.compile(r'https://discord(?:app)?\\.com/api/webhooks/[^\\s"\\']+'), 'https://discord.com/api/webhooks/[REDACTED]'),
+                (re.compile(r'(?:sk-[A-Za-z0-9_\\-]{20,}|[A-Za-z0-9]{16,}\\.[A-Za-z0-9]{8,})'), '[REDACTED_KEY]'),
+                (re.compile(r'(ZAI_API_KEY|MINIMAX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\\S+'), r'\\1=[REDACTED]'),
+            ]
+
+            def redact(s: str) -> str:
+                out = s
+                for pat, repl in redact_patterns:
+                    out = pat.sub(repl, out)
+                return out
+
+            def parse_ts(obj):
+                for k in ('timestamp', 'ts', 'createdAt', 'started_at'):
+                    v = obj.get(k)
+                    if isinstance(v, str):
+                        try:
+                            if v.endswith('Z'):
+                                return datetime.fromisoformat(v.replace('Z', '+00:00'))
+                            return datetime.fromisoformat(v)
+                        except Exception:
+                            pass
+                return None
+
+            print('=== APP LOG LAST 24H BEGIN ===')
+            if os.path.exists(app_log):
+                with open(app_log, 'r', encoding='utf-8', errors='replace') as f:
+                    for line in f:
+                        tline = line.strip()
+                        if not tline:
+                            continue
+                        try:
+                            obj = json.loads(tline)
+                        except Exception:
+                            continue
+                        ts = parse_ts(obj)
+                        if ts and ts >= cutoff:
+                            print(redact(tline))
+            else:
+                print('APP_LOG_MISSING')
+            print('=== APP LOG LAST 24H END ===')
+
+            print('=== HEARTBEAT LOG LAST 24H BEGIN ===')
+            if heartbeat_log and os.path.exists(heartbeat_log):
+                with open(heartbeat_log, 'r', encoding='utf-8', errors='replace') as f:
+                    for line in f:
+                        tline = line.strip()
+                        if not tline:
+                            continue
+                        try:
+                            obj = json.loads(tline)
+                        except Exception:
+                            continue
+                        ts = parse_ts(obj)
+                        if ts and ts >= cutoff:
+                            print(redact(tline))
+            else:
+                print('HEARTBEAT_LOG_MISSING')
+            print('=== HEARTBEAT LOG LAST 24H END ===')
+            PY
