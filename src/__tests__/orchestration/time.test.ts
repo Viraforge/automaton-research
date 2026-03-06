@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseUtcTimestamp } from "../../orchestration/time.js";
+import { CHILD_LIVENESS_STALE_MS, isChildRecent, parseUtcTimestamp } from "../../orchestration/time.js";
 
 describe("orchestration/time", () => {
   it("parses sqlite UTC datetime as UTC", () => {
@@ -11,5 +11,18 @@ describe("orchestration/time", () => {
     expect(parseUtcTimestamp("2026-03-05T12:00:00.000Z")).toBe(Date.parse("2026-03-05T12:00:00.000Z"));
     expect(parseUtcTimestamp("")).toBeNull();
     expect(parseUtcTimestamp("not-a-date")).toBeNull();
+  });
+
+  it("uses last_checked first when determining recency", () => {
+    const now = Date.parse("2026-03-05T12:30:00Z");
+    const recentLastChecked = "2026-03-05 12:20:00";
+    const staleCreatedAt = "2026-03-05 11:00:00";
+    expect(isChildRecent(recentLastChecked, staleCreatedAt, now)).toBe(true);
+  });
+
+  it("marks child stale after liveness window", () => {
+    const now = Date.parse("2026-03-05T12:30:00Z");
+    const stale = new Date(now - CHILD_LIVENESS_STALE_MS - 1).toISOString();
+    expect(isChildRecent(stale, null, now)).toBe(false);
   });
 });

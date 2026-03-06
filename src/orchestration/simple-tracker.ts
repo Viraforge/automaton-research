@@ -7,16 +7,9 @@ import type {
 } from "../types.js";
 import type { AgentTracker, FundingProtocol } from "./types.js";
 import type { Address } from "viem";
-import { parseUtcTimestamp } from "./time.js";
+import { isChildRecent } from "./time.js";
 
 const IDLE_STATUSES = new Set<ChildStatus>(["running", "healthy"]);
-const CHILD_LIVENESS_STALE_MS = 30 * 60_000;
-
-function isChildRecent(lastChecked: string | null | undefined, createdAt: string | null | undefined): boolean {
-  const latest = parseUtcTimestamp(lastChecked) ?? parseUtcTimestamp(createdAt);
-  if (latest === null) return false;
-  return Date.now() - latest <= CHILD_LIVENESS_STALE_MS;
-}
 
 export class SimpleAgentTracker implements AgentTracker {
   constructor(private readonly db: AutomatonDatabase) {}

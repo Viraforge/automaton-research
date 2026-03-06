@@ -105,13 +105,13 @@ describe("orchestration/local-worker exec timeout classification", () => {
       title: "Task",
       description: "Desc",
       status: "running",
-      timeoutMs: 1,
+      timeoutMs: 50,
     });
-    const task = makeTaskNode(goalId, taskId, 1);
+    const task = makeTaskNode(goalId, taskId, 50);
 
     const inference = {
       chat: vi.fn().mockImplementation(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await new Promise((resolve) => setTimeout(resolve, 120));
         return {
           content: "",
           toolCalls: [{
