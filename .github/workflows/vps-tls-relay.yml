@@ -42,11 +42,13 @@ jobs:
             CADDY_CONF
 
               echo "2) Updating Caddyfile..."
-              if ! grep -q "relay.compintel.co" /etc/caddy/Caddyfile; then
-                echo 'import /etc/caddy/Caddyfile.relay' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
-              fi
+              sudo sed -i '/import \/etc\/caddy\/Caddyfile\.relay/d' /etc/caddy/Caddyfile
+              echo 'import /etc/caddy/Caddyfile.relay' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
 
-              echo "3) Reloading Caddy..."
+              echo "3) Testing Caddy config..."
+              sudo caddy validate --config /etc/caddy/Caddyfile || true
+
+              echo "4) Reloading Caddy..."
               sudo systemctl reload caddy
 
               sleep 3
