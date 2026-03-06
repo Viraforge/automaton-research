@@ -1089,7 +1089,6 @@ export async function runAgentLoop(
         db.setKV("last_error", JSON.stringify({
           message: String(errorMessage).slice(0, 500),
           consecutiveErrors: 1,
-          forcedSleep: true,
           recovery: "reset_turn_history_1214",
           timestamp: new Date().toISOString(),
         }));
@@ -1110,7 +1109,6 @@ export async function runAgentLoop(
         db.setKV("last_error", JSON.stringify({
           message: String(errorMessage).slice(0, 500),
           consecutiveErrors: 1,
-          forcedSleep: true,
           recovery: "inference_429_backoff",
           timestamp: new Date().toISOString(),
         }));
@@ -1155,9 +1153,9 @@ function clearTurnHistoryForRecovery(db: AutomatonDatabase, config: AutomatonCon
   try {
     db.raw.prepare("DELETE FROM tool_calls").run();
     db.raw.prepare("DELETE FROM turns").run();
-    log(config, "[FATAL] Cleared all turns for clean restart.");
+    log(config, "[RECOVERY] Cleared all turns for clean restart.");
   } catch (e) {
-    log(config, `[FATAL] Failed to clear turns: ${e}`);
+    log(config, `[ERROR] Failed to clear turns for recovery: ${e}`);
   }
 }
 
