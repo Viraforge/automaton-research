@@ -1,0 +1,85 @@
+name: VPS Failover Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: Probe ZAI->MiniMax Failover On VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -euo pipefail
+
+            MAIN_PID=$(systemctl show local-connie --property=MainPID --value)
+            if [ -z "$MAIN_PID" ] || [ "$MAIN_PID" = "0" ]; then
+              echo "ERROR: local-connie MainPID not found"
+              exit 2
+            fi
+
+            REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
+            if [ -z "$REPO" ] || [ ! -d "$REPO" ]; then
+              echo "ERROR: Could not resolve repo path from systemd"
+              exit 2
+            fi
+
+            echo "Main PID: $MAIN_PID"
+            echo "Repo: $REPO"
+
+            ENV_DUMP=$(tr '\0' '\n' < "/proc/$MAIN_PID/environ")
+            ZAI_KEY=$(echo "$ENV_DUMP" | sed -n 's/^ZAI_API_KEY=//p' | head -1)
+            MINIMAX_KEY=$(echo "$ENV_DUMP" | sed -n 's/^MINIMAX_API_KEY=//p' | head -1)
+
+            echo "ZAI_API_KEY present: $( [ -n "$ZAI_KEY" ] && echo yes || echo no )"
+            echo "MINIMAX_API_KEY present: $( [ -n "$MINIMAX_KEY" ] && echo yes || echo no )"
+            echo "ZAI_API_KEY length: ${#ZAI_KEY}"
+            echo "MINIMAX_API_KEY length: ${#MINIMAX_KEY}"
+
+            if [ -z "$ZAI_KEY" ] || [ -z "$MINIMAX_KEY" ]; then
+              echo "ERROR: Missing required runtime keys for failover probe"
+              exit 3
+            fi
+
+            cd "$REPO"
+            export ZAI_API_KEY="$ZAI_KEY"
+            export MINIMAX_API_KEY="$MINIMAX_KEY"
+
+            node --input-type=module <<'NODE'
+            import { ProviderRegistry } from './dist/inference/provider-registry.js';
+            import { UnifiedInferenceClient } from './dist/inference/inference-client.js';
+
+            async function run() {
+              const registry = ProviderRegistry.fromConfig('/tmp/definitely-missing-provider-config.json');
+              const client = new UnifiedInferenceClient(registry);
+              try {
+                const result = await client.chat({
+                  tier: 'reasoning',
+                  messages: [{ role: 'user', content: 'Reply exactly: FAILOVER_CANARY_OK' }],
+                  maxTokens: 24,
+                  temperature: 0,
+                });
+
+                const payload = {
+                  selectedProvider: result.metadata.providerId,
+                  selectedModel: result.metadata.modelId,
+                  retries: result.metadata.retries,
+                  failedProviders: result.metadata.failedProviders,
+                  contentPreview: (result.content || '').slice(0, 120),
+                };
+                console.log('FAILOVER_PROBE_RESULT=' + JSON.stringify(payload));
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.log('FAILOVER_PROBE_ERROR=' + message);
+                process.exit(1);
+              }
+            }
+
+            run();
+            NODE
