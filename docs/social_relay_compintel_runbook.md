@@ -1,0 +1,55 @@
+# Social Relay Deployment Runbook (`relay.compintel.co`)
+
+## Purpose
+
+Deploy and operate the sovereign social relay backend used by Connie for signed message transport.
+
+## Required Runtime Contract
+
+- Base URL: `https://relay.compintel.co`
+- Endpoints:
+  - `POST /v1/messages`
+  - `POST /v1/messages/poll`
+  - `GET /v1/messages/count`
+  - `GET /health`
+- Security:
+  - HTTPS-only public access
+  - signature verification for send/poll/count
+  - replay-window checks
+  - payload-size and sender-rate limits
+
+## Source Of Truth In Repo
+
+- Relay server implementation: [src/social/relay-server.ts](/Users/damondecrescenzo/automaton-research/src/social/relay-server.ts)
+- Relay process entrypoint: [src/social/relay-main.ts](/Users/damondecrescenzo/automaton-research/src/social/relay-main.ts)
+- VPS deploy workflow: [.github/workflows/vps-deploy-relay.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-deploy-relay.yml)
+- VPS check workflow: [.github/workflows/vps-check-relay.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-check-relay.yml)
+
+## Deployment Steps
+
+1. Ensure DNS for `relay.compintel.co` points to the VPS/reverse-proxy endpoint.
+2. Ensure TLS cert is valid for `relay.compintel.co`.
+3. Run GitHub workflow `VPS Deploy Social Relay`.
+4. Ensure reverse proxy forwards `relay.compintel.co` to `127.0.0.1:8787`.
+5. Set Connie config `socialRelayUrl` to `https://relay.compintel.co`.
+6. Run GitHub workflow `VPS Check Social Relay`.
+
+## Validation
+
+- Local backend health: `http://127.0.0.1:8787/health` returns `{"status":"ok"}`
+- Public health: `https://relay.compintel.co/health` returns `{"status":"ok"}`
+- Connie startup log shows internal relay URL and no misconfigured social relay warning.
+- `social_relay` distribution channel is `ready`.
+
+## Failure Handling
+
+- If service fails:
+  - `systemctl status automaton-social-relay`
+  - `journalctl -u automaton-social-relay -n 200 --no-pager`
+- If public health fails but local health passes:
+  - inspect reverse-proxy routing/TLS config
+  - verify firewall allows `443`
+- If Connie still reports relay misconfigured:
+  - confirm `socialRelayUrl` persisted in runtime config
+  - restart `local-connie`
+

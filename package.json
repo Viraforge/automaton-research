@@ -40,7 +40,10 @@
   "scripts": {
     "build": "tsc && pnpm -r build",
     "dev": "tsx watch src/index.ts",
+    "relay:dev": "tsx src/social/relay-main.ts",
+    "relay:start": "node dist/social/relay-main.js",
     "test": "vitest run",
+    "test:relay": "tsx scripts/test-social-relay.ts",
     "typecheck": "tsc --noEmit",
     "test:coverage": "vitest run --coverage",
     "test:security": "vitest run --grep 'security|injection|policy'",

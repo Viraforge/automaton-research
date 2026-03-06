@@ -1,0 +1,88 @@
+name: VPS Deploy Social Relay
+on:
+  workflow_dispatch:
+jobs:
+  deploy-relay:
+    name: Deploy relay.compintel.co backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy relay service via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
+            RUN_USER=$(systemctl show -p User --value local-connie 2>/dev/null || true)
+            if [ -z "$RUN_USER" ]; then
+              RUN_USER='${{ secrets.VPS_USER }}'
+            fi
+
+            RELAY_PORT=8787
+            RELAY_HOST=127.0.0.1
+            RELAY_DB_PATH="$CONNIE_HOME/.automaton/relay/social-relay.db"
+            RELAY_SERVICE=automaton-social-relay.service
+            RELAY_ENV_FILE=/etc/default/automaton-social-relay
+            RELAY_UNIT_FILE=/etc/systemd/system/$RELAY_SERVICE
+
+            echo "=== 1) Build latest code ==="
+            cd "$REPO"
+            git fetch origin main --quiet 2>/dev/null || true
+            git pull origin main --ff-only
+            npm rebuild better-sqlite3 >/dev/null 2>&1 || true
+            npm install >/dev/null
+            npm run build >/dev/null
+
+            echo "=== 2) Prepare relay data path ==="
+            mkdir -p "$(dirname "$RELAY_DB_PATH")"
+            chown -R "$RUN_USER":"$RUN_USER" "$CONNIE_HOME/.automaton"
+
+            echo "=== 3) Write env file ==="
+            cat > "$RELAY_ENV_FILE" <<EOF
+            RELAY_PORT=$RELAY_PORT
+            RELAY_HOST=$RELAY_HOST
+            RELAY_DB_PATH=$RELAY_DB_PATH
+            EOF
+            chmod 640 "$RELAY_ENV_FILE"
+
+            echo "=== 4) Write systemd unit ==="
+            cat > "$RELAY_UNIT_FILE" <<EOF
+            [Unit]
+            Description=Automaton Social Relay
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=$RUN_USER
+            Group=$RUN_USER
+            WorkingDirectory=$REPO
+            EnvironmentFile=$RELAY_ENV_FILE
+            ExecStart=/usr/bin/node $REPO/dist/social/relay-main.js
+            Restart=always
+            RestartSec=5
+            NoNewPrivileges=true
+            PrivateTmp=true
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            echo "=== 5) Enable/restart relay service ==="
+            systemctl daemon-reload
+            systemctl enable "$RELAY_SERVICE" >/dev/null
+            systemctl restart "$RELAY_SERVICE"
+            sleep 2
+            systemctl status "$RELAY_SERVICE" --no-pager -l | head -20
+
+            echo "=== 6) Local relay health ==="
+            curl -fsS "http://$RELAY_HOST:$RELAY_PORT/health"
+
+            echo ""
+            echo "=== 7) Reverse proxy reminder (manual if needed) ==="
+            echo "Ensure relay.compintel.co proxies to http://$RELAY_HOST:$RELAY_PORT"
+            echo "and exposes TLS publicly at https://relay.compintel.co"
+
