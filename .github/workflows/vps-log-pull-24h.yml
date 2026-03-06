@@ -36,7 +36,7 @@ jobs:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
             redact_patterns = [
-                (re.compile(r'https://discord(?:app)?\\.com/api/webhooks/[^\\s"\\']+'), 'https://discord.com/api/webhooks/[REDACTED]'),
+                (re.compile(r"https://discord(?:app)?\\.com/api/webhooks/[^\\s\"']+"), 'https://discord.com/api/webhooks/[REDACTED]'),
                 (re.compile(r'(?:sk-[A-Za-z0-9_\\-]{20,}|[A-Za-z0-9]{16,}\\.[A-Za-z0-9]{8,})'), '[REDACTED_KEY]'),
                 (re.compile(r'(ZAI_API_KEY|MINIMAX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\\S+'), r'\\1=[REDACTED]'),
             ]
