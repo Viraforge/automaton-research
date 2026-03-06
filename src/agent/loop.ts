@@ -80,7 +80,7 @@ const DISCOVER_AGENTS_COOLDOWN_MS = 10 * 60_000;
 const INFERENCE_429_BACKOFF_MS_KEY = "inference.429_backoff_ms";
 const INFERENCE_429_MIN_BACKOFF_MS = 5 * 60_000;
 const INFERENCE_429_MAX_BACKOFF_MS = 60 * 60_000;
-const INFERENCE_429_RESET_CAP_MS = 24 * 60 * 60_000;
+const INFERENCE_429_RESET_CAP_MS = 14 * 24 * 60 * 60_000;
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
