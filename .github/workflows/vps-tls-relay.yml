@@ -17,6 +17,17 @@ jobs:
           script: |
             set -e
 
+            echo "=== Opening firewall ports ==="
+            if command -v ufw &>/dev/null && sudo ufw status | grep -q "Status: active"; then
+              echo "ufw is active, opening ports 80 and 443..."
+              sudo ufw allow 80/tcp
+              sudo ufw allow 443/tcp
+              echo "✅ Firewall ports 80/443 opened"
+            else
+              echo "ℹ️ ufw not active or not installed"
+            fi
+
+            echo ""
             echo "=== Detecting web server ==="
             if command -v caddy &>/dev/null; then
               echo "Using Caddy"
@@ -41,8 +52,11 @@ jobs:
             }
             CADDY_CONF
 
-              echo "2) Updating Caddyfile..."
+              echo "2) Updating Caddyfile (removing duplicates)..."
+              # Remove any existing relay config blocks and imports to avoid duplicates
+              sudo sed -i '/relay\.compintel\.co/d' /etc/caddy/Caddyfile
               sudo sed -i '/import \/etc\/caddy\/Caddyfile\.relay/d' /etc/caddy/Caddyfile
+              # Add the import
               echo 'import /etc/caddy/Caddyfile.relay' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
 
               echo "3) Testing Caddy config..."
@@ -52,6 +66,11 @@ jobs:
               sudo systemctl reload caddy
 
               sleep 3
+              echo ""
+              echo "5) Checking Caddy status..."
+              systemctl is-active caddy >/dev/null && echo "✅ Caddy is running" || echo "⚠️ Caddy not running"
+              sudo systemctl status caddy --no-pager | head -5
+
               echo ""
               echo "=== Verification ==="
               curl -fsS https://relay.compintel.co/health && echo "✅ Public relay health OK" || echo "⚠️ Public health check (may be pending DNS)"
