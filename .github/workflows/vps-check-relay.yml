@@ -67,6 +67,9 @@ jobs:
               echo ""
               echo "--- caddy recent logs ---"
               journalctl -u caddy --no-pager -n 120 || true
+              echo ""
+              echo "--- caddy non-access logs (last 30m) ---"
+              journalctl -u caddy --no-pager --since '30 minutes ago' | grep -v 'http.log.access' | tail -200 || true
             fi
 
             echo ""
