@@ -56,6 +56,12 @@ jobs:
               echo "--- caddy validate ---"
               caddy validate --config /etc/caddy/Caddyfile || true
               echo ""
+              echo "--- caddy adapted tls automation ---"
+              caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile 2>/dev/null | jq '.apps.tls.automation' 2>/dev/null || true
+              echo ""
+              echo "--- local tls handshake (SNI relay.compintel.co) ---"
+              echo | openssl s_client -connect 127.0.0.1:443 -servername relay.compintel.co -brief 2>/dev/null | sed -n '1,20p' || true
+              echo ""
               echo "--- caddy relay-specific tls logs ---"
               journalctl -u caddy --no-pager --since '2 hours ago' | grep -E 'relay\.compintel\.co|tls\.obtain|acme|certificate' | tail -120 || true
               echo ""

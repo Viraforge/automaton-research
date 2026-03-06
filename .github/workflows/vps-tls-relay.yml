@@ -105,6 +105,8 @@ jobs:
               sudo ls -la /var/lib/caddy/.local/share/caddy/certificates/ 2>/dev/null || true
               echo "8) Storage ownership..."
               sudo stat -c '%U:%G %n' /var/lib/caddy/.local/share/caddy /var/lib/caddy/.local/share/caddy/certificates 2>/dev/null || true
+              echo "9) Local TLS handshake (SNI relay.compintel.co)..."
+              echo | openssl s_client -connect 127.0.0.1:443 -servername relay.compintel.co -brief 2>/dev/null | sed -n '1,20p' || true
 
               echo ""
               echo "=== Verification ==="
