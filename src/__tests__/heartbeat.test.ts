@@ -781,6 +781,46 @@ describe("Heartbeat Tasks", () => {
       globalThis.fetch = origFetch;
     });
 
+    it("does not show crash sleep indicator for handled recovery sleeps", async () => {
+      const tickCtx = createMockTickContext(db, {
+        creditBalance: 5000,
+        usdcBalance: 2.5,
+        survivalTier: "normal",
+      });
+
+      db.setKV("last_error", JSON.stringify({
+        message: "Inference error (byok): 429: Weekly/Monthly Limit Exhausted.",
+        consecutiveErrors: 1,
+        forcedSleep: true,
+        recovery: "inference_429_backoff",
+        timestamp: new Date().toISOString(),
+      }));
+
+      const origFetch = globalThis.fetch;
+      let capturedBody: any = null;
+      globalThis.fetch = async (_url: any, opts: any) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(null, { status: 204 });
+      };
+
+      const taskCtx: HeartbeatLegacyContext = {
+        identity: createTestIdentity(),
+        config: createTestConfig({ discordWebhookUrl: "https://discord.com/api/webhooks/test/token" }),
+        db,
+        conway,
+      };
+
+      await BUILTIN_TASKS.discord_heartbeat(tickCtx, taskCtx);
+
+      const embed = capturedBody.embeds[0];
+      expect(embed.title).not.toContain("🛑");
+      const errorField = embed.fields.find((f: any) => f.name === "Last Error");
+      expect(errorField.value).not.toContain("[CRASH SLEEP]");
+      expect(errorField.value).toContain("Weekly/Monthly Limit Exhausted");
+
+      globalThis.fetch = origFetch;
+    });
+
     it("includes permanent blockers from runtime diagnostics and child failures", async () => {
       const tickCtx = createMockTickContext(db, {
         creditBalance: 5000,

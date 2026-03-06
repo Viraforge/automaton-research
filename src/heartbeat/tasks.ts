@@ -737,7 +737,8 @@ export const BUILTIN_TASKS: Record<string, HeartbeatTaskFn> = {
               ? `${parsed.message.slice(0, 120)} (x${parsed.consecutiveErrors})`
               : parsed.message.slice(0, 150);
           }
-          if (hasActiveUnresolvedError && parsed.forcedSleep) {
+          const hasRecoveryMarker = typeof parsed.recovery === "string" && parsed.recovery.length > 0;
+          if (hasActiveUnresolvedError && parsed.forcedSleep && !hasRecoveryMarker) {
             isForcedSleep = true;
             lastError += " [CRASH SLEEP]";
           }
