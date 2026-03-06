@@ -33,6 +33,21 @@ function selectSandboxTier(requestedMemoryMb: number) {
   return SANDBOX_TIERS.find((t) => t.memoryMb >= requestedMemoryMb) ?? SANDBOX_TIERS[SANDBOX_TIERS.length - 1];
 }
 
+function readRuntimeNumber(
+  db: AutomatonDatabase,
+  key: string,
+  fallback: number,
+): number {
+  const raw = db.getKV(key);
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const legacy = Number((db as any).config?.[key.replace("runtime.", "")]);
+  if (Number.isFinite(legacy)) return legacy;
+  return fallback;
+}
+
 /**
  * Validate that an address is a well-formed, non-zero Ethereum wallet address.
  */
@@ -73,7 +88,7 @@ async function spawnChildSovereign(
   const existing = db.getChildren().filter(
     (c) => c.status !== "dead" && c.status !== "cleaned_up" && c.status !== "failed",
   );
-  const maxChildren = (db as any).config?.maxChildren ?? 3;
+  const maxChildren = readRuntimeNumber(db, "runtime.maxChildren", 3);
   if (existing.length >= maxChildren) {
     throw new Error(
       `Cannot spawn: already at max children (${maxChildren}). Kill or wait for existing children to die.`,
@@ -185,7 +200,7 @@ async function spawnChildConway(
         c.status !== "cleaned_up" &&
         c.status !== "failed",
     );
-  const maxChildren = (db as any).config?.maxChildren ?? 3;
+  const maxChildren = readRuntimeNumber(db, "runtime.maxChildren", 3);
   if (existing.length >= maxChildren) {
     throw new Error(
       `Cannot spawn: already at max children (${maxChildren}). Kill or wait for existing children to die.`,
@@ -206,7 +221,7 @@ async function spawnChildConway(
     lifecycle.initChild(childId, genesis.name, "", genesis.genesisPrompt);
 
     // Get child sandbox memory from config (default 1024MB)
-    const childMemoryMb = (db as any).config?.childSandboxMemoryMb ?? 1024;
+    const childMemoryMb = readRuntimeNumber(db, "runtime.childSandboxMemoryMb", 1024);
 
     // Try to reuse an existing sandbox whose DB record is 'failed' but
     // is still running remotely, before creating a new one.
@@ -357,7 +372,7 @@ async function spawnChildLegacy(
   let sandboxId: string | undefined;
 
   // Get child sandbox memory from config (default 1024MB)
-  const childMemoryMb = (db as any).config?.childSandboxMemoryMb ?? 1024;
+  const childMemoryMb = readRuntimeNumber(db, "runtime.childSandboxMemoryMb", 1024);
 
   const legacyTier = selectSandboxTier(childMemoryMb);
 
