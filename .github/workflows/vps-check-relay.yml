@@ -1,0 +1,40 @@
+name: VPS Check Social Relay
+on:
+  workflow_dispatch:
+jobs:
+  check-relay:
+    name: Check relay.compintel.co backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check relay via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            RELAY_SERVICE=automaton-social-relay.service
+            RELAY_PORT=8787
+            RELAY_HOST=127.0.0.1
+
+            echo "=== 1) Service status ==="
+            systemctl status "$RELAY_SERVICE" --no-pager -l 2>&1 | head -20
+
+            echo ""
+            echo "=== 2) Local health ==="
+            curl -fsS "http://$RELAY_HOST:$RELAY_PORT/health"
+
+            echo ""
+            echo "=== 3) Public health ==="
+            if curl -fsS "https://relay.compintel.co/health" >/tmp/relay-public-health.json 2>/dev/null; then
+              cat /tmp/relay-public-health.json
+            else
+              echo "WARNING: public health check failed for https://relay.compintel.co/health"
+            fi
+
+            echo ""
+            echo "=== 4) Recent relay logs ==="
+            journalctl -u "$RELAY_SERVICE" --no-pager -n 60 || true
+
