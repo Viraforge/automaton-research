@@ -5,7 +5,7 @@ on:
 
 jobs:
   tls-setup:
-    name: Configure Relay TLS (Nginx + Certbot)
+    name: Configure Relay TLS (Caddy/Nginx + Certbot)
     runs-on: ubuntu-latest
     steps:
       - name: Configure TLS via SSH
@@ -17,8 +17,51 @@ jobs:
           script: |
             set -e
 
-            echo "=== 1) Creating nginx site config ==="
-            sudo tee /etc/nginx/sites-available/relay.compintel.co >/dev/null <<'NGINX'
+            echo "=== Detecting web server ==="
+            if command -v caddy &>/dev/null; then
+              echo "Using Caddy"
+              WEBSERVER="caddy"
+            elif command -v nginx &>/dev/null; then
+              echo "Using nginx"
+              WEBSERVER="nginx"
+            else
+              echo "Installing nginx..."
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq nginx certbot python3-certbot-nginx
+              WEBSERVER="nginx"
+            fi
+
+            if [ "$WEBSERVER" = "caddy" ]; then
+              echo ""
+              echo "=== Caddy Configuration ==="
+              echo "1) Creating relay config..."
+              cat <<'CADDY_CONF' | sudo tee /etc/caddy/Caddyfile.relay >/dev/null
+            relay.compintel.co {
+                reverse_proxy 127.0.0.1:8787
+            }
+            CADDY_CONF
+
+              echo "2) Updating Caddyfile..."
+              if ! grep -q "relay.compintel.co" /etc/caddy/Caddyfile; then
+                echo 'import /etc/caddy/Caddyfile.relay' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+              fi
+
+              echo "3) Reloading Caddy..."
+              sudo systemctl reload caddy
+
+              sleep 3
+              echo ""
+              echo "=== Verification ==="
+              curl -fsS https://relay.compintel.co/health && echo "✅ Public relay health OK" || echo "⚠️ Public health check (may be pending DNS)"
+
+            else
+              echo ""
+              echo "=== Nginx Configuration ==="
+              echo "1) Creating directories..."
+              sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+
+              echo "2) Creating site config..."
+              cat <<'NGINX_CONF' | sudo tee /etc/nginx/sites-available/relay.compintel.co >/dev/null
             server {
                 listen 80;
                 server_name relay.compintel.co;
@@ -30,28 +73,30 @@ jobs:
                     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
                 }
             }
-            NGINX
+            NGINX_CONF
 
-            echo "=== 2) Enabling site ==="
-            sudo ln -sf /etc/nginx/sites-available/relay.compintel.co /etc/nginx/sites-enabled/relay.compintel.co
+              echo "3) Enabling site..."
+              sudo ln -sf /etc/nginx/sites-available/relay.compintel.co /etc/nginx/sites-enabled/relay.compintel.co
 
-            echo "=== 3) Testing nginx config ==="
-            sudo nginx -t
+              echo "4) Testing nginx config..."
+              sudo nginx -t
 
-            echo "=== 4) Reloading nginx ==="
-            sudo systemctl reload nginx
+              echo "5) Reloading nginx..."
+              sudo systemctl reload nginx
 
-            echo "=== 5) Waiting for nginx to be ready ==="
-            sleep 3
-            curl -fsS http://127.0.0.1/health || echo "Note: curl may fail if health endpoint not on nginx directly"
+              sleep 3
 
-            echo "=== 6) Running certbot for TLS certificate ==="
-            sudo certbot --nginx -d relay.compintel.co --redirect -m ops@compintel.co --agree-tos --no-eff-email --non-interactive || echo "Certbot may already exist or cert issued"
+              echo "6) Running certbot..."
+              sudo certbot --nginx -d relay.compintel.co --redirect -m ops@compintel.co --agree-tos --no-eff-email --non-interactive || echo "⚠️ Certbot may already exist"
 
-            echo "=== 7) Reloading nginx after certbot ==="
-            sudo systemctl reload nginx
+              echo "7) Reloading nginx after certbot..."
+              sudo systemctl reload nginx
+
+              sleep 2
+              echo ""
+              echo "=== Verification ==="
+              curl -fsS https://relay.compintel.co/health && echo "✅ Public relay health OK" || echo "⚠️ Public health check (may be pending DNS/cert)"
+            fi
 
             echo ""
-            echo "=== Final Verification ==="
-            sleep 2
-            curl -fsS https://relay.compintel.co/health && echo "✅ Public relay health OK" || echo "⚠️ Public health check pending DNS/cert propagation"
+            echo "=== TLS Setup Complete ==="
