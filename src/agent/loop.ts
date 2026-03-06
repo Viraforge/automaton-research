@@ -404,9 +404,20 @@ export async function runAgentLoop(
   let drained = 0;
   while (consumeNextWakeEvent(db.raw)) drained++;
 
-  // Clear any stale sleep_until from a previous session so the agent
-  // doesn't immediately go back to sleep on startup.
-  db.deleteKV("sleep_until");
+  // Respect an active sleep window across process restarts.
+  // Clearing this unconditionally causes restart-driven inference churn.
+  const startupSleepUntil = db.getKV("sleep_until");
+  if (startupSleepUntil) {
+    const startupSleepMs = Date.parse(startupSleepUntil);
+    if (Number.isFinite(startupSleepMs) && startupSleepMs > Date.now()) {
+      db.setAgentState("sleeping");
+      onStateChange?.("sleeping");
+      log(config, `[SLEEP] Startup respects existing sleep_until=${startupSleepUntil}`);
+      return;
+    }
+    // Past timestamp: safe to clear stale value.
+    db.deleteKV("sleep_until");
+  }
 
   // Transition to waking state
   db.setAgentState("waking");
@@ -567,10 +578,13 @@ export async function runAgentLoop(
         messages.splice(1, 0, { role: "system", content: memoryBlock });
       }
 
+      let orchestratorPhase: string | undefined;
+      let hasOrchestratorProgress = false;
       if (orchestrator) {
         const orchestratorTick = await orchestrator.tick();
+        orchestratorPhase = orchestratorTick.phase;
         db.setKV("orchestrator.last_tick", JSON.stringify(orchestratorTick));
-        const hasOrchestratorProgress =
+        hasOrchestratorProgress =
           orchestratorTick.tasksAssigned > 0 ||
           orchestratorTick.tasksCompleted > 0 ||
           orchestratorTick.tasksFailed > 0;
@@ -585,6 +599,18 @@ export async function runAgentLoop(
             `[ORCHESTRATOR] phase=${orchestratorTick.phase} assigned=${orchestratorTick.tasksAssigned} completed=${orchestratorTick.tasksCompleted} failed=${orchestratorTick.tasksFailed}`,
           );
         }
+      }
+
+      // Skip an inference turn when parent has no direct input and
+      // orchestrator is just waiting on workers (no new assignments/completions).
+      if (!pendingInput && orchestrator && orchestratorPhase === "executing" && !hasOrchestratorProgress) {
+        const cooldownMs = 180_000;
+        log(config, `[IDLE] No parent input and no orchestrator progress. Sleeping ${Math.round(cooldownMs / 1000)}s.`);
+        db.setKV("sleep_until", new Date(Date.now() + cooldownMs).toISOString());
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        running = false;
+        break;
       }
 
       if (planModeController) {
