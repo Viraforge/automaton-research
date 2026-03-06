@@ -53,3 +53,23 @@ Deploy and operate the sovereign social relay backend used by Connie for signed 
   - confirm `socialRelayUrl` persisted in runtime config
   - restart `local-connie`
 
+## Quota Reset Gate
+
+Run post-reset verification with evidence capture:
+
+```bash
+GATE_TIMESTAMP="2026-03-12T05:05:53Z" \
+VPS_HOST="<vps-host>" \
+VPS_USER="<vps-user>" \
+VPS_SSH_KEY="$(cat ~/.ssh/<keyfile>)" \
+scripts/verify-phase11-quota-reset.sh
+```
+
+Expected:
+- output shows `PHASE 11 QUOTA RESET GATE: PASS`
+- `gate_result.json` is created in `/tmp/phase11_evidence_*`
+
+GitHub workflow alternative:
+- Run `VPS Phase 11 Quota Gate`
+- Workflow: [.github/workflows/vps-phase11-gate.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-phase11-gate.yml)
+- Download artifact `phase11-gate-evidence-*` for logs and `gate_result.json`.
