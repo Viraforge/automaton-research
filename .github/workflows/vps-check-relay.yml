@@ -35,6 +35,31 @@ jobs:
             fi
 
             echo ""
-            echo "=== 4) Recent relay logs ==="
-            journalctl -u "$RELAY_SERVICE" --no-pager -n 60 || true
+            echo "=== 4) Web Listener and Firewall Diagnostics ==="
+            echo "--- caddy/nginx service status ---"
+            systemctl status caddy --no-pager -l 2>/dev/null | head -20 || echo "caddy not present or not active"
+            systemctl status nginx --no-pager -l 2>/dev/null | head -20 || echo "nginx not present or not active"
+            echo ""
+            echo "--- listening sockets (:80/:443/:8787) ---"
+            ss -tulpn 2>/dev/null | rg ':(80|443|8787)\b' || true
+            echo ""
+            echo "--- firewall ---"
+            ufw status 2>/dev/null || echo "ufw not installed"
+            iptables -S 2>/dev/null | head -40 || true
 
+            echo ""
+            echo "=== 5) Caddy TLS Diagnostics ==="
+            if command -v caddy >/dev/null 2>&1; then
+              echo "--- caddy version ---"
+              caddy version || true
+              echo ""
+              echo "--- caddy validate ---"
+              caddy validate --config /etc/caddy/Caddyfile || true
+              echo ""
+              echo "--- caddy recent logs ---"
+              journalctl -u caddy --no-pager -n 120 || true
+            fi
+
+            echo ""
+            echo "=== 6) Recent relay logs ==="
+            journalctl -u "$RELAY_SERVICE" --no-pager -n 60 || true
