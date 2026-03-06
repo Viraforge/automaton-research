@@ -14,6 +14,7 @@ import type {
   InferenceToolDefinition,
 } from "../types.js";
 import { ResilientHttpClient } from "../http/client.js";
+import { ensureNonEmptyChatMessages, sanitizeChatMessages } from "./message-sanitizer.js";
 
 const INFERENCE_TIMEOUT_MS = 60_000;
 const INFERENCE_MIN_REQUEST_INTERVAL_MS = 5_000;
@@ -69,10 +70,7 @@ export function createInferenceClient(
       backend !== "ollama" && /^(o[1-9]|gpt-5|gpt-4\.1)/.test(model);
     const tokenLimit = opts?.maxTokens || maxTokens;
 
-    const sanitizedMessages = sanitizeMessages(messages);
-    if (sanitizedMessages.length === 0) {
-      sanitizedMessages.push({ role: "user", content: "Continue." });
-    }
+    const sanitizedMessages = ensureNonEmptyChatMessages(sanitizeChatMessages(messages));
 
     const body: Record<string, unknown> = {
       model,
@@ -177,103 +175,6 @@ function formatMessage(
 }
 
 /**
- * Sanitize messages to prevent API rejections (MiniMax error 1214, etc.).
- *
- * - Drops orphaned tool messages whose tool_call_id doesn't match any
- *   preceding assistant tool_calls (happens after context compression).
- * - Coalesces consecutive system messages (some providers only allow one).
- * - Strips empty messages.
- */
-function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
-  // Track tool_call IDs in strict sequence to avoid sending out-of-order tool messages.
-  const seenToolCallIds = new Set<string>();
-  let activeToolCallIds = new Set<string>();
-  let toolCallCounter = 0;
-  const result: ChatMessage[] = [];
-  for (const msg of messages) {
-    if (msg.role === "system") {
-      const content = typeof msg.content === "string" ? msg.content : String(msg.content ?? "");
-      if (!content) continue;
-      const previous = result[result.length - 1];
-      if (previous?.role === "system") {
-        result[result.length - 1] = {
-          ...previous,
-          content: `${previous.content}\n\n${content}`,
-        };
-      } else {
-        result.push({
-          ...msg,
-          content,
-        });
-      }
-      continue;
-    }
-
-    if (msg.role === "assistant") {
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        // Once a new assistant tool call block appears, any unresolved older
-        // tool-call IDs are stale for strict OpenAI-compatible providers.
-        activeToolCallIds = new Set<string>();
-        const rewrittenToolCalls = msg.tool_calls.map((tc) => {
-          const rawId = typeof tc.id === "string" && tc.id.trim().length > 0
-            ? tc.id.trim()
-            : `auto_tool_call_${toolCallCounter++}`;
-          let normalizedId = rawId;
-          while (seenToolCallIds.has(normalizedId)) {
-            normalizedId = `${rawId}_${toolCallCounter++}`;
-          }
-          seenToolCallIds.add(normalizedId);
-          activeToolCallIds.add(normalizedId);
-          return {
-            ...tc,
-            id: normalizedId,
-          };
-        });
-        result.push({
-          ...msg,
-          content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
-          tool_calls: rewrittenToolCalls,
-        });
-        continue;
-      }
-
-      // Drop messages with no content and no tool_calls (empty messages)
-      if (!msg.content) continue;
-      result.push({
-        ...msg,
-        content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
-      });
-      continue;
-    }
-
-    if (msg.role === "tool") {
-      const toolCallId = typeof msg.tool_call_id === "string" ? msg.tool_call_id.trim() : "";
-      // Drop orphaned or stale tool results
-      if (!toolCallId || !activeToolCallIds.has(toolCallId) || !seenToolCallIds.has(toolCallId)) continue;
-      activeToolCallIds.delete(toolCallId);
-      result.push({
-        ...msg,
-        tool_call_id: toolCallId,
-        content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
-      });
-      continue;
-    }
-
-    if (!msg.content) continue;
-    result.push({
-      ...msg,
-      content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
-    });
-  }
-
-  while (result[0]?.role === "tool") {
-    result.shift();
-  }
-
-  return result;
-}
-
-/**
  * Resolve which backend to use for a model.
  * When InferenceRouter is available, it uses the model registry's provider field.
  * This function is kept for backward compatibility with direct inference calls.
@@ -340,8 +241,16 @@ async function chatViaOpenAiCompatible(params: {
 
   if (!resp.ok) {
     const text = await resp.text();
+    const structuredError = parseProviderError(text);
+    const providerCode = structuredError?.code;
+    const providerMessage = structuredError?.message ?? text;
+    if (resp.status === 400 && providerCode === "1214") {
+      throw new Error(
+        `Inference error (${params.backend}): 400 code 1214 invalid messages payload (model=${params.model}, endpoint=${endpoint}): ${providerMessage}`,
+      );
+    }
     throw new Error(
-      `Inference error (${params.backend}): ${resp.status}: ${text}`,
+      `Inference error (${params.backend}): ${resp.status}: ${providerMessage}`,
     );
   }
 
@@ -381,6 +290,21 @@ async function chatViaOpenAiCompatible(params: {
     usage,
     finishReason: choice.finish_reason || "stop",
   };
+}
+
+function parseProviderError(text: string): { code?: string; message?: string } | null {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const error = parsed.error;
+    if (!error || typeof error !== "object") return null;
+    const err = error as Record<string, unknown>;
+    return {
+      code: typeof err.code === "string" ? err.code : undefined,
+      message: typeof err.message === "string" ? err.message : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function chatViaAnthropic(params: {

@@ -127,6 +127,19 @@ describe("UnifiedInferenceClient", () => {
     expect(result.metadata.tier).toBe("reasoning");
   });
 
+  it("sanitizes invalid/orphaned messages before provider request", async () => {
+    const client = createClient();
+    queueCompletion({ content: "ok" });
+
+    await client.chat({
+      tier: "fast",
+      messages: [{ role: "tool", content: "{\"orphan\":true}", tool_call_id: "missing-tool-call-id" }],
+    });
+
+    const payload = mockState.calls[0] as { messages?: Array<{ role: string; content: string }> } | undefined;
+    expect(payload?.messages).toEqual([{ role: "user", content: "Continue." }]);
+  });
+
   it("chat uses survival tier resolution when credits are low", async () => {
     process.env.AUTOMATON_CREDITS_BALANCE = "500";
     const client = createClient();

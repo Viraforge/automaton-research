@@ -21,6 +21,7 @@ import type {
 import type { PolicyEngine } from "./policy-engine.js";
 import { sanitizeToolResult, sanitizeInput } from "./injection-defense.js";
 import { createLogger } from "../observability/logger.js";
+import { classifyExecTimeout } from "../orchestration/exec-timeout.js";
 
 const logger = createLogger("tools");
 
@@ -177,10 +178,11 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         try {
           result = await ctx.conway.exec(command, timeoutMs);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (/(timed out|timeout|etimedout)/i.test(message)) {
-            return `exec timeout: ${message}`;
+          const timeout = classifyExecTimeout({ error });
+          if (timeout.isTimeout && timeout.summary) {
+            return `exec timeout: ${timeout.summary}`;
           }
+          const message = error instanceof Error ? error.message : String(error);
           return `exec error: ${message}`;
         }
         if (
@@ -192,17 +194,24 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
             try {
               result = await ctx.conway.exec(fallbackCommand, timeoutMs);
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              if (/(timed out|timeout|etimedout)/i.test(message)) {
-                return `exec timeout: ${message}`;
+              const timeout = classifyExecTimeout({ error });
+              if (timeout.isTimeout && timeout.summary) {
+                return `exec timeout: ${timeout.summary}`;
               }
+              const message = error instanceof Error ? error.message : String(error);
               return `exec error: ${message}`;
             }
           }
         }
-        const timeoutOutput = `${result.stderr || ""}\n${result.stdout || ""}`.trim();
-        if (result.exitCode !== 0 && /(timed out|timeout|etimedout)/i.test(timeoutOutput)) {
-          return `exec timeout: ${timeoutOutput.slice(0, 240)}`;
+        const timeout = classifyExecTimeout({
+          result: {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          },
+        });
+        if (timeout.isTimeout && timeout.summary) {
+          return `exec timeout: ${timeout.summary}`;
         }
         // Sanitize output: strip any Discord webhook URLs that may leak through
         // stdout/stderr (e.g. from reading config files or logs). The agent must

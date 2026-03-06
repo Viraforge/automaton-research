@@ -1135,7 +1135,9 @@ async function createHealthMonitor(taskCtx: HeartbeatLegacyContext): Promise<Col
   const { SimpleAgentTracker, SimpleFundingProtocol } = await import("../orchestration/simple-tracker.js");
   const { HealthMonitor } = await import("../orchestration/health-monitor.js");
 
-  const tracker = new SimpleAgentTracker(taskCtx.db);
+  const tracker = new SimpleAgentTracker(taskCtx.db, {
+    workerLivenessTtlMs: taskCtx.config.orchestration?.workerLivenessTtlMs,
+  });
   const funding = new SimpleFundingProtocol(taskCtx.conway, taskCtx.identity, taskCtx.db, taskCtx.config.useSovereignProviders);
   const transport = new LocalDBTransport(taskCtx.db);
   const messaging = new ColonyMessaging(transport, taskCtx.db);

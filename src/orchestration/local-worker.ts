@@ -21,6 +21,7 @@ import { completeTask, failTask } from "./task-graph.js";
 import type { TaskNode, TaskResult } from "./task-graph.js";
 import type { Database } from "better-sqlite3";
 import type { ConwayClient } from "../types.js";
+import { classifyExecTimeout, isTimeoutLikeText } from "./exec-timeout.js";
 
 function truncateOutput(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
@@ -58,18 +59,6 @@ const MAX_TURNS = 25;
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 const WORKER_ISSUE_LAST_KEY = "orchestrator.worker_issue.last";
 const WORKER_ISSUE_ACTIVE_KEY = "orchestrator.worker_issue.active";
-
-function isTimeoutLikeError(message: string): boolean {
-  return /(timed out|timeout|etimedout)/i.test(message);
-}
-
-function timeoutSummaryFromOutput(stdout: string, stderr: string): string | null {
-  const stderrTrimmed = stderr.trim();
-  const stdoutTrimmed = stdout.trim();
-  if (isTimeoutLikeError(stderrTrimmed)) return stderrTrimmed.slice(0, 200);
-  if (isTimeoutLikeError(stdoutTrimmed)) return stdoutTrimmed.slice(0, 200);
-  return null;
-}
 
 // Minimal inference interface — works with both UnifiedInferenceClient and
 // an adapter around the main agent's InferenceClient.
@@ -231,7 +220,7 @@ export class LocalWorkerPool {
           continue;
         }
         this.persistWorkerIssue({
-          type: isTimeoutLikeError(msg) ? "inference_timeout" : "inference_failure",
+          type: isTimeoutLikeText(msg) ? "inference_timeout" : "inference_failure",
           workerId,
           taskId: task.id,
           summary: `Inference failed: ${msg}`,
@@ -438,63 +427,64 @@ RULES:
           // Try Conway API first, fall back to local shell
           try {
             const result = await this.config.conway.exec(command, timeoutMs);
-            const timeoutSummary = timeoutSummaryFromOutput(result.stdout ?? "", result.stderr ?? "");
-            if (result.exitCode !== 0 && timeoutSummary) {
+            const timeout = classifyExecTimeout({ result });
+            if (timeout.isTimeout && timeout.summary) {
               this.persistWorkerIssue({
                 type: "exec_timeout",
                 workerId,
                 taskId,
-                summary: `exec timeout (${timeoutMs}ms): ${timeoutSummary}`,
+                summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
                 command,
                 isPermanent: false,
               });
-              return `exec timeout: ${timeoutSummary}`;
+              return `exec timeout: ${timeout.summary}`;
             }
             const stdout = truncateOutput(result.stdout ?? "", 16_000);
             const stderr = truncateOutput(result.stderr ?? "", 4000);
             return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (isTimeoutLikeError(message)) {
+            const timeout = classifyExecTimeout({ error });
+            if (timeout.isTimeout && timeout.summary) {
               this.persistWorkerIssue({
                 type: "exec_timeout",
                 workerId,
                 taskId,
-                summary: `exec timeout (${timeoutMs}ms): ${message}`,
+                summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
                 command,
                 isPermanent: false,
               });
-              return `exec timeout: ${message}`;
+              return `exec timeout: ${timeout.summary}`;
             }
             try {
               const result = await localExec(command, timeoutMs);
-              const timeoutSummary = timeoutSummaryFromOutput(result.stdout, result.stderr);
-              if (result.exitCode !== 0 && timeoutSummary) {
+              const timeout = classifyExecTimeout({ result });
+              if (timeout.isTimeout && timeout.summary) {
                 this.persistWorkerIssue({
                   type: "exec_timeout",
                   workerId,
                   taskId,
-                  summary: `exec timeout (${timeoutMs}ms): ${timeoutSummary}`,
+                  summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
                   command,
                   isPermanent: false,
                 });
-                return `exec timeout: ${timeoutSummary}`;
+                return `exec timeout: ${timeout.summary}`;
               }
               const stdout = truncateOutput(result.stdout, 16_000);
               const stderr = truncateOutput(result.stderr, 4000);
               return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
-              if (isTimeoutLikeError(message)) {
+              const timeout = classifyExecTimeout({ error });
+              if (timeout.isTimeout && timeout.summary) {
                 this.persistWorkerIssue({
                   type: "exec_timeout",
                   workerId,
                   taskId,
-                  summary: `exec timeout (${timeoutMs}ms): ${message}`,
+                  summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
                   command,
                   isPermanent: false,
                 });
-                return `exec timeout: ${message}`;
+                return `exec timeout: ${timeout.summary}`;
               }
               return `exec error: ${message}`;
             }

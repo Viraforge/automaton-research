@@ -25,4 +25,11 @@ describe("orchestration/time", () => {
     const stale = new Date(now - CHILD_LIVENESS_STALE_MS - 1).toISOString();
     expect(isChildRecent(stale, null, now)).toBe(false);
   });
+
+  it("supports ttl override", () => {
+    const now = Date.parse("2026-03-05T12:30:00Z");
+    const fortyMinutesAgo = new Date(now - (40 * 60_000)).toISOString();
+    expect(isChildRecent(fortyMinutesAgo, null, now, 60 * 60_000)).toBe(true);
+    expect(isChildRecent(fortyMinutesAgo, null, now, 10 * 60_000)).toBe(false);
+  });
 });

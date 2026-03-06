@@ -149,6 +149,26 @@ describe("orchestration/simple-tracker", () => {
       const idle = tracker.getIdle();
       expect(idle.map((child) => child.address)).toContain("0xfresh");
     });
+
+    it("honors configured liveness ttl override", () => {
+      insertChild(db, "c1", "Older", "0xolder", "running");
+      const fortyMinutesAgo = new Date(Date.now() - 40 * 60_000).toISOString();
+      db.prepare("UPDATE children SET created_at = ?, last_checked = ? WHERE id = ?").run(
+        fortyMinutesAgo,
+        fortyMinutesAgo,
+        "c1",
+      );
+
+      const strictTracker = new SimpleAgentTracker(mockDb, {
+        workerLivenessTtlMs: 10 * 60_000,
+      });
+      const relaxedTracker = new SimpleAgentTracker(mockDb, {
+        workerLivenessTtlMs: 60 * 60_000,
+      });
+
+      expect(strictTracker.getIdle().map((child) => child.address)).not.toContain("0xolder");
+      expect(relaxedTracker.getIdle().map((child) => child.address)).toContain("0xolder");
+    });
   });
 
   describe("getBestForTask", () => {

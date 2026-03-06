@@ -16,8 +16,10 @@ export function isChildRecent(
   lastChecked: string | null | undefined,
   createdAt: string | null | undefined,
   nowMs: number = Date.now(),
+  staleMs: number = CHILD_LIVENESS_STALE_MS,
 ): boolean {
   const latest = parseUtcTimestamp(lastChecked) ?? parseUtcTimestamp(createdAt);
   if (latest === null) return false;
-  return nowMs - latest <= CHILD_LIVENESS_STALE_MS;
+  const thresholdMs = Number.isFinite(staleMs) ? Math.max(1, Math.floor(staleMs)) : CHILD_LIVENESS_STALE_MS;
+  return nowMs - latest <= thresholdMs;
 }

@@ -78,6 +78,13 @@ export interface AutomatonConfig {
   socialProtocolVersion?: "conway" | "automaton";
   /** Discord webhook URL for heartbeat status updates. Also reads DISCORD_WEBHOOK_URL env var. */
   discordWebhookUrl?: string;
+  /** Orchestration tuning knobs for worker liveness and reassignment. */
+  orchestration?: {
+    /** Worker row is considered stale when last_checked/created_at exceeds this age. Default: 30m. */
+    workerLivenessTtlMs?: number;
+    /** Dead-worker quarantine duration before eligibility for reassignment. Default: 30m. */
+    workerQuarantineTtlMs?: number;
+  };
 }
 
 export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {

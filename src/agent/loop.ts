@@ -234,7 +234,9 @@ export async function runAgentLoop(
       const registry = ProviderRegistry.fromConfig(providersPath);
 
       const unifiedInference = new UnifiedInferenceClient(registry);
-      const agentTracker = new SimpleAgentTracker(db);
+      const agentTracker = new SimpleAgentTracker(db, {
+        workerLivenessTtlMs: config.orchestration?.workerLivenessTtlMs,
+      });
       const funding = new SimpleFundingProtocol(conway, identity, db, config.useSovereignProviders);
       const messaging = new ColonyMessaging(
         new LocalDBTransport(db),
@@ -707,8 +709,13 @@ export async function runAgentLoop(
             `[TOOL RESULT] ${tc.function.name}: ${result.error ? `ERROR: ${result.error}` : result.result.slice(0, 200)}`,
           );
 
-          // Circuit breaker: track per-tool failure counts
-          if (result.error) {
+          // Circuit breaker: track per-tool failure counts. The built-in exec
+          // tool reports runtime failures as a canonical result string
+          // ("exec error: ...") rather than throwing.
+          const isExecStringFailure =
+            tc.function.name === "exec"
+            && /^exec error:/i.test((result.result || "").trim());
+          if (result.error || isExecStringFailure) {
             const count = (failedToolCounts.get(tc.function.name) ?? 0) + 1;
             failedToolCounts.set(tc.function.name, count);
             if (count >= 3) {

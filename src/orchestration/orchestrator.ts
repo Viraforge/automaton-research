@@ -53,7 +53,9 @@ const ORCHESTRATOR_PLANNER_RUNTIME_ISSUE_KEY = "orchestrator.planner_runtime_iss
 const ORCHESTRATOR_CHILD_FAILURES_KEY = "orchestrator.child_failures";
 const DEFAULT_TASK_FUNDING_CENTS = 25;
 const DEFAULT_MAX_REPLANS = 3;
-const DEAD_WORKER_QUARANTINE_MS = 30 * 60_000;
+const DEFAULT_ORCHESTRATOR_TASK_TIMEOUT_MS = 300_000;
+const DEFAULT_WORKER_LIVENESS_TTL_MS = 30 * 60_000;
+const DEFAULT_WORKER_QUARANTINE_TTL_MS = 30 * 60_000;
 const EXECUTION_STALL_THRESHOLD_MS = 10 * 60_000;
 
 type ExecutionPhase =
@@ -394,8 +396,8 @@ export class Orchestrator {
         priority: 50,
         dependencies: [],
         result: null,
-          estimatedCostCents: 200,
-          timeoutMs: 300_000,
+        estimatedCostCents: 200,
+        timeoutMs: this.getDefaultTaskTimeoutMs(),
       },
     ]);
 
@@ -448,7 +450,7 @@ export class Orchestrator {
           dependencies: [],
           estimatedCostCents: 200,
           priority: 50,
-          timeoutMs: 300_000,
+          timeoutMs: this.getDefaultTaskTimeoutMs(),
         }],
         risks: ["Planner unavailable — executing without decomposition"],
         estimatedTotalCostCents: 200,
@@ -468,7 +470,7 @@ export class Orchestrator {
           dependencies: [],
           estimatedCostCents: 200,
           priority: 50,
-          timeoutMs: 300_000,
+          timeoutMs: this.getDefaultTaskTimeoutMs(),
         }],
       };
     }
@@ -770,7 +772,7 @@ export class Orchestrator {
           dependencies: [],
           estimatedCostCents: 200,
           priority: 50,
-          timeoutMs: 300_000,
+          timeoutMs: this.getDefaultTaskTimeoutMs(),
         }],
         risks: ["Replanner unavailable — re-executing without decomposition"],
         estimatedTotalCostCents: 200,
@@ -789,7 +791,7 @@ export class Orchestrator {
           dependencies: [],
           estimatedCostCents: 200,
           priority: 50,
-          timeoutMs: 300_000,
+          timeoutMs: this.getDefaultTaskTimeoutMs(),
         }],
       };
     }
@@ -946,7 +948,12 @@ export class Orchestrator {
     const candidate = rows.find((row) =>
       !idleAddresses.has(row.address)
       && !this.isWorkerQuarantined(row.address)
-      && isChildRecent(row.last_checked, row.created_at));
+      && isChildRecent(
+        row.last_checked,
+        row.created_at,
+        Date.now(),
+        this.getWorkerLivenessTtlMs(),
+      ));
     if (!candidate) {
       return null;
     }
@@ -1081,9 +1088,23 @@ export class Orchestrator {
     return Math.max(0, Math.floor(configured));
   }
 
+  private getDefaultTaskTimeoutMs(): number {
+    return DEFAULT_ORCHESTRATOR_TASK_TIMEOUT_MS;
+  }
+
+  private getWorkerLivenessTtlMs(): number {
+    const configured = this.params.config?.orchestration?.workerLivenessTtlMs;
+    return normalizeTtlMs(configured, DEFAULT_WORKER_LIVENESS_TTL_MS);
+  }
+
+  private getWorkerQuarantineTtlMs(): number {
+    const configured = this.params.config?.orchestration?.workerQuarantineTtlMs;
+    return normalizeTtlMs(configured, DEFAULT_WORKER_QUARANTINE_TTL_MS);
+  }
+
   private rememberDeadWorker(address: string, taskId: string, reason: string): void {
     const now = new Date();
-    const until = new Date(now.getTime() + DEAD_WORKER_QUARANTINE_MS).toISOString();
+    const until = new Date(now.getTime() + this.getWorkerQuarantineTtlMs()).toISOString();
     const fingerprint = workerFingerprint(address);
     const previous = this.loadDeadWorkers().filter((worker) => worker.address !== address);
     const next: DeadWorkerRecord[] = [
@@ -1105,6 +1126,8 @@ export class Orchestrator {
   private isWorkerQuarantined(address: string): boolean {
     const now = Date.now();
     const candidateFingerprint = workerFingerprint(address);
+    // Quarantine release policy: rows expire strictly by `until`. Eligibility
+    // for assignment is determined later by normal liveness checks.
     const active = this.loadDeadWorkers().filter((worker) => {
       const untilAt = Date.parse(worker.until);
       return Number.isFinite(untilAt) && untilAt > now;
@@ -1292,6 +1315,14 @@ function plannerOutputToTasks(goalId: string, output: PlannerOutput): DecomposeT
     estimatedCostCents: task.estimatedCostCents,
     timeoutMs: task.timeoutMs,
   }));
+}
+
+function normalizeTtlMs(value: unknown, fallbackMs: number): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallbackMs;
+  }
+  return Math.max(1_000, Math.floor(numeric));
 }
 
 function goalRowToGoal(goal: GoalRow): Goal {

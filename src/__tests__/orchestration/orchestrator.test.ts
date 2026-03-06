@@ -367,6 +367,88 @@ describe("orchestration/Orchestrator", () => {
       expect(quarantine?.value).toContain(deadWorker);
     });
 
+    it("re-allows worker assignment after quarantine expiry", async () => {
+      const goalId = insertGoal(db, { status: "active" });
+      const deadWorker = "local://dead-worker";
+      insertTask(db, {
+        goalId,
+        status: "pending",
+      });
+      setOrchestratorState(db, {
+        phase: "executing",
+        goalId,
+        replanCount: 0,
+        failedTaskId: null,
+        failedError: null,
+      });
+      db.prepare(
+        "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+      ).run(
+        "orchestrator.dead_workers",
+        JSON.stringify([{
+          address: deadWorker,
+          fingerprint: "local",
+          taskId: "old-task",
+          reason: "stale-assignment",
+          until: new Date(Date.now() - 1_000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        }]),
+      );
+
+      const agentTracker = makeAgentTracker({
+        getIdle: vi.fn().mockReturnValue([
+          { address: deadWorker, name: "dead", role: "generalist", status: "running" },
+        ]),
+      });
+
+      const orc = makeOrchestrator(db, { agentTracker });
+      await orc.tick();
+
+      const assigned = db.prepare(
+        "SELECT assigned_to FROM task_graph WHERE goal_id = ? AND status = 'assigned' LIMIT 1",
+      ).get(goalId) as { assigned_to: string | null } | undefined;
+      expect(assigned?.assigned_to).toBe(deadWorker);
+    });
+
+    it("uses configured quarantine ttl when recording dead worker", async () => {
+      const goalId = insertGoal(db, { status: "active" });
+      const deadWorker = "local://dead-worker";
+      insertTask(db, {
+        goalId,
+        status: "assigned",
+        assignedTo: deadWorker,
+      });
+      setOrchestratorState(db, {
+        phase: "executing",
+        goalId,
+        replanCount: 0,
+        failedTaskId: null,
+        failedError: null,
+      });
+
+      const orc = makeOrchestrator(db, {
+        isWorkerAlive: (address: string) => address !== deadWorker,
+        config: {
+          orchestration: {
+            workerQuarantineTtlMs: 1_000,
+          },
+        },
+      });
+      const startedAt = Date.now();
+      await orc.tick();
+
+      const row = db
+        .prepare("SELECT value FROM kv WHERE key = 'orchestrator.dead_workers'")
+        .get() as { value: string } | undefined;
+      expect(row?.value).toBeDefined();
+      const parsed = JSON.parse(row!.value) as Array<{ address: string; until: string }>;
+      const entry = parsed.find((item) => item.address === deadWorker);
+      expect(entry).toBeDefined();
+      const untilMs = Date.parse(entry!.until);
+      expect(untilMs - startedAt).toBeGreaterThan(0);
+      expect(untilMs - startedAt).toBeLessThanOrEqual(5_000);
+    });
+
     it("plan_review with plan in KV auto-approves (auto mode) and transitions to executing", async () => {
       const goalId = insertGoal(db);
       insertTask(db, { goalId, title: "task-one", description: "Do something" });

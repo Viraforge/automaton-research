@@ -12,7 +12,10 @@ import { isChildRecent } from "./time.js";
 const IDLE_STATUSES = new Set<ChildStatus>(["running", "healthy"]);
 
 export class SimpleAgentTracker implements AgentTracker {
-  constructor(private readonly db: AutomatonDatabase) {}
+  constructor(
+    private readonly db: AutomatonDatabase,
+    private readonly options: { workerLivenessTtlMs?: number } = {},
+  ) {}
 
   getIdle(): { address: string; name: string; role: string; status: string }[] {
     const assignedRows = this.db.raw.prepare(
@@ -46,7 +49,12 @@ export class SimpleAgentTracker implements AgentTracker {
       .filter((child) =>
         IDLE_STATUSES.has(child.status as ChildStatus)
         && !assignedAddresses.has(child.address)
-        && isChildRecent(child.last_checked, child.created_at))
+        && isChildRecent(
+          child.last_checked,
+          child.created_at,
+          Date.now(),
+          this.options.workerLivenessTtlMs,
+        ))
       .map((child) => ({
         address: child.address,
         name: child.name,
