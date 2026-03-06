@@ -74,6 +74,10 @@ jobs:
               echo "3b) Testing Caddy config..."
               sudo caddy validate --config /etc/caddy/Caddyfile || true
 
+              echo "3c) Clearing ACME cache (to reset failed attempts)..."
+              sudo rm -rf /var/lib/caddy/.local/share/caddy/acme/
+              echo "✅ ACME cache cleared"
+
               echo "4) Reloading Caddy..."
               sudo systemctl reload caddy
 
