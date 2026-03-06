@@ -52,16 +52,17 @@ jobs:
             }
             CADDY_CONF
 
-              echo "2) Updating Caddyfile (removing duplicates)..."
-              # Remove any existing relay config blocks and imports to avoid duplicates
-              # This handles relay.compintel.co blocks and any import of relay files
+              echo "2) Updating Caddyfile (managed import, no duplicates)..."
+              # Remove direct relay site lines and old relay imports, then add one managed import.
               sudo sed -i '/relay\.compintel\.co/d' /etc/caddy/Caddyfile
               sudo sed -i '/Caddyfile\.relay/d' /etc/caddy/Caddyfile
-              sudo sed -i '/^import.*relay/d' /etc/caddy/Caddyfile
-              # Remove any blank lines at end to keep clean
-              sudo sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' /etc/caddy/Caddyfile
-              # Add the import
-              echo 'import /etc/caddy/Caddyfile.relay' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+              sudo sed -i '/BEGIN AUTOMATON RELAY IMPORT/,/END AUTOMATON RELAY IMPORT/d' /etc/caddy/Caddyfile
+              {
+                echo ""
+                echo "# BEGIN AUTOMATON RELAY IMPORT"
+                echo "import /etc/caddy/Caddyfile.relay"
+                echo "# END AUTOMATON RELAY IMPORT"
+              } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
 
               echo "3) Diagnostics - Checking Caddyfile..."
               echo "--- Last 15 lines of Main Caddyfile ---"
@@ -74,10 +75,6 @@ jobs:
               echo "3b) Testing Caddy config..."
               sudo caddy validate --config /etc/caddy/Caddyfile || true
 
-              echo "3c) Clearing ACME cache (to reset failed attempts)..."
-              sudo rm -rf /var/lib/caddy/.local/share/caddy/acme/
-              echo "✅ ACME cache cleared"
-
               echo "4) Reloading Caddy..."
               sudo systemctl reload caddy
 
@@ -86,6 +83,14 @@ jobs:
               echo "5) Checking Caddy status..."
               systemctl is-active caddy >/dev/null && echo "✅ Caddy is running" || echo "⚠️ Caddy not running"
               sudo systemctl status caddy --no-pager | head -5
+
+              echo ""
+              echo "6) Checking listeners..."
+              sudo ss -tulpn | grep -E ':(80|443)\b' || true
+
+              echo ""
+              echo "7) Checking cert storage..."
+              sudo ls -la /var/lib/caddy/.local/share/caddy/certificates/ 2>/dev/null || true
 
               echo ""
               echo "=== Verification ==="

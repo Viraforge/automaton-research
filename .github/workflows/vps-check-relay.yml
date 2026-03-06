@@ -41,7 +41,7 @@ jobs:
             systemctl status nginx --no-pager -l 2>/dev/null | head -20 || echo "nginx not present or not active"
             echo ""
             echo "--- listening sockets (:80/:443/:8787) ---"
-            ss -tulpn 2>/dev/null | rg ':(80|443|8787)\b' || true
+            ss -tulpn 2>/dev/null | grep -E ':(80|443|8787)\b' || true
             echo ""
             echo "--- firewall ---"
             ufw status 2>/dev/null || echo "ufw not installed"
