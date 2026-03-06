@@ -229,6 +229,55 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
     }
   });
 
+  it("drops assistant tool-call turns when matching tool results are incomplete", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_incomplete_tools",
+          model: "glm-5",
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "glm-5",
+        maxTokens: 64,
+      });
+
+      await client.chat([
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            { id: "call_a", type: "function", function: { name: "a", arguments: "{}" } },
+            { id: "call_b", type: "function", function: { name: "b", arguments: "{}" } },
+          ],
+        },
+        { role: "tool", content: "{\"ok\":true}", tool_call_id: "call_a" },
+        { role: "user", content: "continue" },
+      ]);
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const payload = JSON.parse(String(requestInit?.body || "{}")) as {
+        messages?: Array<{ role?: string; tool_calls?: unknown[] }>;
+      };
+      expect((payload.messages || []).some((m) => m.role === "assistant" && Array.isArray(m.tool_calls))).toBe(false);
+      expect((payload.messages || []).some((m) => m.role === "tool")).toBe(false);
+      expect((payload.messages || []).some((m) => m.role === "user")).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("coalesces consecutive system messages before BYOK request", async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(

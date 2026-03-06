@@ -1162,9 +1162,8 @@ function clearTurnHistoryForRecovery(db: AutomatonDatabase, config: AutomatonCon
 }
 
 function isByokInvalidMessages1214(message: string): boolean {
-  return /\b400\b/.test(message)
-    && /\b1214\b/.test(message)
-    && /invalid messages payload|messages parameter is illegal/i.test(message);
+  return /\b1214\b/.test(message)
+    && /invalid messages payload|messages parameter is illegal|invalid messages?/i.test(message);
 }
 
 function isInferenceRateLimit429(message: string): boolean {

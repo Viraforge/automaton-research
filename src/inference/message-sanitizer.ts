@@ -77,11 +77,8 @@ export function sanitizeChatMessages(messages: ChatMessage[]): ChatMessage[] {
     result.push({ ...msg, content });
   }
 
-  while (result[0]?.role === "tool") {
-    result.shift();
-  }
-
-  return result;
+  while (result[0]?.role === "tool") result.shift();
+  return enforceAssistantToolPairing(result);
 }
 
 export function ensureNonEmptyChatMessages(messages: ChatMessage[]): ChatMessage[] {
@@ -93,4 +90,48 @@ export function ensureNonEmptyChatMessages(messages: ChatMessage[]): ChatMessage
 
 function normalizeContent(content: unknown): string {
   return typeof content === "string" ? content : String(content ?? "");
+}
+
+function enforceAssistantToolPairing(messages: ChatMessage[]): ChatMessage[] {
+  const paired: ChatMessage[] = [];
+
+  for (let i = 0; i < messages.length;) {
+    const current = messages[i];
+    if (current?.role !== "assistant" || !Array.isArray(current.tool_calls) || current.tool_calls.length === 0) {
+      if (current?.role !== "tool") paired.push(current);
+      i++;
+      continue;
+    }
+
+    const expectedIds = new Set(
+      current.tool_calls
+        .map((tc) => (typeof tc.id === "string" ? tc.id.trim() : ""))
+        .filter((id) => id.length > 0),
+    );
+    if (expectedIds.size === 0) {
+      i++;
+      continue;
+    }
+
+    const matchedToolMessages: ChatMessage[] = [];
+    const seenInBlock = new Set<string>();
+    let j = i + 1;
+    while (j < messages.length && messages[j]?.role === "tool") {
+      const candidate = messages[j];
+      const candidateId = typeof candidate.tool_call_id === "string" ? candidate.tool_call_id.trim() : "";
+      if (expectedIds.has(candidateId) && !seenInBlock.has(candidateId)) {
+        seenInBlock.add(candidateId);
+        matchedToolMessages.push(candidate);
+      }
+      j++;
+    }
+
+    // Keep assistant tool-call turns only when every declared tool call has a matching tool result.
+    if (seenInBlock.size === expectedIds.size) {
+      paired.push(current, ...matchedToolMessages);
+    }
+    i = j;
+  }
+
+  return paired;
 }

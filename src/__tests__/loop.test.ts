@@ -282,6 +282,37 @@ describe("Agent Loop", () => {
     expect(lastError.recovery).toBe("reset_turn_history_1214");
   });
 
+  it("1214 recovery still triggers when provider omits explicit 400 token", async () => {
+    db.insertTurn({
+      id: "stale-turn-1214-variant",
+      timestamp: new Date().toISOString(),
+      state: "running",
+      thinking: "stale",
+      toolCalls: [],
+      tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      costCents: 0,
+    });
+    expect(db.getTurnCount()).toBe(1);
+
+    const failingInference = new MockInferenceClient([]);
+    failingInference.chat = async () => {
+      throw new Error("Inference error (byok): code=1214 The messages parameter is illegal.");
+    };
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference: failingInference,
+    });
+
+    const lastError = JSON.parse(db.getKV("last_error") || "{}");
+    expect(db.getTurnCount()).toBe(0);
+    expect(db.getAgentState()).toBe("sleeping");
+    expect(lastError.recovery).toBe("reset_turn_history_1214");
+  });
+
   it("429 limit-exhausted errors back off without hitting fatal loop", async () => {
     const resetAtMs = Date.now() + 45 * 60_000;
     const resetAt = new Date(resetAtMs).toISOString().replace("T", " ").slice(0, 19);
