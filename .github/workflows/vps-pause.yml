@@ -1,0 +1,23 @@
+name: VPS Pause Bot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pause:
+    name: Stop local-connie service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop service via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -euo pipefail
+            sudo systemctl stop local-connie.service || systemctl stop local-connie.service
+            sleep 2
+            systemctl is-active local-connie.service || true
+            systemctl status local-connie.service --no-pager -n 20 || true
