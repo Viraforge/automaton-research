@@ -249,6 +249,66 @@ describe("Agent Loop", () => {
     consoleSpy3.mockRestore();
   });
 
+  it("1214 invalid-messages triggers immediate turn-history reset", async () => {
+    db.insertTurn({
+      id: "stale-turn-1214",
+      timestamp: new Date().toISOString(),
+      state: "running",
+      thinking: "stale",
+      toolCalls: [],
+      tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      costCents: 0,
+    });
+    expect(db.getTurnCount()).toBe(1);
+
+    const failingInference = new MockInferenceClient([]);
+    failingInference.chat = async () => {
+      throw new Error(
+        "Inference error (byok): 400 code 1214 invalid messages payload (model=glm-5, endpoint=https://api.z.ai/api/coding/paas/v4/chat/completions): The messages parameter is illegal.",
+      );
+    };
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference: failingInference,
+    });
+
+    const lastError = JSON.parse(db.getKV("last_error") || "{}");
+    expect(db.getTurnCount()).toBe(0);
+    expect(db.getAgentState()).toBe("sleeping");
+    expect(lastError.recovery).toBe("reset_turn_history_1214");
+  });
+
+  it("429 limit-exhausted errors back off without hitting fatal loop", async () => {
+    const resetAtMs = Date.now() + 45 * 60_000;
+    const resetAt = new Date(resetAtMs).toISOString().replace("T", " ").slice(0, 19);
+    const failingInference = new MockInferenceClient([]);
+    failingInference.chat = async () => {
+      throw new Error(
+        `Inference error (byok): 429: Weekly/Monthly Limit Exhausted. Your limit will reset at ${resetAt}`,
+      );
+    };
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference: failingInference,
+    });
+
+    const sleepUntilRaw = db.getKV("sleep_until");
+    const lastError = JSON.parse(db.getKV("last_error") || "{}");
+    expect(sleepUntilRaw).toBeDefined();
+    const sleepUntilMs = Date.parse(sleepUntilRaw!);
+    expect(sleepUntilMs - Date.now()).toBeGreaterThan(25 * 60_000);
+    expect(lastError.recovery).toBe("inference_429_backoff");
+    expect(lastError.message).not.toContain("[FATAL]");
+  });
+
   it("financial state cached fallback on API failure", async () => {
     // Pre-cache a known balance
     db.setKV("last_known_balance", JSON.stringify({ creditsCents: 5000, usdcBalance: 1.0 }));

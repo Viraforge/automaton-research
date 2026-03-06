@@ -77,6 +77,10 @@ const INFERENCE_RUNTIME_KEYS_KEY = "inference.runtime_keys";
 const DISCOVER_AGENTS_COOLDOWN_KEY = "discover_agents.cooldown_until";
 const MAX_DISCOVER_IDLE_TURNS = 2;
 const DISCOVER_AGENTS_COOLDOWN_MS = 10 * 60_000;
+const INFERENCE_429_BACKOFF_MS_KEY = "inference.429_backoff_ms";
+const INFERENCE_429_MIN_BACKOFF_MS = 5 * 60_000;
+const INFERENCE_429_MAX_BACKOFF_MS = 60 * 60_000;
+const INFERENCE_429_RESET_CAP_MS = 24 * 60 * 60_000;
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
@@ -1037,6 +1041,7 @@ export async function runAgentLoop(
       }
 
       consecutiveErrors = 0;
+      db.deleteKV(INFERENCE_429_BACKOFF_MS_KEY);
       // Mark error resolved (don't delete — heartbeat needs to see it)
       const prevError = db.getKV("last_error");
       if (prevError) {
@@ -1076,25 +1081,53 @@ export async function runAgentLoop(
         }
       }
 
+      const errorMessage = err?.message ?? String(err);
+      if (isByokInvalidMessages1214(errorMessage)) {
+        log(config, "[RECOVERY] Detected BYOK 1214 invalid-messages response. Resetting turn history immediately.");
+        clearTurnHistoryForRecovery(db, config);
+        consecutiveErrors = 0;
+        db.setKV("last_error", JSON.stringify({
+          message: String(errorMessage).slice(0, 500),
+          consecutiveErrors: 1,
+          forcedSleep: true,
+          recovery: "reset_turn_history_1214",
+          timestamp: new Date().toISOString(),
+        }));
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        db.setKV("sleep_until", new Date(Date.now() + 120_000).toISOString());
+        running = false;
+        continue;
+      }
+
+      if (isInferenceRateLimit429(errorMessage)) {
+        const sleepMs = computeInference429SleepMs(db, errorMessage);
+        log(
+          config,
+          `[RECOVERY] Detected inference 429 rate limit. Backing off for ${Math.ceil(sleepMs / 60_000)} minute(s).`,
+        );
+        consecutiveErrors = 0;
+        db.setKV("last_error", JSON.stringify({
+          message: String(errorMessage).slice(0, 500),
+          consecutiveErrors: 1,
+          forcedSleep: true,
+          recovery: "inference_429_backoff",
+          timestamp: new Date().toISOString(),
+        }));
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        db.setKV("sleep_until", new Date(Date.now() + sleepMs).toISOString());
+        running = false;
+        continue;
+      }
+
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         log(
           config,
           `[FATAL] ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Sleeping.`,
         );
 
-        // Clear ALL turns to break error 1214 crash loop.
-        // MiniMax rejects messages with structural issues (orphaned tool results,
-        // consecutive assistant messages from self-generated turns). A full context
-        // reset is the only reliable recovery — the system prompt + SOUL.md gives
-        // the agent everything it needs to resume productively.
-        // Delete tool_calls first (FK: tool_calls.turn_id → turns.id).
-        try {
-          db.raw.prepare("DELETE FROM tool_calls").run();
-          db.raw.prepare("DELETE FROM turns").run();
-          log(config, "[FATAL] Cleared all turns for clean restart.");
-        } catch (e) {
-          log(config, `[FATAL] Failed to clear turns: ${e}`);
-        }
+        clearTurnHistoryForRecovery(db, config);
 
         // Update error state with forced sleep flag for heartbeat reporting
         db.setKV("last_error", JSON.stringify({
@@ -1115,6 +1148,66 @@ export async function runAgentLoop(
   }
 
   log(config, `[LOOP END] Agent loop finished. State: ${db.getAgentState()}`);
+}
+
+function clearTurnHistoryForRecovery(db: AutomatonDatabase, config: AutomatonConfig): void {
+  // Delete tool_calls first (FK: tool_calls.turn_id → turns.id).
+  try {
+    db.raw.prepare("DELETE FROM tool_calls").run();
+    db.raw.prepare("DELETE FROM turns").run();
+    log(config, "[FATAL] Cleared all turns for clean restart.");
+  } catch (e) {
+    log(config, `[FATAL] Failed to clear turns: ${e}`);
+  }
+}
+
+function isByokInvalidMessages1214(message: string): boolean {
+  return /\b400\b/.test(message)
+    && /\b1214\b/.test(message)
+    && /invalid messages payload|messages parameter is illegal/i.test(message);
+}
+
+function isInferenceRateLimit429(message: string): boolean {
+  return /Inference error/i.test(message) && /\b429\b/.test(message);
+}
+
+function computeInference429SleepMs(db: AutomatonDatabase, message: string): number {
+  const explicitReset = parseProviderResetTimestamp(message);
+  if (explicitReset !== null) {
+    const deltaMs = Math.max(INFERENCE_429_MIN_BACKOFF_MS, explicitReset - Date.now());
+    const bounded = Math.min(INFERENCE_429_RESET_CAP_MS, deltaMs);
+    db.deleteKV(INFERENCE_429_BACKOFF_MS_KEY);
+    return bounded;
+  }
+
+  const previous = Number.parseInt(db.getKV(INFERENCE_429_BACKOFF_MS_KEY) || "", 10);
+  const nextBackoffMs = Number.isFinite(previous) && previous > 0
+    ? Math.min(previous * 2, INFERENCE_429_MAX_BACKOFF_MS)
+    : INFERENCE_429_MIN_BACKOFF_MS;
+  db.setKV(INFERENCE_429_BACKOFF_MS_KEY, String(nextBackoffMs));
+  return nextBackoffMs;
+}
+
+function parseProviderResetTimestamp(message: string): number | null {
+  const isoMatch = message.match(/\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\b/);
+  if (isoMatch) {
+    const parsed = Date.parse(isoMatch[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  const plainMatch = message.match(/\b(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\b/);
+  if (!plainMatch) return null;
+
+  const [, y, m, d, hh, mm, ss] = plainMatch;
+  const utcMs = Date.UTC(
+    Number(y),
+    Number(m) - 1,
+    Number(d),
+    Number(hh),
+    Number(mm),
+    Number(ss),
+  );
+  return Number.isFinite(utcMs) ? utcMs : null;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
