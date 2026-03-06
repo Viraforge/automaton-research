@@ -199,6 +199,34 @@ describe("spawnChild", () => {
 
     expect(deleteSpy).not.toHaveBeenCalled();
   });
+
+  it("uses runtime.maxChildren KV gate when present", async () => {
+    db.setKV("runtime.maxChildren", "0");
+    const createSandboxSpy = vi.spyOn(conway, "createSandbox");
+
+    await expect(spawnChild(conway, identity, db, genesis))
+      .rejects.toThrow("Cannot spawn: already at max children (0)");
+    expect(createSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses runtime.childSandboxMemoryMb KV for sandbox sizing", async () => {
+    db.setKV("runtime.maxChildren", "10");
+    db.setKV("runtime.childSandboxMemoryMb", "2048");
+
+    vi.spyOn(conway, "exec").mockImplementation(async (command: string) => {
+      if (command.includes("--init")) {
+        return { stdout: `Wallet initialized: ${validAddress}`, stderr: "", exitCode: 0 };
+      }
+      return { stdout: "ok", stderr: "", exitCode: 0 };
+    });
+    const createSandboxSpy = vi.spyOn(conway, "createSandbox");
+
+    await spawnChild(conway, identity, db, genesis);
+
+    const firstCall = createSandboxSpy.mock.calls[0]?.[0] as { memoryMb?: number; vcpu?: number } | undefined;
+    expect(firstCall?.memoryMb).toBe(2048);
+    expect(firstCall?.vcpu).toBe(2);
+  });
 });
 
 // ─── SandboxCleanup ──────────────────────────────────────────

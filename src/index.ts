@@ -190,6 +190,10 @@ async function run(): Promise<void> {
   // Initialize database
   const dbPath = resolvePath(config.dbPath);
   const db = createDatabase(dbPath);
+  // Attach runtime config snapshot for modules that consume db-backed settings.
+  (db as any).config = config;
+  db.setKV("runtime.maxChildren", String(config.maxChildren ?? 3));
+  db.setKV("runtime.childSandboxMemoryMb", String(config.childSandboxMemoryMb ?? 1024));
 
   // Persist createdAt: only set if not already stored (never overwrite)
   const existingCreatedAt = db.getIdentity("createdAt");
