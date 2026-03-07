@@ -43,6 +43,7 @@ jobs:
             SOCIAL_RELAY_URL='${{ secrets.SOCIAL_RELAY_URL }}'
             OPERATOR_TARGETS_JSON='${{ secrets.OPERATOR_TARGETS_JSON }}'
             TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
+            PROVIDER_ENV="$CONNIE_HOME/.automaton/.env"
 
             CONFIG="$CONFIG" \
             VULTR_API_KEY="$VULTR_API_KEY" \
@@ -112,6 +113,24 @@ jobs:
             else
               echo "OPERATOR_TARGETS_JSON secret not set; leaving distribution-targets.json unchanged"
             fi
+
+            echo ""
+            echo "=== Writing protected provider .env ==="
+            mkdir -p "$(dirname "$PROVIDER_ENV")"
+            {
+              echo "# Managed by vps-configure.yml"
+              echo "# Provider/runtime secrets for server-side operations"
+              [ -n "$VULTR_API_KEY" ] && printf 'VULTR_API_KEY=%s\n' "$VULTR_API_KEY"
+              [ -n "$CLOUDFLARE_API_TOKEN" ] && printf 'CLOUDFLARE_API_TOKEN=%s\n' "$CLOUDFLARE_API_TOKEN"
+              [ -n "$CLOUDFLARE_API_KEY" ] && printf 'CLOUDFLARE_API_KEY=%s\n' "$CLOUDFLARE_API_KEY"
+              [ -n "$CLOUDFLARE_EMAIL" ] && printf 'CLOUDFLARE_EMAIL=%s\n' "$CLOUDFLARE_EMAIL"
+              [ -n "$CLOUDFLARE_ZONE_ID" ] && printf 'CLOUDFLARE_ZONE_ID=%s\n' "$CLOUDFLARE_ZONE_ID"
+              [ -n "$PORKBUN_API_KEY" ] && printf 'PORKBUN_API_KEY=%s\n' "$PORKBUN_API_KEY"
+              [ -n "$PORKBUN_SECRET_KEY" ] && printf 'PORKBUN_SECRET_KEY=%s\n' "$PORKBUN_SECRET_KEY"
+              [ -n "$SOCIAL_RELAY_URL" ] && printf 'SOCIAL_RELAY_URL=%s\n' "$SOCIAL_RELAY_URL"
+            } > "$PROVIDER_ENV"
+            chmod 600 "$PROVIDER_ENV"
+            echo "Wrote protected provider env file: $PROVIDER_ENV"
 
             echo ""
             echo "=== Configuring Discord webhook (systemd env var) ==="
@@ -328,6 +347,11 @@ jobs:
               echo "distribution-targets.json: PRESENT ($TARGETS_PATH)"
             else
               echo "distribution-targets.json: MISSING ($TARGETS_PATH)"
+            fi
+            if [ -f "$PROVIDER_ENV" ]; then
+              echo ".env: PRESENT ($PROVIDER_ENV)"
+            else
+              echo ".env: MISSING ($PROVIDER_ENV)"
             fi
             echo ""
             echo "=== Webhook security verification ==="
