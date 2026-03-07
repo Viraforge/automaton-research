@@ -10,7 +10,7 @@ ignore_older_secs = 3600
 
 [sources.system_journal]
 type = "journald"
-units = ["automaton-social-relay", "caddy", "local-connie"]
+include_units = ["automaton-social-relay", "caddy", "local-connie"]
 
 [transforms.parse_json]
 type = "remap"
