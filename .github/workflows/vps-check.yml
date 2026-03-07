@@ -120,11 +120,19 @@ jobs:
             print('porkbunSecretKey:', 'SET' if config.get('porkbunSecretKey') else 'NOT SET')
             PY
             TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
+            PROVIDER_ENV="$CONNIE_HOME/.automaton/.env"
             if [ -f "$TARGETS_PATH" ]; then
               echo "distribution-targets.json: PRESENT ($TARGETS_PATH)"
               python3 -c "import json; t=json.load(open('$TARGETS_PATH')); print('distribution-targets entries:', len(t) if isinstance(t, list) else 'non-list-json')" 2>/dev/null || echo "distribution-targets.json: INVALID JSON"
             else
               echo "distribution-targets.json: MISSING ($TARGETS_PATH)"
+            fi
+            if [ -f "$PROVIDER_ENV" ]; then
+              echo ".env: PRESENT ($PROVIDER_ENV)"
+              rg -n '^(VULTR_API_KEY|CLOUDFLARE_API_KEY|CLOUDFLARE_EMAIL|CLOUDFLARE_ZONE_ID|SOCIAL_RELAY_URL|PORKBUN_API_KEY|PORKBUN_SECRET_KEY)=' "$PROVIDER_ENV" 2>/dev/null \
+                | sed 's/=.*$/=SET/' || echo ".env: unreadable"
+            else
+              echo ".env: MISSING ($PROVIDER_ENV)"
             fi
 
             echo ""
