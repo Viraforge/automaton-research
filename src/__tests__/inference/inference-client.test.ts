@@ -140,6 +140,52 @@ describe("UnifiedInferenceClient", () => {
     expect(payload?.messages).toEqual([{ role: "user", content: "Continue." }]);
   });
 
+  it("rewrites system role to user for MiniMax provider payloads", async () => {
+    process.env.MINIMAX_TEST_KEY = "test-minimax-key";
+    const minimaxOnlyRegistry = new ProviderRegistry([
+      {
+        id: "minimax",
+        name: "MiniMax",
+        baseUrl: "https://api.minimax.io/v1",
+        apiKeyEnvVar: "MINIMAX_TEST_KEY",
+        models: [
+          {
+            id: "MiniMax-M2.5",
+            tier: "reasoning",
+            contextWindow: 1_000_000,
+            maxOutputTokens: 65_536,
+            costPerInputToken: 0,
+            costPerOutputToken: 0,
+            supportsTools: true,
+            supportsVision: false,
+            supportsStreaming: true,
+          },
+        ],
+        maxRequestsPerMinute: 30,
+        maxTokensPerMinute: 120_000,
+        priority: 10,
+        enabled: true,
+      },
+    ]);
+    const client = createClient(minimaxOnlyRegistry);
+    queueCompletion({ content: "ok" });
+
+    await client.chat({
+      tier: "reasoning",
+      messages: [
+        { role: "system", content: "You are system context" },
+        { role: "user", content: "hello" },
+      ],
+    });
+
+    const payload = mockState.calls[0] as { messages?: Array<{ role: string; content: string }> } | undefined;
+    expect(payload?.messages).toEqual([
+      { role: "user", content: "You are system context" },
+      { role: "user", content: "hello" },
+    ]);
+    expect(payload?.messages?.some((message) => message.role === "system")).toBe(false);
+  });
+
   it("chat uses survival tier resolution when credits are low", async () => {
     process.env.AUTOMATON_CREDITS_BALANCE = "500";
     const client = createClient();

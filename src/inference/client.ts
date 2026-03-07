@@ -14,7 +14,11 @@ import type {
   InferenceToolDefinition,
 } from "../types.js";
 import { ResilientHttpClient } from "../http/client.js";
-import { ensureNonEmptyChatMessages, sanitizeChatMessages } from "./message-sanitizer.js";
+import {
+  applyProviderMessageCompatibility,
+  ensureNonEmptyChatMessages,
+  sanitizeChatMessages,
+} from "./message-sanitizer.js";
 
 const INFERENCE_TIMEOUT_MS = 60_000;
 const INFERENCE_MIN_REQUEST_INTERVAL_MS = 5_000;
@@ -71,10 +75,14 @@ export function createInferenceClient(
     const tokenLimit = opts?.maxTokens || maxTokens;
 
     const sanitizedMessages = ensureNonEmptyChatMessages(sanitizeChatMessages(messages));
+    const compatibleMessages = applyProviderMessageCompatibility(sanitizedMessages, {
+      baseUrl: inferenceBaseUrl,
+      model,
+    });
 
     const body: Record<string, unknown> = {
       model,
-      messages: sanitizedMessages.map(formatMessage),
+      messages: compatibleMessages.map(formatMessage),
       stream: false,
     };
 
