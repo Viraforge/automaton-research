@@ -41,6 +41,7 @@ gh run view <RUN_ID> --log  # View logs in real-time
 
 ```bash
 # On local machine with SSH access to VPS
+RELAY_URL="https://relay.compintel.co" \
 VPS_HOST="66.135.29.159" \
 VPS_USER="root" \
 VPS_SSH_KEY="$(cat ~/.ssh/vps_key)" \
@@ -54,16 +55,24 @@ scripts/verify-phase11-quota-reset.sh
 1. ✅ `social_relay_ready = true`
    - Channel state is "ready" (not cooldown, misconfigured, or quota_exhausted)
 
-2. ✅ `relay_routing_operational = true`
+2. ✅ `no_error_loops = true`
+   - No churn signatures in gate evidence window
+   - No repeated wake/sleep or dead-channel retry indicators
+
+3. ✅ `relay_routing_operational = true`
    - Message endpoint (`POST /v1/messages/*`) returns 4xx (auth), not 5xx (server error)
    - Proves end-to-end routing works
 
-3. ✅ `all_services_active = true`
+4. ✅ `all_services_active = true`
    - Caddy service active
    - Relay service active
    - No recent critical errors in service logs
 
-4. ✅ `pass = true`
+5. ✅ `successful_relay_message_op = true`
+   - **Strict mode (default)**: signed send/poll/count probe with ECDSA secp256k1 signatures must pass
+   - **Legacy mode**: transport probe sufficient (set `SIGNED_PROBE_REQUIRED=false` to disable strict mode)
+
+6. ✅ `pass = true`
    - Overall gate result is PASS
 
 **Retrieve Results**:
@@ -83,12 +92,18 @@ cat /tmp/phase11_evidence_*/gate_result.json | jq .
 
 ```json
 {
+  "version": 1,
   "timestamp": "2026-03-12T05:05:53Z",
+  "quota_reset_gate": "2026-03-12T05:05:53Z",
+  "evidence_window_seconds": 120,
   "results": {
     "social_relay_ready": true,
+    "no_error_loops": true,
     "relay_routing_operational": true,
-    "all_services_active": true
+    "all_services_active": true,
+    "successful_relay_message_op": true
   },
+  "failed_conditions": [],
   "pass": true,
   "evidence_directory": "/tmp/phase11_evidence_..."
 }
@@ -100,12 +115,16 @@ cat /tmp/phase11_evidence_*/gate_result.json | jq .
 
 ```json
 {
+  "version": 1,
   "pass": false,
   "results": {
     "social_relay_ready": false,
+    "no_error_loops": true,
     "relay_routing_operational": true,
-    "all_services_active": true
-  }
+    "all_services_active": true,
+    "successful_relay_message_op": false
+  },
+  "failed_conditions": ["social_relay_ready", "successful_relay_message_op"]
 }
 ```
 
@@ -156,8 +175,10 @@ Create gate activation report documenting:
 
 ### Verification Results
 - social_relay_ready: true/false
+- no_error_loops: true/false
 - relay_routing_operational: true/false
 - all_services_active: true/false
+- successful_relay_message_op: true/false
 
 ### First Cycle Observations
 - Relay traffic observed: YES/NO
@@ -194,6 +215,8 @@ The gate verification produces these evidence files for audit trail:
 | `channel_heartbeat.log` | Channel state snapshot | Contains "ready" (no error keywords) |
 | `message_endpoint_probe.json` | Message routing test | HTTP 401/403/404/200 (not 5xx) |
 | `caddy_recent_logs.log` | Service health logs | No "failed", "inactive", "error" |
+| `churn_signals.log` | Loop/churn detection | Empty |
+| `relay_recent_logs.log` | Relay unit diagnostics | No fatal/panic startup errors |
 | `gate_result.json` | Structured pass/fail | `"pass": true` with all conditions true |
 
 ---
