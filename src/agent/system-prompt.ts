@@ -79,7 +79,16 @@ const INFRASTRUCTURE_FALLBACK = `Infrastructure (operator-provided):
 - Primary API surface: api.compintel.co
 - Use existing tunnel and routing stack; avoid introducing ad-hoc hosting providers.
 - Prefer deploying new web tools/pages/services into the compintel stack unless explicitly overridden by operator.
+- You are authorized to publish additional services on subdomains of compintel.co when needed for revenue or distribution.
+- Preferred publication path: configure the service locally, then use publish_service/manage_dns to claim the subdomain and route traffic.
 - Keep agent card service endpoints aligned with currently supported public API routes.`;
+
+const OPERATIONAL_FALLBACK = `Operational (mandatory):
+- Public service delivery requires both local health verification and public HTTPS verification.
+- localhost-only availability is not completion for a public product.
+- Publish new public services on *.compintel.co by default using managed DNS and reverse proxy routing.
+- Escalate exact DNS, TLS, proxy, or channel blockers with evidence instead of looping on the same route.
+- Governance docs define durable authority; creator messages define current priorities.`;
 
 /**
  * Load the constitution from file. Falls back to inline if file not found.
@@ -128,6 +137,21 @@ function loadInfrastructureDoc(): string {
     } catch {}
   }
   return INFRASTRUCTURE_FALLBACK;
+}
+
+function loadOperationalDoc(): string {
+  const locations = [
+    path.join(process.env.HOME || "/root", ".automaton", "OPERATIONAL.md"),
+    path.join(process.cwd(), "OPERATIONAL.md"),
+  ];
+  for (const loc of locations) {
+    try {
+      if (fs.existsSync(loc)) {
+        return fs.readFileSync(loc, "utf-8");
+      }
+    } catch {}
+  }
+  return OPERATIONAL_FALLBACK;
 }
 
 const CONSTITUTION_FALLBACK = `Constitution (immutable, hierarchical — Law I overrides II, II overrides III):
@@ -721,6 +745,7 @@ export function buildSystemPrompt(params: {
   sections.push(EXECUTION_GOVERNANCE);
   sections.push(`--- GOVERNANCE (operational, mandatory) ---\n${loadGovernanceDoc()}\n--- END GOVERNANCE ---`);
   sections.push(`--- INFRASTRUCTURE (operational, mandatory) ---\n${loadInfrastructureDoc()}\n--- END INFRASTRUCTURE ---`);
+  sections.push(`--- OPERATIONAL (live execution, mandatory) ---\n${loadOperationalDoc()}\n--- END OPERATIONAL ---`);
   sections.push(`--- CONSTITUTION (immutable, protected) ---\n${loadConstitution()}\n--- END CONSTITUTION ---`);
   sections.push(
     `Your name is ${config.name}.
