@@ -1,0 +1,51 @@
+name: Review Last 50 Turns
+on:
+  workflow_dispatch:
+jobs:
+  extract:
+    name: Extract Turns
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            DB=$(find "$CONNIE_HOME" -name "state.db" -type f 2>/dev/null | head -1)
+            if [ -z "$DB" ]; then
+              DB=$(CONNIE_HOME="$CONNIE_HOME" python3 - <<'PY'
+            import json, os, pathlib
+            home = os.environ.get("CONNIE_HOME", "")
+            config_path = pathlib.Path(home) / ".automaton" / "automaton.json"
+            config = json.loads(config_path.read_text())
+            print(config.get("dbPath", "").replace("~", home))
+            PY
+              )
+            fi
+            OUT="/tmp/connie-last-50-turns.json"
+            sqlite3 -json "$DB" "
+              SELECT
+                id,
+                created_at,
+                substr(thought, 1, 4000) AS thought,
+                substr(tool_calls, 1, 4000) AS tool_calls
+              FROM turns
+              ORDER BY created_at DESC
+              LIMIT 50;
+            " > "$OUT"
+            cat "$OUT"
+      - name: Save artifact
+        run: |
+          mkdir -p out
+          cat > out/README.txt <<'EOF'
+          The JSON payload is emitted in the job log by the SSH step.
+          Download the workflow log for raw turn data.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: last-50-turns-review
+          path: out
