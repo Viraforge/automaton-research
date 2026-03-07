@@ -104,16 +104,21 @@ jobs:
 
             echo ""
             echo "=== 8.25 Distribution Config ==="
-            python3 -c "import json; c=json.load(open('$CONNIE_HOME/.automaton/automaton.json')); \
-print('socialRelayUrl:', 'SET' if c.get('socialRelayUrl') else 'NOT SET'); \
-print('useSovereignProviders:', c.get('useSovereignProviders')); \
-print('cloudflareApiToken:', 'SET' if c.get('cloudflareApiToken') else 'NOT SET'); \
-print('cloudflareApiKey:', 'SET' if c.get('cloudflareApiKey') else 'NOT SET'); \
-print('cloudflareEmail:', 'SET' if c.get('cloudflareEmail') else 'NOT SET'); \
-print('cloudflareZoneId:', 'SET' if c.get('cloudflareZoneId') else 'NOT SET'); \
-print('vultrApiKey:', 'SET' if c.get('vultrApiKey') else 'NOT SET'); \
-print('porkbunApiKey:', 'SET' if c.get('porkbunApiKey') else 'NOT SET'); \
-print('porkbunSecretKey:', 'SET' if c.get('porkbunSecretKey') else 'NOT SET')" 2>/dev/null || echo "provider config: unknown"
+            CONNIE_HOME="$CONNIE_HOME" python3 - <<'PY' 2>/dev/null || echo "provider config: unknown"
+            import json
+            import os
+
+            config = json.load(open(f"{os.environ['CONNIE_HOME']}/.automaton/automaton.json"))
+            print('socialRelayUrl:', 'SET' if config.get('socialRelayUrl') else 'NOT SET')
+            print('useSovereignProviders:', config.get('useSovereignProviders'))
+            print('cloudflareApiToken:', 'SET' if config.get('cloudflareApiToken') else 'NOT SET')
+            print('cloudflareApiKey:', 'SET' if config.get('cloudflareApiKey') else 'NOT SET')
+            print('cloudflareEmail:', 'SET' if config.get('cloudflareEmail') else 'NOT SET')
+            print('cloudflareZoneId:', 'SET' if config.get('cloudflareZoneId') else 'NOT SET')
+            print('vultrApiKey:', 'SET' if config.get('vultrApiKey') else 'NOT SET')
+            print('porkbunApiKey:', 'SET' if config.get('porkbunApiKey') else 'NOT SET')
+            print('porkbunSecretKey:', 'SET' if config.get('porkbunSecretKey') else 'NOT SET')
+            PY
             TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
             if [ -f "$TARGETS_PATH" ]; then
               echo "distribution-targets.json: PRESENT ($TARGETS_PATH)"
