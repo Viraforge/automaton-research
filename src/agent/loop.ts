@@ -112,6 +112,7 @@ const STALL_BLOCKED_TOOLS = new Set([
   "orchestrator_status",
   "discover_agents",
 ]);
+const STALL_BYPASS_INPUT_SOURCES = new Set<InputSource>(["creator", "agent"]);
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
@@ -763,9 +764,10 @@ export async function runAgentLoop(
 
           log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args).slice(0, 100)})`);
 
+          const bypassStallBlocking =
+            !!currentInputSource && STALL_BYPASS_INPUT_SOURCES.has(currentInputSource);
           if (
-            !currentInput
-            && !currentInputSource
+            !bypassStallBlocking
             && noProgressCycles >= portfolioPolicy.noProgressCycleLimit
             && STALL_BLOCKED_TOOLS.has(tc.function.name)
           ) {
