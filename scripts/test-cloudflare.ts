@@ -5,7 +5,7 @@
  * Tests: list zones → add TXT record → verify → delete
  * Run: npx tsx scripts/test-cloudflare.ts
  *
- * Reads cloudflareApiToken and cloudflareZoneId from ~/.automaton/automaton.json
+ * Reads Cloudflare credentials and cloudflareZoneId from ~/.automaton/automaton.json
  */
 
 import fs from "fs";
@@ -28,12 +28,16 @@ async function main() {
   }
   const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
   const apiToken = config.cloudflareApiToken;
-  if (!apiToken) {
-    console.error("cloudflareApiToken not set in config");
+  const apiKey = config.cloudflareApiKey;
+  const email = config.cloudflareEmail;
+  if (!apiToken && !(apiKey && email)) {
+    console.error("Cloudflare credentials not set in config (cloudflareApiToken or cloudflareApiKey + cloudflareEmail)");
     process.exit(1);
   }
 
-  const provider = createCloudflareProvider(apiToken);
+  const provider = createCloudflareProvider(
+    apiToken ? { apiToken } : { apiKey, email },
+  );
 
   // Test 1: List zones
   console.log("1. Listing DNS zones...");

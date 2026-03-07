@@ -506,8 +506,10 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const cfToken = ctx.config.cloudflareApiToken;
-        if (!cfToken) {
-          return "Error: cloudflareApiToken must be set in config for service publishing.";
+        const cfKey = ctx.config.cloudflareApiKey;
+        const cfEmail = ctx.config.cloudflareEmail;
+        if (!cfToken && !(cfKey && cfEmail)) {
+          return "Error: Cloudflare credentials must be set in config for service publishing (cloudflareApiToken or cloudflareApiKey + cloudflareEmail).";
         }
 
         const domain = String(args.domain || "compintel.co").trim().toLowerCase();
@@ -531,7 +533,9 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-        const cf = createCloudflareProvider(cfToken);
+        const cf = createCloudflareProvider(
+          cfToken ? { apiToken: cfToken } : { apiKey: cfKey, email: cfEmail },
+        );
         const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
         const existingRecords = await cf.listRecords(zoneId);
         const originIp = String(args.origin_ip || "").trim()
@@ -2914,12 +2918,16 @@ Model: ${ctx.inference.getDefaultModel()}
 
         if (ctx.config.useSovereignProviders) {
           const cfToken = ctx.config.cloudflareApiToken;
-          if (!cfToken) {
-            return "Error: cloudflareApiToken must be set in config for DNS management.";
+          const cfKey = ctx.config.cloudflareApiKey;
+          const cfEmail = ctx.config.cloudflareEmail;
+          if (!cfToken && !(cfKey && cfEmail)) {
+            return "Error: Cloudflare credentials must be set in config for DNS management (cloudflareApiToken or cloudflareApiKey + cloudflareEmail).";
           }
 
           const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-          const cf = createCloudflareProvider(cfToken);
+          const cf = createCloudflareProvider(
+            cfToken ? { apiToken: cfToken } : { apiKey: cfKey, email: cfEmail },
+          );
 
           // Resolve zone ID: explicit arg > config > auto-lookup by domain
           let zoneId = args.zone_id as string | undefined;

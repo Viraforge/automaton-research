@@ -65,11 +65,24 @@ jobs:
             cd /root/.openclaw/workspace/artifacts/automaton-research
             git fetch origin main
             git reset --hard origin/main
+            REPO_HEAD=$(git rev-parse --short HEAD)
             npm run build
 
-            # Auto-configure Discord webhook from SOUL.md if not already set
             CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
             CONFIG="$CONNIE_HOME/.automaton/automaton.json"
+
+            # Keep mandatory governance/ops docs synchronized for existing installs.
+            mkdir -p "$CONNIE_HOME/.automaton"
+            for doc in SOUL.md GOVERNANCE.md INFRASTRUCTURE.md OPERATIONAL.md constitution.md; do
+              if [ -f "$doc" ]; then
+                cp "$doc" "$CONNIE_HOME/.automaton/$doc"
+              fi
+            done
+            if [ -f "$CONNIE_HOME/.automaton/constitution.md" ]; then
+              chmod 444 "$CONNIE_HOME/.automaton/constitution.md" || true
+            fi
+
+            # Auto-configure Discord webhook from SOUL.md if not already set
             if [ -f "$CONFIG" ]; then
               HAS_WEBHOOK=$(CONFIG="$CONFIG" python3 -c "import json, os; c=json.load(open(os.environ['CONFIG'])); print('yes' if c.get('discordWebhookUrl') else 'no')" 2>/dev/null)
               if [ "$HAS_WEBHOOK" = "no" ]; then
@@ -121,4 +134,4 @@ jobs:
             MARKETS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/v1/markets")
             echo "polymarket-api /health HTTP $HEALTH_CODE"
             echo "polymarket-api /v1/markets HTTP $MARKETS_CODE"
-            echo "Deploy complete: $(git rev-parse --short HEAD)"
+            echo "Deploy complete: $REPO_HEAD"
