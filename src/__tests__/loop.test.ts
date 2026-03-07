@@ -1088,4 +1088,82 @@ describe("Agent Loop", () => {
     expect(blockedInstances).toBeDefined();
     expect(blockedInstances?.error).toContain("tool temporarily blocked during no-progress stall");
   });
+
+  it("allows introspection tools for explicit agent/creator inputs during stalls", async () => {
+    const stalledConfig = createTestConfig({
+      portfolio: {
+        noProgressCycleLimit: 1,
+      },
+    });
+    db.setKV("portfolio.no_progress_cycles", "2");
+    db.insertInboxMessage({
+      id: "stall-bypass-agent-msg",
+      from: "0xagent",
+      to: "0xrecipient",
+      content: "Please run recall for context",
+      signedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    });
+
+    const inference = new MockInferenceClient([
+      {
+        id: "resp_stall_bypass_warmup",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_bypass_warmup",
+            type: "function" as const,
+            function: { name: "exec", arguments: JSON.stringify({ command: "echo warmup" }) },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_bypass_warmup",
+          type: "function" as const,
+          function: { name: "exec", arguments: JSON.stringify({ command: "echo warmup" }) },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
+      {
+        id: "resp_stall_bypass_recall",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_bypass_recall",
+            type: "function" as const,
+            function: { name: "recall_facts", arguments: JSON.stringify({ category: "financial" }) },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_bypass_recall",
+          type: "function" as const,
+          function: { name: "recall_facts", arguments: JSON.stringify({ category: "financial" }) },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config: stalledConfig,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const agentInputTurn = turns.find((turn) => turn.inputSource === "agent");
+    expect(agentInputTurn).toBeDefined();
+
+    const recallCall = agentInputTurn?.toolCalls.find((call) => call.name === "recall_facts");
+    expect(recallCall).toBeDefined();
+    expect(recallCall?.error ?? "").not.toContain("tool temporarily blocked during no-progress stall");
+  });
 });
