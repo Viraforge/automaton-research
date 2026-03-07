@@ -99,6 +99,16 @@ const DISCOVERY_FOLLOW_THROUGH_KEY = "distribution.discovery_follow_through";
 const EXEC_NO_PROGRESS_BACKOFF_KEY = "loop.exec_no_progress_backoff_ms";
 const EXEC_NO_PROGRESS_MIN_BACKOFF_MS = 3 * 60_000;
 const EXEC_NO_PROGRESS_MAX_BACKOFF_MS = 30 * 60_000;
+const STALL_BLOCKED_TOOLS = new Set([
+  "review_memory",
+  "system_synopsis",
+  "check_credits",
+  "check_usdc_balance",
+  "check_balance",
+  "list_children",
+  "orchestrator_status",
+  "discover_agents",
+]);
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
@@ -399,6 +409,7 @@ export async function runAgentLoop(
   let lastToolPatterns: string[] = [];
   let loopWarningPattern: string | null = null;
   let discoverIdleTurns = 0;
+  let idleToolTurns = 0;
   try {
     const persisted = db.getKV("loop_detection_state");
     if (persisted) {
@@ -407,6 +418,9 @@ export async function runAgentLoop(
       if (typeof parsed.warningPattern === "string") loopWarningPattern = parsed.warningPattern;
       if (typeof parsed.discoverIdleTurns === "number" && Number.isFinite(parsed.discoverIdleTurns)) {
         discoverIdleTurns = Math.max(0, Math.floor(parsed.discoverIdleTurns));
+      }
+      if (typeof parsed.idleToolTurns === "number" && Number.isFinite(parsed.idleToolTurns)) {
+        idleToolTurns = Math.max(0, Math.floor(parsed.idleToolTurns));
       }
     }
   } catch { /* ignore corrupt state */ }
@@ -421,7 +435,6 @@ export async function runAgentLoop(
     // Ignore corrupt persisted state
   }
 
-  let idleToolTurns = 0;
   let noProgressCycles = Number.parseInt(db.getKV(PROJECT_NO_PROGRESS_CYCLES_KEY) || "0", 10);
   if (!Number.isFinite(noProgressCycles) || noProgressCycles < 0) {
     noProgressCycles = 0;
@@ -729,6 +742,7 @@ export async function runAgentLoop(
         const toolCallMessages: any[] = [];
         let callCount = 0;
         const currentInputSource = currentInput?.source as InputSource | undefined;
+        const portfolioPolicy = resolvePortfolioPolicy(config);
 
         for (const tc of response.toolCalls) {
           if (callCount >= MAX_TOOL_CALLS_PER_TURN) {
@@ -745,6 +759,26 @@ export async function runAgentLoop(
           }
 
           log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args).slice(0, 100)})`);
+
+          if (
+            !currentInput
+            && !currentInputSource
+            && noProgressCycles >= portfolioPolicy.noProgressCycleLimit
+            && STALL_BLOCKED_TOOLS.has(tc.function.name)
+          ) {
+            const blockedResult: ToolCallResult = {
+              id: tc.id,
+              name: tc.function.name,
+              arguments: args,
+              result: "",
+              durationMs: 0,
+              error: `tool temporarily blocked during no-progress stall: ${tc.function.name}. Execute a concrete distribution/monetization/build action before more introspection.`,
+            };
+            turn.toolCalls.push(blockedResult);
+            log(config, `[TOOL RESULT] ${tc.function.name}: ERROR: ${blockedResult.error}`);
+            callCount++;
+            continue;
+          }
 
           if (tc.function.name === "discover_agents") {
             const cooldownRaw = db.getKV(DISCOVER_AGENTS_COOLDOWN_KEY);
@@ -974,6 +1008,7 @@ export async function runAgentLoop(
           patterns: lastToolPatterns,
           warningPattern: loopWarningPattern,
           discoverIdleTurns,
+          idleToolTurns,
         }));
         db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
       }
@@ -1135,6 +1170,7 @@ export async function runAgentLoop(
             patterns: lastToolPatterns,
             warningPattern: loopWarningPattern,
             discoverIdleTurns,
+            idleToolTurns,
           }));
           db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
           continue;
@@ -1153,6 +1189,8 @@ export async function runAgentLoop(
             db.setKV("loop_detection_state", JSON.stringify({
               patterns: lastToolPatterns,
               warningPattern: loopWarningPattern,
+              discoverIdleTurns,
+              idleToolTurns,
             }));
             db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
             break;

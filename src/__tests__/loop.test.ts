@@ -941,4 +941,73 @@ describe("Agent Loop", () => {
     const sleepMs = new Date(sleepUntil!).getTime() - Date.now();
     expect(sleepMs).toBeGreaterThan(150_000);
   });
+
+  it("blocks introspection/status tools during no-progress stalls", async () => {
+    const stalledConfig = createTestConfig({
+      portfolio: {
+        noProgressCycleLimit: 1,
+      },
+    });
+    db.setKV("portfolio.no_progress_cycles", "1");
+
+    const inference = new MockInferenceClient([
+      {
+        id: "resp_stall_seed",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_seed",
+            type: "function" as const,
+            function: { name: "check_balance", arguments: "{}" },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_seed",
+          type: "function" as const,
+          function: { name: "check_balance", arguments: "{}" },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
+      {
+        id: "resp_stall_block",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_block",
+            type: "function" as const,
+            function: { name: "review_memory", arguments: "{}" },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_block",
+          type: "function" as const,
+          function: { name: "review_memory", arguments: "{}" },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config: stalledConfig,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const blocked = turns
+      .flatMap((turn) => turn.toolCalls)
+      .find((call) => call.name === "review_memory");
+    expect(blocked).toBeDefined();
+    expect(blocked?.error).toContain("tool temporarily blocked during no-progress stall");
+  });
 });
