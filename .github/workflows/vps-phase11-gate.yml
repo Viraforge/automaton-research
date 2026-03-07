@@ -11,6 +11,10 @@ on:
         description: "Relay base URL"
         required: false
         default: "https://relay.compintel.co"
+      signed_probe_required:
+        description: "Require signed send/poll/count probe"
+        required: false
+        default: "true"
 
 jobs:
   quota-reset-gate:
@@ -20,11 +24,19 @@ jobs:
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      CADDY_SERVICE_NAME: ${{ vars.CADDY_SERVICE_NAME || 'caddy' }}
+      RELAY_SERVICE_NAME: ${{ vars.RELAY_SERVICE_NAME || 'automaton-social-relay' }}
       GATE_TIMESTAMP: ${{ github.event.inputs.gate_timestamp || '2026-03-12T05:05:53Z' }}
       RELAY_URL: ${{ github.event.inputs.relay_url || 'https://relay.compintel.co' }}
+      SIGNED_PROBE_REQUIRED: ${{ github.event.inputs.signed_probe_required || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Run quota-reset gate verification
         run: |
@@ -34,6 +46,15 @@ jobs:
           export OUTPUT_DIR
           scripts/verify-phase11-quota-reset.sh
           echo "OUTPUT_DIR=$OUTPUT_DIR" >> "$GITHUB_ENV"
+
+      - name: Verify gate evidence exists and is valid
+        if: always()
+        run: |
+          set -euo pipefail
+          test -n "${OUTPUT_DIR:-}"
+          test -f "${OUTPUT_DIR}/gate_result.json"
+          jq . "${OUTPUT_DIR}/gate_result.json" >/dev/null
+          jq -e '.timestamp and .quota_reset_gate and .results and (.results.social_relay_ready|type=="boolean") and (.results.no_error_loops|type=="boolean") and (.results.relay_routing_operational|type=="boolean") and (.results.all_services_active|type=="boolean") and (.results.successful_relay_message_op|type=="boolean") and (.pass|type=="boolean") and (.failed_conditions|type=="array") and .evidence_directory' "${OUTPUT_DIR}/gate_result.json" >/dev/null
 
       - name: Show gate result
         if: always()

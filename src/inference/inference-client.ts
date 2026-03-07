@@ -1,7 +1,11 @@
 import OpenAI from "openai";
 import type { ChatMessage } from "../types.js";
 import { createLogger } from "../observability/logger.js";
-import { ensureNonEmptyChatMessages, sanitizeChatMessages } from "./message-sanitizer.js";
+import {
+  applyProviderMessageCompatibility,
+  ensureNonEmptyChatMessages,
+  sanitizeChatMessages,
+} from "./message-sanitizer.js";
 import {
   ProviderRegistry,
   type ModelTier,
@@ -244,7 +248,7 @@ export class UnifiedInferenceClient {
       endpoint: expectedEndpoint,
       apiKey: apiKeyInfo,
     });
-    const payload = this.buildChatCompletionRequest(model.id, params);
+    const payload = this.buildChatCompletionRequest(provider.id, model.id, params);
     if (params.stream) {
       const stream = await client.chat.completions.create({
         ...payload,
@@ -301,11 +305,16 @@ export class UnifiedInferenceClient {
     });
   }
 
-  private buildChatCompletionRequest(modelId: string, params: SharedChatParams): Record<string, unknown> {
+  private buildChatCompletionRequest(
+    providerId: string,
+    modelId: string,
+    params: SharedChatParams,
+  ): Record<string, unknown> {
     const sanitizedMessages = ensureNonEmptyChatMessages(sanitizeChatMessages(params.messages));
+    const compatibleMessages = applyProviderMessageCompatibility(sanitizedMessages, { providerId, model: modelId });
     const payload: Record<string, unknown> = {
       model: modelId,
-      messages: sanitizedMessages.map((message) => ({
+      messages: compatibleMessages.map((message) => ({
         role: message.role,
         content: message.content,
         ...(message.name ? { name: message.name } : {}),

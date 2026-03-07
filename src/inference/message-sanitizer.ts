@@ -88,8 +88,39 @@ export function ensureNonEmptyChatMessages(messages: ChatMessage[]): ChatMessage
   return [{ role: "user", content: "Continue." }];
 }
 
+export function applyProviderMessageCompatibility(
+  messages: ChatMessage[],
+  context?: { providerId?: string; baseUrl?: string; model?: string },
+): ChatMessage[] {
+  if (!isMiniMaxContext(context)) {
+    return messages;
+  }
+
+  // MiniMax chat API rejects `system` role payloads. Preserve ordering/content
+  // while downgrading system messages to user role for compatibility.
+  return messages.map((message) => (
+    message.role === "system"
+      ? { ...message, role: "user" }
+      : message
+  ));
+}
+
 function normalizeContent(content: unknown): string {
   return typeof content === "string" ? content : String(content ?? "");
+}
+
+function isMiniMaxContext(context?: { providerId?: string; baseUrl?: string; model?: string }): boolean {
+  const providerId = (context?.providerId || "").toLowerCase();
+  if (providerId.includes("minimax")) return true;
+
+  const baseUrl = (context?.baseUrl || "").toLowerCase();
+  if (baseUrl.includes("minimax")) return true;
+
+  const model = (context?.model || "").toLowerCase();
+  if (model.includes("minimax")) return true;
+  if (model.startsWith("m2.5")) return true;
+
+  return false;
 }
 
 function enforceAssistantToolPairing(messages: ChatMessage[]): ChatMessage[] {

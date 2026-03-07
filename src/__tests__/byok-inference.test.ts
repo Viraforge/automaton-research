@@ -101,6 +101,49 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
     expect(backend).toBe("byok");
   });
 
+  it("rewrites system messages for MiniMax BYOK payload compatibility", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resp_minimax_system_rewrite",
+          model: "MiniMax-M2.5",
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const client = createInferenceClient({
+        apiKey: "test-key",
+        inferenceApiKey: "test-byok-key",
+        inferenceBaseUrl: "https://api.minimax.io/v1",
+        defaultModel: "MiniMax-M2.5",
+        maxTokens: 64,
+      });
+
+      await client.chat([
+        { role: "system", content: "system instruction" },
+        { role: "user", content: "hello" },
+      ]);
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const payload = JSON.parse(String(requestInit?.body || "{}")) as {
+        messages?: Array<{ role?: string; content?: string }>;
+      };
+      expect(payload.messages).toEqual([
+        { role: "user", content: "system instruction" },
+        { role: "user", content: "hello" },
+      ]);
+      expect(payload.messages?.some((m) => m.role === "system")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("routes glm-5 through byok when inferenceBaseUrl set", () => {
     const backend = resolveInferenceBackend("glm-5", {
       inferenceBaseUrl: "https://api.z.ai/api/coding/paas/v4",
@@ -278,7 +321,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
     }
   });
 
-  it("coalesces consecutive system messages before BYOK request", async () => {
+  it("coalesces and rewrites consecutive system messages for MiniMax BYOK request", async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -312,10 +355,10 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       const payload = JSON.parse(String(requestInit?.body || "{}")) as {
         messages?: Array<{ role?: string; content?: string }>;
       };
-      const systemMessages = (payload.messages || []).filter((m) => m.role === "system");
-      expect(systemMessages).toHaveLength(1);
-      expect(systemMessages[0]?.content).toContain("policy A");
-      expect(systemMessages[0]?.content).toContain("policy B");
+      const userMessages = (payload.messages || []).filter((m) => m.role === "user");
+      expect(userMessages[0]?.content).toContain("policy A");
+      expect(userMessages[0]?.content).toContain("policy B");
+      expect((payload.messages || []).some((m) => m.role === "system")).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }
