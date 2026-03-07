@@ -991,6 +991,26 @@ describe("Agent Loop", () => {
         usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
         finishReason: "tool_calls",
       },
+      {
+        id: "resp_stall_block_recall",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_block_recall",
+            type: "function" as const,
+            function: { name: "recall_facts", arguments: "{}" },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_block_recall",
+          type: "function" as const,
+          function: { name: "recall_facts", arguments: "{}" },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
       noToolResponse("ack"),
     ]);
 
@@ -1009,5 +1029,11 @@ describe("Agent Loop", () => {
       .find((call) => call.name === "review_memory");
     expect(blocked).toBeDefined();
     expect(blocked?.error).toContain("tool temporarily blocked during no-progress stall");
+
+    const blockedRecall = turns
+      .flatMap((turn) => turn.toolCalls)
+      .find((call) => call.name === "recall_facts");
+    expect(blockedRecall).toBeDefined();
+    expect(blockedRecall?.error).toContain("tool temporarily blocked during no-progress stall");
   });
 });
