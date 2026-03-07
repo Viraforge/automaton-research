@@ -182,6 +182,95 @@ async function checkProjectBudget(
   };
 }
 
+function normalizePublishedHostname(
+  subdomain: string,
+  baseDomain = "compintel.co",
+): string | null {
+  const raw = subdomain.trim().toLowerCase().replace(/\.$/, "");
+  if (!raw) return null;
+  const fqdn = raw.endsWith(`.${baseDomain}`) ? raw : `${raw}.${baseDomain}`;
+  if (!fqdn.endsWith(`.${baseDomain}`)) return null;
+  if (fqdn === baseDomain) return null;
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z0-9-]+$/.test(fqdn)) return null;
+  return fqdn;
+}
+
+function isValidHealthPath(pathValue: string): boolean {
+  return /^\/[A-Za-z0-9._~!$&'()*+,;=:@/%/-]*$/.test(pathValue);
+}
+
+function buildPublishedServiceScript(
+  fqdn: string,
+  port: number,
+  healthcheckPath: string,
+): string {
+  const safeFile = fqdn.replace(/[^a-z0-9.-]/g, "-");
+  const caddyPath = `/etc/caddy/automaton-sites/${safeFile}.caddy`;
+  return [
+    "set -e",
+    "SUDO=\"\"",
+    "if command -v sudo >/dev/null 2>&1; then SUDO=\"sudo\"; fi",
+    `$SUDO mkdir -p /etc/caddy/automaton-sites`,
+    "if ! grep -q 'BEGIN AUTOMATON SITES IMPORT' /etc/caddy/Caddyfile; then",
+    "  {",
+    "    printf '\\n# BEGIN AUTOMATON SITES IMPORT\\n'",
+    "    printf 'import /etc/caddy/automaton-sites/*.caddy\\n'",
+    "    printf '# END AUTOMATON SITES IMPORT\\n'",
+    "  } | $SUDO tee -a /etc/caddy/Caddyfile >/dev/null",
+    "fi",
+    `cat <<'CADDY_SITE' | $SUDO tee ${escapeShellArg(caddyPath)} >/dev/null`,
+    `${fqdn} {`,
+    `    reverse_proxy http://127.0.0.1:${port}`,
+    "}",
+    "CADDY_SITE",
+    "$SUDO caddy validate --config /etc/caddy/Caddyfile",
+    "$SUDO systemctl reload caddy",
+    `curl -fsS ${escapeShellArg(`http://127.0.0.1:${port}${healthcheckPath}`)} >/dev/null`,
+  ].join("\n");
+}
+
+async function resolveCloudflareZoneId(
+  cf: { listZones(): Promise<Array<{ id: string; name: string }>> },
+  configuredZoneId: string | undefined,
+  domain: string,
+): Promise<string> {
+  if (configuredZoneId) return configuredZoneId;
+  const zones = await cf.listZones();
+  const match = zones.find((z) => domain.endsWith(z.name));
+  if (!match) {
+    throw new Error(
+      `No Cloudflare zone found for ${domain}. Available zones: ${zones.map((z) => z.name).join(", ") || "none"}.`,
+    );
+  }
+  return match.id;
+}
+
+async function inferPublishOriginIp(
+  ctx: ToolContext,
+  records: Array<{ type: string; host: string; value: string }>,
+  domain: string,
+): Promise<string> {
+  const preferredHosts = [
+    `api.${domain}`,
+    `relay.${domain}`,
+    domain,
+  ];
+  for (const host of preferredHosts) {
+    const record = records.find((r) => r.type === "A" && r.host === host);
+    if (record?.value) return record.value;
+  }
+
+  const ipResult = await ctx.conway.exec(
+    "sh -lc \"curl -4fsS https://api.ipify.org || curl -4fsS https://ifconfig.me\"",
+    15_000,
+  );
+  const detectedIp = (ipResult.stdout || "").trim();
+  if (ipResult.exitCode !== 0 || !/^\d{1,3}(\.\d{1,3}){3}$/.test(detectedIp)) {
+    throw new Error("Unable to infer public origin IP. Pass origin_ip explicitly or set an existing A record.");
+  }
+  return detectedIp;
+}
+
 // ─── Built-in Tools ────────────────────────────────────────────
 
 export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
@@ -373,6 +462,102 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       execute: async (args, ctx) => {
         await ctx.conway.removePort(args.port as number);
         return `Port ${args.port} removed`;
+      },
+    },
+    {
+      name: "publish_service",
+      description:
+        "Publish a local service on a compintel.co subdomain by configuring DNS and Caddy. Use this for public product endpoints instead of localhost-only expose_port results.",
+      category: "vm",
+      riskLevel: "dangerous",
+      parameters: {
+        type: "object",
+        properties: {
+          subdomain: {
+            type: "string",
+            description: "Subdomain label or FQDN under compintel.co (e.g. 'alpha' or 'alpha.compintel.co')",
+          },
+          port: {
+            type: "number",
+            description: "Local port to publish through the reverse proxy",
+          },
+          domain: {
+            type: "string",
+            description: "Base domain to publish under. Defaults to compintel.co.",
+          },
+          healthcheck_path: {
+            type: "string",
+            description: "Local health check path used before publish completes. Defaults to /health.",
+          },
+          origin_ip: {
+            type: "string",
+            description: "Optional public origin IP override. If omitted, inferred from existing DNS or public IP lookup.",
+          },
+          proxied: {
+            type: "boolean",
+            description: "Whether the Cloudflare DNS record should be proxied. Defaults to false for direct-origin debugging.",
+          },
+        },
+        required: ["subdomain", "port"],
+      },
+      execute: async (args, ctx) => {
+        if (!ctx.config.useSovereignProviders) {
+          return "Error: publish_service requires sovereign providers mode.";
+        }
+
+        const cfToken = ctx.config.cloudflareApiToken;
+        if (!cfToken) {
+          return "Error: cloudflareApiToken must be set in config for service publishing.";
+        }
+
+        const domain = String(args.domain || "compintel.co").trim().toLowerCase();
+        if (domain !== "compintel.co") {
+          return "Blocked: publish_service is restricted to compintel.co subdomains.";
+        }
+
+        const fqdn = normalizePublishedHostname(String(args.subdomain || ""), domain);
+        if (!fqdn) {
+          return `Blocked: invalid subdomain "${String(args.subdomain || "")}". Use a compintel.co subdomain.`;
+        }
+
+        const port = Number(args.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          return `Blocked: port must be an integer between 1 and 65535, got ${String(args.port)}`;
+        }
+
+        const healthcheckPath = String(args.healthcheck_path || "/health");
+        if (!isValidHealthPath(healthcheckPath)) {
+          return `Blocked: invalid healthcheck_path "${healthcheckPath}".`;
+        }
+
+        const { createCloudflareProvider } = await import("../providers/cloudflare.js");
+        const cf = createCloudflareProvider(cfToken);
+        const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
+        const existingRecords = await cf.listRecords(zoneId);
+        const originIp = String(args.origin_ip || "").trim()
+          || await inferPublishOriginIp(ctx, existingRecords, domain);
+        if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(originIp)) {
+          return `Blocked: invalid origin_ip "${originIp}".`;
+        }
+
+        for (const record of existingRecords.filter((r) => r.host === fqdn)) {
+          await cf.deleteRecord(zoneId, record.id);
+        }
+        const proxied = args.proxied === true;
+        const record = await cf.addRecord(zoneId, "A", fqdn, originIp, 1, proxied);
+
+        const publishScript = buildPublishedServiceScript(fqdn, port, healthcheckPath);
+        const publishResult = await ctx.conway.exec(publishScript, 120_000);
+        if (publishResult.exitCode !== 0) {
+          return `publish_service failed: ${publishResult.stderr || publishResult.stdout || "unknown error"}`;
+        }
+
+        return [
+          `Service published: https://${fqdn}`,
+          `DNS: [${record.id}] A ${record.host} -> ${record.value}${proxied ? " (proxied)" : " (dns-only)"}`,
+          `Origin: 127.0.0.1:${port}`,
+          `Health check: ${healthcheckPath}`,
+        ].join("\n");
       },
     },
 

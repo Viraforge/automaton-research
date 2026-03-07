@@ -67,7 +67,14 @@ export interface DomainProvider {
 export interface DnsProvider {
   listZones(): Promise<DnsZone[]>;
   listRecords(zoneId: string): Promise<DnsRecord[]>;
-  addRecord(zoneId: string, type: string, name: string, content: string, ttl?: number): Promise<DnsRecord>;
+  addRecord(
+    zoneId: string,
+    type: string,
+    name: string,
+    content: string,
+    ttl?: number,
+    proxied?: boolean,
+  ): Promise<DnsRecord>;
   deleteRecord(zoneId: string, recordId: string): Promise<void>;
 }
 

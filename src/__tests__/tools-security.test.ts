@@ -59,6 +59,7 @@ describe("Tool Risk Level Classification", () => {
     write_file: "caution",
     expose_port: "caution",
     remove_port: "caution",
+    publish_service: "dangerous",
     create_sandbox: "caution",
     review_upstream_changes: "caution",
     modify_heartbeat: "caution",

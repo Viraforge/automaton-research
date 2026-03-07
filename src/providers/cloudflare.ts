@@ -78,13 +78,20 @@ export function createCloudflareProvider(apiToken: string): DnsProvider {
       name: string,
       content: string,
       ttl = 1, // 1 = auto
+      proxied,
     ): Promise<DnsRecord> {
       const res = await httpClient.request(
         `${CF_API_BASE}/zones/${zoneId}/dns_records`,
         {
           method: "POST",
           headers: authHeaders(apiToken),
-          body: JSON.stringify({ type, name, content, ttl }),
+          body: JSON.stringify({
+            type,
+            name,
+            content,
+            ttl,
+            ...(typeof proxied === "boolean" ? { proxied } : {}),
+          }),
         },
       );
 

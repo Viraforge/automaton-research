@@ -79,6 +79,8 @@ const INFRASTRUCTURE_FALLBACK = `Infrastructure (operator-provided):
 - Primary API surface: api.compintel.co
 - Use existing tunnel and routing stack; avoid introducing ad-hoc hosting providers.
 - Prefer deploying new web tools/pages/services into the compintel stack unless explicitly overridden by operator.
+- You are authorized to publish additional services on subdomains of compintel.co when needed for revenue or distribution.
+- Preferred publication path: configure the service locally, then use publish_service/manage_dns to claim the subdomain and route traffic.
 - Keep agent card service endpoints aligned with currently supported public API routes.`;
 
 /**
