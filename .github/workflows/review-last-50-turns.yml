@@ -26,18 +26,27 @@ jobs:
             PY
               )
             fi
-            OUT="/tmp/connie-last-50-turns.json"
-            sqlite3 -json "$DB" "
-              SELECT
-                id,
-                created_at,
-                substr(thought, 1, 4000) AS thought,
-                substr(tool_calls, 1, 4000) AS tool_calls
-              FROM turns
-              ORDER BY created_at DESC
-              LIMIT 50;
-            " > "$OUT"
-            cat "$OUT"
+            DB="$DB" python3 - <<'PY'
+            import json
+            import os
+            import sqlite3
+
+            db_path = os.environ["DB"]
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+
+            cols = [row["name"] for row in conn.execute("PRAGMA table_info(turns)")]
+            order_col = "created_at" if "created_at" in cols else ("id" if "id" in cols else cols[0])
+            query = f"SELECT * FROM turns ORDER BY {order_col} DESC LIMIT 50"
+            rows = [dict(row) for row in conn.execute(query)]
+
+            print(json.dumps({
+              "db_path": db_path,
+              "turn_columns": cols,
+              "row_count": len(rows),
+              "turns": rows,
+            }, indent=2, default=str))
+            PY
       - name: Save artifact
         run: |
           mkdir -p out
