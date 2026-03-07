@@ -1011,6 +1011,46 @@ describe("Agent Loop", () => {
         usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
         finishReason: "tool_calls",
       },
+      {
+        id: "resp_stall_block_skills",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_block_skills",
+            type: "function" as const,
+            function: { name: "list_skills", arguments: "{}" },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_block_skills",
+          type: "function" as const,
+          function: { name: "list_skills", arguments: "{}" },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
+      {
+        id: "resp_stall_block_instances",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_stall_block_instances",
+            type: "function" as const,
+            function: { name: "list_instances", arguments: "{}" },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stall_block_instances",
+          type: "function" as const,
+          function: { name: "list_instances", arguments: "{}" },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
       noToolResponse("ack"),
     ]);
 
@@ -1035,5 +1075,17 @@ describe("Agent Loop", () => {
       .find((call) => call.name === "recall_facts");
     expect(blockedRecall).toBeDefined();
     expect(blockedRecall?.error).toContain("tool temporarily blocked during no-progress stall");
+
+    const blockedSkills = turns
+      .flatMap((turn) => turn.toolCalls)
+      .find((call) => call.name === "list_skills");
+    expect(blockedSkills).toBeDefined();
+    expect(blockedSkills?.error).toContain("tool temporarily blocked during no-progress stall");
+
+    const blockedInstances = turns
+      .flatMap((turn) => turn.toolCalls)
+      .find((call) => call.name === "list_instances");
+    expect(blockedInstances).toBeDefined();
+    expect(blockedInstances?.error).toContain("tool temporarily blocked during no-progress stall");
   });
 });

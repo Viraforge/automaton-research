@@ -103,10 +103,12 @@ const STALL_BLOCKED_TOOLS = new Set([
   "review_memory",
   "recall_facts",
   "system_synopsis",
+  "list_skills",
   "check_credits",
   "check_usdc_balance",
   "check_balance",
   "list_children",
+  "list_instances",
   "orchestrator_status",
   "discover_agents",
 ]);
