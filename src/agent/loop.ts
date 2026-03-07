@@ -96,6 +96,9 @@ const INFERENCE_429_MAX_BACKOFF_MS = 60 * 60_000;
 const INFERENCE_429_RESET_CAP_MS = 14 * 24 * 60 * 60_000;
 const PROJECT_NO_PROGRESS_CYCLES_KEY = "portfolio.no_progress_cycles";
 const DISCOVERY_FOLLOW_THROUGH_KEY = "distribution.discovery_follow_through";
+const EXEC_NO_PROGRESS_BACKOFF_KEY = "loop.exec_no_progress_backoff_ms";
+const EXEC_NO_PROGRESS_MIN_BACKOFF_MS = 3 * 60_000;
+const EXEC_NO_PROGRESS_MAX_BACKOFF_MS = 30 * 60_000;
 
 function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax" | "unknown" {
   if (!baseUrl) return "unknown";
@@ -987,10 +990,33 @@ export async function runAgentLoop(
       });
       if (progress.progressed) {
         noProgressCycles = 0;
+        db.deleteKV(EXEC_NO_PROGRESS_BACKOFF_KEY);
       } else {
         noProgressCycles += 1;
       }
       db.setKV(PROJECT_NO_PROGRESS_CYCLES_KEY, String(noProgressCycles));
+
+      const recentPatternWindow = lastToolPatterns.slice(-MAX_REPETITIVE_TURNS);
+      const execDominantNoProgressLoop = recentPatternWindow.length === MAX_REPETITIVE_TURNS
+        && recentPatternWindow.every((pattern) => pattern.split(",").includes("exec"));
+      const portfolioPolicy = resolvePortfolioPolicy(config);
+      if (!progress.progressed && noProgressCycles >= portfolioPolicy.noProgressCycleLimit && execDominantNoProgressLoop) {
+        const previousBackoff = Number.parseInt(db.getKV(EXEC_NO_PROGRESS_BACKOFF_KEY) || "0", 10);
+        const backoffMs = Math.min(
+          previousBackoff > 0 ? previousBackoff * 2 : EXEC_NO_PROGRESS_MIN_BACKOFF_MS,
+          EXEC_NO_PROGRESS_MAX_BACKOFF_MS,
+        );
+        db.setKV(EXEC_NO_PROGRESS_BACKOFF_KEY, String(backoffMs));
+        db.setKV("sleep_until", new Date(Date.now() + backoffMs).toISOString());
+        log(
+          config,
+          `[LOOP] Exec-dominant no-progress loop detected (${noProgressCycles} cycles). Sleeping ${Math.round(backoffMs / 1000)}s.`,
+        );
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        running = false;
+        break;
+      }
 
       const pendingTarget = db.raw.prepare(
         `SELECT t.id, t.channel_id AS channelId
@@ -1004,7 +1030,6 @@ export async function runAgentLoop(
       const hasReadyDistributionWork = !!pendingTarget
         && getChannelUseDecision(db.raw, pendingTarget.channelId, config).allowed;
 
-      const portfolioPolicy = resolvePortfolioPolicy(config);
       if (!progress.progressed && noProgressCycles >= portfolioPolicy.noProgressCycleLimit && hasReadyDistributionWork && !pendingInput) {
         pendingInput = {
           content:

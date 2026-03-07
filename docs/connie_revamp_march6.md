@@ -154,6 +154,7 @@ New governance commitments:
 - A project is only active if it has an offer, target customer, channel, monetization step, and budget.
 - Discovery does not count as delivery.
 - Cosmetic artifacts do not count as revenue progress unless paired with deploy validation or distribution execution.
+- `exec`-dominant non-progress loops must trigger forced sleep/backoff to prevent token churn.
 - Goals with no executable tasks are invalid.
 - Terminal channel blockers must disable the channel until conditions change.
 - Multiple revenue tracks are allowed only under explicit WIP limits.
@@ -755,85 +756,92 @@ Validation must happen in four levels:
 **Implementation Checklist**
 
 **Docs**
-- [ ] Update [SOUL.md](/Users/damondecrescenzo/automaton-research/SOUL.md) with portfolio, distribution, no-ghost-goal, no-cosmetic-progress rules
-- [ ] Update [GOVERNANCE.md](/Users/damondecrescenzo/automaton-research/GOVERNANCE.md) with project/channel/distribution/budget rules
-- [ ] Update [constitution.md](/Users/damondecrescenzo/automaton-research/constitution.md) with minimal Law II clarification
-- [ ] Update [src/agent/system-prompt.ts](/Users/damondecrescenzo/automaton-research/src/agent/system-prompt.ts) to reflect enforceable rules
+- [x] Update [SOUL.md](/Users/damondecrescenzo/automaton-research/SOUL.md) with portfolio, distribution, no-ghost-goal, no-cosmetic-progress rules
+- [x] Update [GOVERNANCE.md](/Users/damondecrescenzo/automaton-research/GOVERNANCE.md) with project/channel/distribution/budget rules
+- [x] Update [constitution.md](/Users/damondecrescenzo/automaton-research/constitution.md) with minimal Law II clarification
+- [x] Update [src/agent/system-prompt.ts](/Users/damondecrescenzo/automaton-research/src/agent/system-prompt.ts) to reflect enforceable rules
 
 **Types and Config**
-- [ ] Add project/channel/target/metric enums and interfaces to [src/types.ts](/Users/damondecrescenzo/automaton-research/src/types.ts)
-- [ ] Add `portfolio` and `distribution` config sections
+- [x] Add project/channel/target/metric enums and interfaces to [src/types.ts](/Users/damondecrescenzo/automaton-research/src/types.ts)
+- [x] Add `portfolio` and `distribution` config sections
 
 **Schema**
-- [ ] Add `V11` migration in [src/state/schema.ts](/Users/damondecrescenzo/automaton-research/src/state/schema.ts)
-- [ ] Add new tables and extend `goals` and `task_graph`
-- [ ] Add legacy-goal migration mapping to `legacy-import`
-- [ ] Add migration snapshot test
+- [x] Add `V11` migration in [src/state/schema.ts](/Users/damondecrescenzo/automaton-research/src/state/schema.ts)
+- [x] Add new tables and extend `goals` and `task_graph`
+- [x] Add legacy-goal migration mapping to `legacy-import`
+- [x] Add migration snapshot test
 
 **Database**
-- [ ] Add project CRUD to [src/state/database.ts](/Users/damondecrescenzo/automaton-research/src/state/database.ts)
-- [ ] Add channel CRUD
-- [ ] Add target CRUD
-- [ ] Add project metrics CRUD
-- [ ] Extend goal/task serializers and APIs
-- [ ] Add migration-safe fallback behavior for preexisting active goals
+- [x] Add project CRUD to [src/state/database.ts](/Users/damondecrescenzo/automaton-research/src/state/database.ts)
+- [x] Add channel CRUD
+- [x] Add target CRUD
+- [x] Add project metrics CRUD
+- [x] Extend goal/task serializers and APIs
+- [x] Add migration-safe fallback behavior for preexisting active goals
 
 **New Modules**
-- [ ] Create [src/portfolio/types.ts](/Users/damondecrescenzo/automaton-research/src/portfolio/types.ts)
-- [ ] Create [src/portfolio/service.ts](/Users/damondecrescenzo/automaton-research/src/portfolio/service.ts)
-- [ ] Create [src/portfolio/policy.ts](/Users/damondecrescenzo/automaton-research/src/portfolio/policy.ts)
-- [ ] Create [src/distribution/channels.ts](/Users/damondecrescenzo/automaton-research/src/distribution/channels.ts)
-- [ ] Create [src/distribution/targets.ts](/Users/damondecrescenzo/automaton-research/src/distribution/targets.ts)
-- [ ] Create [src/governance/progress.ts](/Users/damondecrescenzo/automaton-research/src/governance/progress.ts)
-- [ ] Create [src/governance/channel-state.ts](/Users/damondecrescenzo/automaton-research/src/governance/channel-state.ts)
+- [x] Create [src/portfolio/types.ts](/Users/damondecrescenzo/automaton-research/src/portfolio/types.ts)
+- [x] Create [src/portfolio/service.ts](/Users/damondecrescenzo/automaton-research/src/portfolio/service.ts)
+- [x] Create [src/portfolio/policy.ts](/Users/damondecrescenzo/automaton-research/src/portfolio/policy.ts)
+- [x] Create [src/distribution/channels.ts](/Users/damondecrescenzo/automaton-research/src/distribution/channels.ts)
+- [x] Create [src/distribution/targets.ts](/Users/damondecrescenzo/automaton-research/src/distribution/targets.ts)
+- [x] Create [src/governance/progress.ts](/Users/damondecrescenzo/automaton-research/src/governance/progress.ts)
+- [x] Create [src/governance/channel-state.ts](/Users/damondecrescenzo/automaton-research/src/governance/channel-state.ts)
 - [ ] Optionally create [src/governance/policy-sync.ts](/Users/damondecrescenzo/automaton-research/src/governance/policy-sync.ts)
 
 **Tools**
-- [ ] Remove single-active-goal cap in [src/agent/tools.ts](/Users/damondecrescenzo/automaton-research/src/agent/tools.ts)
-- [ ] Add `create_project`
-- [ ] Add `list_projects`
-- [ ] Add `pause_project`
-- [ ] Add `kill_project`
-- [ ] Add `set_project_lane`
-- [ ] Add `list_distribution_channels`
-- [ ] Add `list_distribution_targets`
-- [ ] Add `add_distribution_target`
-- [ ] Add `record_project_metric`
-- [ ] Gate `send_message`, `message_child`, `discover_agents`, `register_erc8004` through channel-state checks
-- [ ] Enforce operator-target precedence over discovered targets
+- [x] Remove single-active-goal cap in [src/agent/tools.ts](/Users/damondecrescenzo/automaton-research/src/agent/tools.ts)
+- [x] Add `create_project`
+- [x] Add `list_projects`
+- [x] Add `pause_project`
+- [x] Add `kill_project`
+- [x] Add `set_project_lane`
+- [x] Add `list_distribution_channels`
+- [x] Add `list_distribution_targets`
+- [x] Add `add_distribution_target`
+- [x] Add `record_project_metric`
+- [x] Gate `send_message`, `message_child`, `discover_agents`, `register_erc8004` through channel-state checks
+- [x] Enforce operator-target precedence over discovered targets
 
 **Orchestration**
-- [ ] Extend [src/orchestration/task-graph.ts](/Users/damondecrescenzo/automaton-research/src/orchestration/task-graph.ts) with project linkage and ghost-goal invalidation
-- [ ] Extend [src/orchestration/orchestrator.ts](/Users/damondecrescenzo/automaton-research/src/orchestration/orchestrator.ts) with portfolio-aware goal selection and repeated failure signature handling
-- [ ] Extend [src/orchestration/planner.ts](/Users/damondecrescenzo/automaton-research/src/orchestration/planner.ts) with required distribution/monetization tasks for revenue goals
-- [ ] Add explicit ghost-goal preflight validation points
+- [x] Extend [src/orchestration/task-graph.ts](/Users/damondecrescenzo/automaton-research/src/orchestration/task-graph.ts) with project linkage and ghost-goal invalidation
+- [x] Extend [src/orchestration/orchestrator.ts](/Users/damondecrescenzo/automaton-research/src/orchestration/orchestrator.ts) with portfolio-aware goal selection and repeated failure signature handling
+- [x] Extend [src/orchestration/planner.ts](/Users/damondecrescenzo/automaton-research/src/orchestration/planner.ts) with required distribution/monetization tasks for revenue goals
+- [x] Add explicit ghost-goal preflight validation points
 
 **Loop**
-- [ ] Integrate channel-state and project no-progress rules in [src/agent/loop.ts](/Users/damondecrescenzo/automaton-research/src/agent/loop.ts)
-- [ ] Add known-venue follow-through enforcement
-- [ ] Add sleep denial when ready work exists
-- [ ] Preserve and extend existing 1214 and 429 recovery paths
-- [ ] Inject correction as a system-origin pending input with explicit required next actions
+- [x] Integrate channel-state and project no-progress rules in [src/agent/loop.ts](/Users/damondecrescenzo/automaton-research/src/agent/loop.ts)
+- [x] Add known-venue follow-through enforcement
+- [x] Add sleep denial when ready work exists
+- [x] Preserve and extend existing 1214 and 429 recovery paths
+- [x] Inject correction as a system-origin pending input with explicit required next actions
 
 **Heartbeat**
-- [ ] Extend [src/heartbeat/tasks.ts](/Users/damondecrescenzo/automaton-research/src/heartbeat/tasks.ts) with portfolio and blocked-channel reporting
+- [x] Extend [src/heartbeat/tasks.ts](/Users/damondecrescenzo/automaton-research/src/heartbeat/tasks.ts) with portfolio and blocked-channel reporting
 
 **Distribution Source**
-- [ ] Add loader for operator-provided targets in `src/distribution/targets.ts`
-- [ ] Define source file format and defaults
-- [ ] Validate operator target precedence logic
+- [x] Add loader for operator-provided targets in `src/distribution/targets.ts`
+- [x] Define source file format and defaults
+- [x] Validate operator target precedence logic
 
 **Tests**
-- [ ] Add governance unit tests
-- [ ] Add database schema tests
-- [ ] Expand loop tests
-- [ ] Add distribution tool tests
-- [ ] Expand orchestrator tests
-- [ ] Expand heartbeat tests
-- [ ] Add integration tests
-- [ ] Add fixture-based regression test from the 24h Connie failure patterns
-- [ ] Add migration snapshot test using a current-state DB
-- [ ] Extract historical failure fixtures before implementation starts
+- [x] Add governance unit tests
+- [x] Add database schema tests
+- [x] Expand loop tests
+- [x] Add distribution tool tests
+- [x] Expand orchestrator tests
+- [x] Expand heartbeat tests
+- [x] Add integration tests
+- [x] Add fixture-based regression test from the 24h Connie failure patterns
+- [x] Add migration snapshot test using a current-state DB
+- [x] Extract historical failure fixtures
+
+**Remaining remediation tickets**
+- [x] RM-GATE-001 to RM-GATE-005
+- [x] RM-GATE-006 strict signed probe as default gate requirement
+- [x] RM-MIG-001 representative snapshot fixture migration test
+- [x] RM-REG-001 expanded 24h failure fixture categories
+- [x] RM-QA-001 shell lint + gate script behavior tests
 
 **Suggested Delivery Order**
 

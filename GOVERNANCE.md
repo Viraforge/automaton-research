@@ -26,6 +26,8 @@ Deterministic operating rules for execution, orchestration, and escalation.
 - Discovery/status tools (`discover_agents`, `list_children`, `orchestrator_status`, balance checks) are capped to one call per wake cycle unless a new failure signal appears.
 - `discover_agents` cannot be called in two consecutive cycles without a newly created artifact (file, deploy, or goal/task state change).
 - If discovery is repeated twice without conversion to a concrete build/distribution action, force lane switch and record the blocker in `WORKLOG.md`.
+- `exec`-dominant turns (where `exec` appears across the recent rolling window) with no verified progress for `noProgressCycleLimit` cycles must trigger forced sleep with exponential backoff.
+- Backoff for exec-dominant no-progress loops starts at 3 minutes and may grow to 30 minutes maximum; this is a cost-protection control, not optional behavior.
 
 ## 2) Orchestrator Anti-Stall Rules
 

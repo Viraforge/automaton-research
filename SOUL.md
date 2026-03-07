@@ -93,6 +93,8 @@ If a lane fails twice without verified progress, switch lanes in the next cycle.
 2. Never run `discover_agents` in consecutive cycles without producing a new artifact.
 3. Status/recon tools are limited to one use per wake cycle unless a new error signal appears.
 4. After two recon-only cycles, switch to build or distribution immediately and log the switch in `WORKLOG.md`.
+5. Repeated `exec`-heavy turns without verified progress are policy violations.
+6. If `exec` is present across consecutive no-progress cycles, force cooldown/backoff sleep and resume with a different lane/task class.
 
 ## Sleep Contract
 

@@ -874,4 +874,71 @@ describe("Agent Loop", () => {
       .find((tc) => tc.name === "discover_agents" && tc.error?.includes("temporarily blocked"));
     expect(blockedCall).toBeDefined();
   });
+
+  it("forces sleep backoff on exec-dominant non-progress loops even when tool patterns vary", async () => {
+    const strictConfig = createTestConfig({
+      portfolio: {
+        noProgressCycleLimit: 2,
+      },
+    });
+
+    function uniqueToolResponse(
+      uid: string,
+      calls: Array<{ name: string; arguments: Record<string, unknown> }>,
+    ): ReturnType<typeof toolCallResponse> {
+      return {
+        id: `resp_${uid}`,
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: calls.map((call, i) => ({
+            id: `call_${uid}_${i}`,
+            type: "function" as const,
+            function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+          })),
+        },
+        toolCalls: calls.map((call, i) => ({
+          id: `call_${uid}_${i}`,
+          type: "function" as const,
+          function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+        })),
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      };
+    }
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("np1", [
+        { name: "exec", arguments: { command: "echo one" } },
+      ]),
+      uniqueToolResponse("np2", [
+        { name: "exec", arguments: { command: "echo two" } },
+        { name: "list_children", arguments: {} },
+      ]),
+      uniqueToolResponse("np3", [
+        { name: "exec", arguments: { command: "echo three" } },
+        { name: "check_credits", arguments: {} },
+      ]),
+      noToolResponse("should not run"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+
+    await runAgentLoop({
+      identity,
+      config: strictConfig,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.length).toBeLessThanOrEqual(3);
+    expect(db.getAgentState()).toBe("sleeping");
+    const sleepUntil = db.getKV("sleep_until");
+    expect(sleepUntil).toBeDefined();
+    const sleepMs = new Date(sleepUntil!).getTime() - Date.now();
+    expect(sleepMs).toBeGreaterThan(150_000);
+  });
 });
