@@ -176,6 +176,15 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
     console.log(chalk.green("  constitution.md installed (read-only)"));
   }
 
+  for (const docName of ["GOVERNANCE.md", "INFRASTRUCTURE.md", "OPERATIONAL.md"]) {
+    const src = path.join(process.cwd(), docName);
+    const dst = path.join(automatonDir, docName);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, dst);
+      console.log(chalk.green(`  ${docName} installed`));
+    }
+  }
+
   // SOUL.md
   const soulPath = path.join(automatonDir, "SOUL.md");
   fs.writeFileSync(soulPath, generateSoulMd(name, account.address, creatorAddress, genesisPrompt), { mode: 0o600 });
