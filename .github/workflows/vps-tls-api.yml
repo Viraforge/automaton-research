@@ -1,0 +1,97 @@
+name: VPS TLS API Setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tls-setup:
+    name: Configure API TLS (Caddy/Nginx + Certbot)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure TLS via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "=== Opening firewall ports ==="
+            if command -v ufw &>/dev/null && sudo ufw status | grep -q "Status: active"; then
+              sudo ufw allow 80/tcp
+              sudo ufw allow 443/tcp
+              echo "✅ Firewall ports 80/443 opened"
+            else
+              echo "ℹ️ ufw not active or not installed"
+            fi
+
+            echo "=== Detecting web server ==="
+            if command -v caddy &>/dev/null; then
+              WEBSERVER="caddy"
+              echo "Using Caddy"
+            elif command -v nginx &>/dev/null; then
+              WEBSERVER="nginx"
+              echo "Using nginx"
+            else
+              echo "Installing nginx..."
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq nginx certbot python3-certbot-nginx
+              WEBSERVER="nginx"
+            fi
+
+            if [ "$WEBSERVER" = "caddy" ]; then
+              cat <<'CADDY_CONF' | sudo tee /etc/caddy/Caddyfile.api >/dev/null
+            api.compintel.co {
+                tls {
+                    issuer acme {
+                        dir https://acme-v02.api.letsencrypt.org/directory
+                        email ops@compintel.co
+                    }
+                }
+                reverse_proxy http://127.0.0.1:8081
+            }
+            CADDY_CONF
+
+              sudo sed -i '/api\.compintel\.co/d' /etc/caddy/Caddyfile
+              sudo sed -i '/Caddyfile\.api/d' /etc/caddy/Caddyfile
+              sudo sed -i '/BEGIN AUTOMATON API IMPORT/,/END AUTOMATON API IMPORT/d' /etc/caddy/Caddyfile
+              {
+                echo ""
+                echo "# BEGIN AUTOMATON API IMPORT"
+                echo "import /etc/caddy/Caddyfile.api"
+                echo "# END AUTOMATON API IMPORT"
+              } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+              sudo caddy validate --config /etc/caddy/Caddyfile
+              sudo install -d -o caddy -g caddy /var/lib/caddy/.local/share/caddy
+              sudo install -d -o caddy -g caddy /var/lib/caddy/.local/share/caddy/certificates
+              sudo chown -R caddy:caddy /var/lib/caddy/.local/share/caddy
+              sudo chown -R caddy:caddy /var/log/caddy 2>/dev/null || true
+              sudo systemctl reload caddy
+              sleep 3
+
+              echo "=== Verification ==="
+              curl -fsS https://api.compintel.co/health && echo "✅ Public API health OK" || echo "⚠️ Public health check failed"
+            else
+              cat <<'NGINX_CONF' | sudo tee /etc/nginx/sites-available/api.compintel.co >/dev/null
+            server {
+                listen 80;
+                server_name api.compintel.co;
+                location / {
+                    proxy_pass http://127.0.0.1:8081;
+                    proxy_http_version 1.1;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                }
+            }
+            NGINX_CONF
+
+              sudo ln -sf /etc/nginx/sites-available/api.compintel.co /etc/nginx/sites-enabled/api.compintel.co
+              sudo nginx -t
+              sudo systemctl reload nginx
+              sudo certbot --nginx -d api.compintel.co --redirect -m ops@compintel.co --agree-tos --no-eff-email --non-interactive || true
+              sudo systemctl reload nginx
+              curl -fsS https://api.compintel.co/health && echo "✅ Public API health OK" || echo "⚠️ Public health check failed"
+            fi
