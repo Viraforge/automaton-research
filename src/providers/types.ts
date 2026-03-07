@@ -84,6 +84,12 @@ export interface DnsZone {
   status: string;
 }
 
+export interface CloudflareCredentials {
+  apiToken?: string;
+  apiKey?: string;
+  email?: string;
+}
+
 // ─── Payment Provider (USDC on Base) ───────────────────────────
 
 export interface UsdcTransferResult {

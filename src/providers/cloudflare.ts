@@ -9,28 +9,50 @@
 
 import type { DnsRecord } from "../types.js";
 import { ResilientHttpClient } from "../http/client.js";
-import type { DnsProvider, DnsZone } from "./types.js";
+import type { CloudflareCredentials, DnsProvider, DnsZone } from "./types.js";
 
 const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 
-function authHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
+function authHeaders(credentials: CloudflareCredentials): Record<string, string> {
+  const base = {
     "Content-Type": "application/json",
   };
+
+  if (credentials.apiToken) {
+    return {
+      ...base,
+      Authorization: `Bearer ${credentials.apiToken}`,
+    };
+  }
+
+  if (credentials.apiKey && credentials.email) {
+    return {
+      ...base,
+      "X-Auth-Key": credentials.apiKey,
+      "X-Auth-Email": credentials.email,
+    };
+  }
+
+  throw new Error("Cloudflare credentials missing. Provide apiToken or apiKey + email.");
+}
+
+function normalizeCredentials(input: string | CloudflareCredentials): CloudflareCredentials {
+  return typeof input === "string" ? { apiToken: input } : input;
 }
 
 /**
- * Create a Cloudflare DNS provider bound to an API token.
+ * Create a Cloudflare DNS provider bound to API credentials.
+ * Supports either API token or legacy global API key + email.
  */
-export function createCloudflareProvider(apiToken: string): DnsProvider {
+export function createCloudflareProvider(input: string | CloudflareCredentials): DnsProvider {
   const httpClient = new ResilientHttpClient({ baseTimeout: 15_000 });
+  const headers = authHeaders(normalizeCredentials(input));
 
   return {
     async listZones(): Promise<DnsZone[]> {
       const res = await httpClient.request(`${CF_API_BASE}/zones`, {
         method: "GET",
-        headers: authHeaders(apiToken),
+        headers,
       });
 
       if (!res.ok) {
@@ -55,7 +77,7 @@ export function createCloudflareProvider(apiToken: string): DnsProvider {
         `${CF_API_BASE}/zones/${zoneId}/dns_records?per_page=100`,
         {
           method: "GET",
-          headers: authHeaders(apiToken),
+          headers,
         },
       );
 
@@ -77,14 +99,14 @@ export function createCloudflareProvider(apiToken: string): DnsProvider {
       type: string,
       name: string,
       content: string,
-      ttl = 1, // 1 = auto
+      ttl = 1,
       proxied,
     ): Promise<DnsRecord> {
       const res = await httpClient.request(
         `${CF_API_BASE}/zones/${zoneId}/dns_records`,
         {
           method: "POST",
-          headers: authHeaders(apiToken),
+          headers,
           body: JSON.stringify({
             type,
             name,
@@ -113,7 +135,7 @@ export function createCloudflareProvider(apiToken: string): DnsProvider {
         `${CF_API_BASE}/zones/${zoneId}/dns_records/${recordId}`,
         {
           method: "DELETE",
-          headers: authHeaders(apiToken),
+          headers,
         },
       );
 
@@ -124,8 +146,6 @@ export function createCloudflareProvider(apiToken: string): DnsProvider {
     },
   };
 }
-
-// ─── Cloudflare API Types ────────────────────────────────────────
 
 interface CfResponse<T> {
   success: boolean;

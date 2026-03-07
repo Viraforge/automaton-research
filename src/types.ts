@@ -69,6 +69,8 @@ export interface AutomatonConfig {
   // Sovereign provider keys
   vultrApiKey?: string;
   cloudflareApiToken?: string;
+  cloudflareApiKey?: string;
+  cloudflareEmail?: string;
   cloudflareZoneId?: string;
   porkbunApiKey?: string;
   porkbunSecretKey?: string;

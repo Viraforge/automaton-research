@@ -21,21 +21,71 @@ jobs:
             CONFIG="$CONFIG" python3 -c "
             import json, os
             c = json.load(open(os.environ['CONFIG']))
-            for k in ['discordWebhookUrl', 'socialRelayUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
+            for k in ['discordWebhookUrl', 'socialRelayUrl', 'useSovereignProviders', 'vultrApiKey', 'cloudflareApiToken', 'cloudflareApiKey', 'cloudflareEmail', 'cloudflareZoneId', 'porkbunApiKey', 'porkbunSecretKey', 'inferenceModel', 'name']:
                 v = c.get(k)
-                if k in ['discordWebhookUrl', 'vultrApiKey']:
+                if k in ['discordWebhookUrl', 'vultrApiKey', 'cloudflareApiToken', 'cloudflareApiKey', 'porkbunApiKey', 'porkbunSecretKey']:
                     print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
-                elif k == 'socialRelayUrl':
+                elif k in ['socialRelayUrl', 'cloudflareEmail', 'cloudflareZoneId']:
                     print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
                 else:
                     print(f'{k}: {v}')
             "
 
             echo ""
-            echo "=== Applying optional distribution config from secrets ==="
+            echo "=== Applying provider and distribution config from secrets ==="
+            VULTR_API_KEY='${{ secrets.VULTR_API_KEY }}'
+            CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}'
+            CLOUDFLARE_API_KEY='${{ secrets.CLOUDFLARE_API_KEY }}'
+            CLOUDFLARE_EMAIL='${{ secrets.CLOUDFLARE_EMAIL }}'
+            CLOUDFLARE_ZONE_ID='${{ secrets.CLOUDFLARE_ZONE_ID }}'
+            PORKBUN_API_KEY='${{ secrets.PORKBUN_API_KEY }}'
+            PORKBUN_SECRET_KEY='${{ secrets.PORKBUN_SECRET_KEY }}'
             SOCIAL_RELAY_URL='${{ secrets.SOCIAL_RELAY_URL }}'
             OPERATOR_TARGETS_JSON='${{ secrets.OPERATOR_TARGETS_JSON }}'
             TARGETS_PATH="$CONNIE_HOME/.automaton/distribution-targets.json"
+
+            CONFIG="$CONFIG" \
+            VULTR_API_KEY="$VULTR_API_KEY" \
+            CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
+            CLOUDFLARE_API_KEY="$CLOUDFLARE_API_KEY" \
+            CLOUDFLARE_EMAIL="$CLOUDFLARE_EMAIL" \
+            CLOUDFLARE_ZONE_ID="$CLOUDFLARE_ZONE_ID" \
+            PORKBUN_API_KEY="$PORKBUN_API_KEY" \
+            PORKBUN_SECRET_KEY="$PORKBUN_SECRET_KEY" \
+            python3 -c "
+            import json, os
+
+            p = os.environ['CONFIG']
+            c = json.load(open(p))
+
+            provider_keys = {
+                'vultrApiKey': os.environ.get('VULTR_API_KEY', ''),
+                'cloudflareApiToken': os.environ.get('CLOUDFLARE_API_TOKEN', ''),
+                'cloudflareApiKey': os.environ.get('CLOUDFLARE_API_KEY', ''),
+                'cloudflareEmail': os.environ.get('CLOUDFLARE_EMAIL', ''),
+                'cloudflareZoneId': os.environ.get('CLOUDFLARE_ZONE_ID', ''),
+                'porkbunApiKey': os.environ.get('PORKBUN_API_KEY', ''),
+                'porkbunSecretKey': os.environ.get('PORKBUN_SECRET_KEY', ''),
+            }
+
+            changed = []
+            for key, value in provider_keys.items():
+                if value:
+                    c[key] = value
+                    changed.append(key)
+
+            has_cloudflare = bool(c.get('cloudflareApiToken')) or bool(c.get('cloudflareApiKey') and c.get('cloudflareEmail'))
+            has_sovereign = bool(c.get('vultrApiKey')) or has_cloudflare or bool(c.get('porkbunApiKey') and c.get('porkbunSecretKey'))
+            c['useSovereignProviders'] = has_sovereign
+
+            json.dump(c, open(p, 'w'), indent=2)
+
+            if changed:
+                print('Updated provider config from secrets:', ', '.join(changed))
+            else:
+                print('No provider secrets supplied; existing provider config preserved')
+            print(f'useSovereignProviders set to {has_sovereign}')
+            "
 
             if [ -n "$SOCIAL_RELAY_URL" ]; then
               CONFIG="$CONFIG" SOCIAL_RELAY_URL="$SOCIAL_RELAY_URL" python3 -c "
@@ -264,11 +314,11 @@ jobs:
             CONFIG="$CONFIG" python3 -c "
             import json, os
             c = json.load(open(os.environ['CONFIG']))
-            for k in ['discordWebhookUrl', 'socialRelayUrl', 'useSovereignProviders', 'vultrApiKey', 'inferenceModel', 'name']:
+            for k in ['discordWebhookUrl', 'socialRelayUrl', 'useSovereignProviders', 'vultrApiKey', 'cloudflareApiToken', 'cloudflareApiKey', 'cloudflareEmail', 'cloudflareZoneId', 'porkbunApiKey', 'porkbunSecretKey', 'inferenceModel', 'name']:
                 v = c.get(k)
-                if k in ['discordWebhookUrl', 'vultrApiKey']:
+                if k in ['discordWebhookUrl', 'vultrApiKey', 'cloudflareApiToken', 'cloudflareApiKey', 'porkbunApiKey', 'porkbunSecretKey']:
                     print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
-                elif k == 'socialRelayUrl':
+                elif k in ['socialRelayUrl', 'cloudflareEmail', 'cloudflareZoneId']:
                     print(f'{k}: {\"SET\" if v else \"NOT SET\"}')
                 else:
                     print(f'{k}: {v}')
