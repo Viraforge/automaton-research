@@ -1,0 +1,42 @@
+[sources.connie_app]
+type = "file"
+include = ["/tmp/connie-research.log"]
+ignore_older_secs = 3600
+
+[sources.connie_heartbeat]
+type = "file"
+include = ["/root/.automaton/discord-heartbeat.log"]
+ignore_older_secs = 3600
+
+[sources.system_journal]
+type = "journald"
+units = ["automaton-social-relay", "caddy", "local-connie"]
+
+[transforms.parse_json]
+type = "remap"
+inputs = ["connie_app", "connie_heartbeat"]
+source = '''
+  parsed, err = parse_json(.message)
+  if err == null {
+    . = merge!(., parsed)
+  } else {
+    .parse_error = err
+    .original_message = .message
+  }
+  .host = get_hostname!()
+'''
+
+[transforms.tag_journal]
+type = "remap"
+inputs = ["system_journal"]
+source = '''
+  .source = "systemd"
+  .host = get_hostname!()
+'''
+
+[sinks.betterstack]
+type = "http"
+inputs = ["parse_json", "tag_journal"]
+uri = "https://in.logs.betterstack.com"
+encoding.codec = "json"
+request.headers.Authorization = "Bearer ${LOGTAIL_TOKEN}"

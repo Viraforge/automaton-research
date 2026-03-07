@@ -59,6 +59,7 @@ Run post-reset verification with evidence capture:
 
 ```bash
 GATE_TIMESTAMP="2026-03-12T05:05:53Z" \
+RELAY_URL="https://relay.compintel.co" \
 VPS_HOST="<vps-host>" \
 VPS_USER="<vps-user>" \
 VPS_SSH_KEY="$(cat ~/.ssh/<keyfile>)" \
@@ -68,8 +69,20 @@ scripts/verify-phase11-quota-reset.sh
 Expected:
 - output shows `PHASE 11 QUOTA RESET GATE: PASS`
 - `gate_result.json` is created in `/tmp/phase11_evidence_*`
+- `failed_conditions` is an empty array
+- schema reference: [phase11_gate_result_schema.json](/Users/damondecrescenzo/automaton-research/docs/phase11_gate_result_schema.json)
 
 GitHub workflow alternative:
 - Run `VPS Phase 11 Quota Gate`
 - Workflow: [.github/workflows/vps-phase11-gate.yml](/Users/damondecrescenzo/automaton-research/.github/workflows/vps-phase11-gate.yml)
 - Download artifact `phase11-gate-evidence-*` for logs and `gate_result.json`.
+- Evidence contract: [phase11_gate_evidence_contract.md](/Users/damondecrescenzo/automaton-research/docs/phase11_gate_evidence_contract.md)
+
+## Observability & Telemetry
+
+For real-time monitoring of Connie's agent loop, relay events, and service health:
+
+- **Setup**: Run `scripts/setup-betterstack.sh` (requires free logs.betterstack.com account)
+- **Logs shipped**: App log, heartbeat diagnostics, relay/caddy/connie systemd journal
+- **Queries**: `level:error`, `module:loop`, `message:"social_relay"`, `source:systemd`
+- **UI**: https://logs.betterstack.com (live tail updates every 30s)
