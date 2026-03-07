@@ -101,6 +101,7 @@ const EXEC_NO_PROGRESS_MIN_BACKOFF_MS = 3 * 60_000;
 const EXEC_NO_PROGRESS_MAX_BACKOFF_MS = 30 * 60_000;
 const STALL_BLOCKED_TOOLS = new Set([
   "review_memory",
+  "recall_facts",
   "system_synopsis",
   "check_credits",
   "check_usdc_balance",
