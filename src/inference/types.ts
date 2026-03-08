@@ -179,8 +179,8 @@ export const DEFAULT_ROUTING_MATRIX: RoutingMatrix = {
 
 export const DEFAULT_MODEL_STRATEGY_CONFIG: ModelStrategyConfig = {
   inferenceModel: "gpt-5.2",
-  lowComputeModel: "gpt-5-mini",
-  criticalModel: "gpt-5-mini",
+  lowComputeModel: "glm-5",
+  criticalModel: "glm-5",
   maxTokensPerTurn: 4096,
   hourlyBudgetCents: 0,
   sessionBudgetCents: 0,
