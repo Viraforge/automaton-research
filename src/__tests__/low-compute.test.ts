@@ -40,16 +40,16 @@ describe("getModelForTier", () => {
     expect(getModelForTier("normal", defaultModel)).toBe(defaultModel);
   });
 
-  it("returns gpt-5-mini for 'low_compute' tier", () => {
-    expect(getModelForTier("low_compute", defaultModel)).toBe("gpt-5-mini");
+  it("returns glm-5 for 'low_compute' tier", () => {
+    expect(getModelForTier("low_compute", defaultModel)).toBe("glm-5");
   });
 
-  it("returns gpt-5-mini for 'critical' tier", () => {
-    expect(getModelForTier("critical", defaultModel)).toBe("gpt-5-mini");
+  it("returns glm-5 for 'critical' tier", () => {
+    expect(getModelForTier("critical", defaultModel)).toBe("glm-5");
   });
 
-  it("returns gpt-5-mini for 'dead' tier", () => {
-    expect(getModelForTier("dead", defaultModel)).toBe("gpt-5-mini");
+  it("returns glm-5 for 'dead' tier", () => {
+    expect(getModelForTier("dead", defaultModel)).toBe("glm-5");
   });
 
   it("returns the default model for 'normal' tier with custom default", () => {
@@ -136,10 +136,10 @@ describe("createInferenceClient setLowComputeMode", () => {
     expect(client.getDefaultModel()).toBe("gpt-5-mini");
   });
 
-  it("falls back to gpt-5-mini when no lowComputeModel is provided", () => {
+  it("falls back to glm-5 when no lowComputeModel is provided", () => {
     const client = createInferenceClient(baseOptions);
     client.setLowComputeMode(true);
-    expect(client.getDefaultModel()).toBe("gpt-5-mini");
+    expect(client.getDefaultModel()).toBe("glm-5");
   });
 
   it("restores defaultModel when low compute mode is disabled", () => {
