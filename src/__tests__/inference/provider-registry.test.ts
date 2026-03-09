@@ -86,7 +86,7 @@ describe("ProviderRegistry", () => {
 
     const registry = ProviderRegistry.fromConfig(filePath);
     expect(registry.getProviders().length).toBe(6);
-    expect(registry.resolveModel("reasoning").provider.id).toBe("zai");
+    expect(registry.resolveModel("reasoning").provider.id).toBe("minimax");
   });
 
   it("fromConfig applies provider overrides", () => {
@@ -167,15 +167,15 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
     const resolved = registry.resolveModel("reasoning");
 
-    expect(resolved.provider.id).toBe("zai");
-    expect(resolved.model.id).toBe("glm-5");
+    expect(resolved.provider.id).toBe("minimax");
+    expect(resolved.model.id).toBe("MiniMax-M2.5");
   });
 
   it("resolveModel returns fast model from default tier", () => {
     const registry = createRegistryFromDefaults();
     const resolved = registry.resolveModel("fast");
 
-    expect(resolved.provider.id).toBe("zai");
+    expect(resolved.provider.id).toBe("minimax");
     expect(resolved.model.tier).toBe("fast");
   });
 
@@ -183,13 +183,13 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
     const resolved = registry.resolveModel("cheap");
 
-    expect(resolved.provider.id).toBe("zai");
-    expect(resolved.model.id).toBe("glm-5");
+    expect(resolved.provider.id).toBe("minimax");
+    expect(resolved.model.id).toBe("MiniMax-M2.5");
   });
 
   it("resolveCandidates returns fallback order for reasoning tier", () => {
     const registry = createRegistryFromDefaults();
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["minimax", "zai"]);
   });
 
   it("resolveCandidates skips providers disabled in config", () => {
@@ -205,7 +205,7 @@ describe("ProviderRegistry", () => {
     const resolved = registry.resolveModel("reasoning", true);
 
     expect(resolved.model.tier).toBe("fast");
-    expect(resolved.provider.id).toBe("zai");
+    expect(resolved.provider.id).toBe("minimax");
   });
 
   it("resolveModel in survival mode downgrades fast to cheap", () => {
@@ -213,7 +213,7 @@ describe("ProviderRegistry", () => {
     const resolved = registry.resolveModel("fast", true);
 
     expect(resolved.model.tier).toBe("cheap");
-    expect(resolved.model.id).toBe("glm-5");
+    expect(resolved.model.id).toBe("MiniMax-M2.5");
   });
 
   it("resolveModel in survival mode keeps cheap as cheap", () => {
@@ -260,10 +260,10 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
 
     registry.disableProvider("openai", "manual", 60_000);
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["minimax", "zai"]);
 
     registry.enableProvider("openai");
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["minimax", "zai"]);
   });
 
   it("disableProvider ignores unknown provider IDs", () => {
@@ -284,10 +284,10 @@ describe("ProviderRegistry", () => {
     const registry = createRegistryFromDefaults();
     registry.disableProvider("openai", "maintenance", 5_000);
 
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["minimax", "zai"]);
 
     vi.advanceTimersByTime(5_001);
-    expect(providerIdsForTier(registry, "reasoning")).toEqual(["zai", "minimax"]);
+    expect(providerIdsForTier(registry, "reasoning")).toEqual(["minimax", "zai"]);
 
     vi.useRealTimers();
   });
