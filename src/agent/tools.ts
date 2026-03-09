@@ -229,6 +229,34 @@ function buildPublishedServiceScript(
   ].join("\n");
 }
 
+function taskRequiresPublicRevenueVerification(task: {
+  taskClass?: string | null;
+  title?: string | null;
+  description?: string | null;
+}): boolean {
+  const taskClass = (task.taskClass || "").toLowerCase();
+  if (taskClass === "distribution" || taskClass === "monetization") {
+    return true;
+  }
+
+  const combined = `${task.title || ""}\n${task.description || ""}`.toLowerCase();
+  return /(public|publish|deploy|api|endpoint|revenue|pricing|x402|monetiz)/i.test(combined);
+}
+
+function hasPublicRevenueCompletionEvidence(
+  output: string,
+  artifacts: string[],
+): boolean {
+  const combined = [output, ...artifacts].join("\n");
+  if (/\b(?:localhost|127\.0\.0\.1)\b/i.test(combined)) {
+    return false;
+  }
+
+  const hasHttps = /https:\/\//i.test(combined);
+  const hasBusinessRoute = /(\/health|\/v1\/|pricing|markets|x402|messages|poll|count)/i.test(combined);
+  return hasHttps && hasBusinessRoute;
+}
+
 async function resolveCloudflareZoneId(
   cf: { listZones(): Promise<Array<{ id: string; name: string }>> },
   configuredZoneId: string | undefined,
@@ -506,10 +534,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const cfToken = ctx.config.cloudflareApiToken;
-        const cfKey = ctx.config.cloudflareApiKey;
-        const cfEmail = ctx.config.cloudflareEmail;
-        if (!cfToken && !(cfKey && cfEmail)) {
-          return "Error: Cloudflare credentials must be set in config for service publishing (cloudflareApiToken or cloudflareApiKey + cloudflareEmail).";
+        if (!cfToken) {
+          return "Error: cloudflareApiToken must be set in config for service publishing.";
         }
 
         const domain = String(args.domain || "compintel.co").trim().toLowerCase();
@@ -533,9 +559,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-        const cf = createCloudflareProvider(
-          cfToken ? { apiToken: cfToken } : { apiKey: cfKey, email: cfEmail },
-        );
+        const cf = createCloudflareProvider(cfToken);
         const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
         const existingRecords = await cf.listRecords(zoneId);
         const originIp = String(args.origin_ip || "").trim()
@@ -1361,7 +1385,7 @@ Model: ${ctx.inference.getDefaultModel()}
       execute: async (args, ctx) => {
         ctx.db.setAgentState("low_compute");
         ctx.inference.setLowComputeMode(true);
-        return `Entered low-compute mode. Model switched to gpt-5-mini. Reason: ${(args.reason as string) || "manual"}`;
+        return `Entered low-compute mode. Model switched to glm-5. Reason: ${(args.reason as string) || "manual"}`;
       },
     },
 
@@ -4093,6 +4117,17 @@ Model: ${ctx.inference.getDefaultModel()}
           return `Task "${input}" not found. Use list_goals to see tasks with their IDs.`;
         if (task.status === "completed")
           return `Task "${task.title}" is already completed.`;
+
+        if (
+          taskRequiresPublicRevenueVerification(task)
+          && !hasPublicRevenueCompletionEvidence(output, artifacts)
+        ) {
+          return [
+            `Blocked: task "${task.title}" requires public completion evidence before it can be completed.`,
+            "Provide a public HTTPS hostname plus one business-route result in output or artifacts.",
+            "Local CLI output and localhost-only checks are not sufficient for public revenue work.",
+          ].join("\n");
+        }
 
         const result = {
           success: true,
