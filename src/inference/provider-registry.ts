@@ -245,7 +245,7 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
     apiKeyEnvVar: "MINIMAX_API_KEY",
     models: [
       {
-        id: "MiniMax-M2.5-highspeed",
+        id: "MiniMax-M2.5",
         tier: "fast",
         contextWindow: 128000,
         maxOutputTokens: 16384,
@@ -256,7 +256,7 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
         supportsStreaming: true,
       },
       {
-        id: "MiniMax-M2.5-highspeed",
+        id: "MiniMax-M2.5",
         // Reuse the fast model for cheap mode to keep provider routing on MiniMax.
         tier: "cheap",
         contextWindow: 128000,
@@ -268,7 +268,7 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
         supportsStreaming: true,
       },
       {
-        id: "MiniMax-M2.5-highspeed",
+        id: "MiniMax-M2.5",
         tier: "reasoning",
         contextWindow: 128000,
         maxOutputTokens: 16384,

@@ -94,7 +94,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
   });
 
   it("routes MiniMax model through byok when provider is 'other'", () => {
-    const backend = resolveInferenceBackend("MiniMax-M2.5-highspeed", {
+    const backend = resolveInferenceBackend("MiniMax-M2.5", {
       inferenceBaseUrl: "https://api.minimax.io/v1",
       getModelProvider: () => "other",
     });
@@ -107,7 +107,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       new Response(
         JSON.stringify({
           id: "resp_minimax_system_rewrite",
-          model: "MiniMax-M2.5-highspeed",
+          model: "MiniMax-M2.5",
           choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         }),
@@ -121,7 +121,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
         apiKey: "test-key",
         inferenceApiKey: "test-byok-key",
         inferenceBaseUrl: "https://api.minimax.io/v1",
-        defaultModel: "MiniMax-M2.5-highspeed",
+        defaultModel: "MiniMax-M2.5",
         maxTokens: 64,
       });
 
@@ -500,7 +500,7 @@ describe("BYOK model registration", () => {
     const now = new Date().toISOString();
     registry.upsert({
       modelId: "defunct-llm",
-      provider: "defunct",
+      provider: "other",
       displayName: "Defunct LLM",
       tierMinimum: "critical",
       costPer1kInput: 0,
