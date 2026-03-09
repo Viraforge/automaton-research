@@ -268,7 +268,7 @@ const DEFAULT_PROVIDERS: ProviderConfig[] = [
         supportsStreaming: true,
       },
       {
-        id: "MiniMax-M2.5",
+        id: "MiniMax-M2.5-highspeed",
         tier: "reasoning",
         contextWindow: 128000,
         maxOutputTokens: 16384,
