@@ -35,8 +35,7 @@ describe("publish_service tool", () => {
       identity: createTestIdentity(),
       config: createTestConfig({
         useSovereignProviders: true,
-        cloudflareApiKey: "cf-test-key",
-        cloudflareEmail: "ops@compintel.co",
+        cloudflareApiToken: "cf-test-token",
         cloudflareZoneId: "zone-test",
       }),
       db,
