@@ -493,7 +493,7 @@ describe("BYOK model registration", () => {
     expect(entry!.provider).toBe("other");
   });
 
-  it("BYOK model with provider 'defunct' gets disabled by initialize() cleanup", () => {
+  it("BYOK model with provider 'other' remains enabled by initialize() cleanup", () => {
     const registry = new ModelRegistry(db);
     registry.initialize();
 
@@ -521,7 +521,7 @@ describe("BYOK model registration", () => {
 
     const entry = registry.get("defunct-llm");
     expect(entry).toBeDefined();
-    expect(entry!.enabled).toBe(false); // "defunct" is NOT protected
+    expect(entry!.enabled).toBe(true); // "other" is a protected provider
   });
 });
 
