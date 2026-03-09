@@ -48,16 +48,34 @@ When a service must be made public:
 3. Publish with `publish_service` or the equivalent managed DNS + proxy path.
 4. Validate public HTTPS reachability on the final hostname.
 5. Record the exact endpoint and verification evidence in the work log or heartbeat.
+6. If publication fails, escalate the exact missing field or exact runtime error instead of switching to a localhost-only success claim.
+7. When runtime capability later becomes available, retry `publish_service` before claiming deployment is impossible.
 
 `localhost` is never sufficient proof of delivery for a public product.
+Shell backgrounding (`&`) is never a valid substitute for publication.
 
 ## Default Routing Model
 
+- Compute provider: `Vultr`
 - DNS provider: Cloudflare
 - Reverse proxy/TLS: Caddy
 - Preferred origin model: public hostname -> Caddy -> local service on `127.0.0.1:<port>`
 - Prefer direct, deterministic routing over ad hoc tunnels for durable services
 - Tunnels are acceptable for temporary migration or debugging, not as the default steady-state publication path
+
+## Approved Sovereign Providers
+
+- `Vultr` is the approved compute provider for new instances, service isolation, and sovereign child deployment.
+- `Cloudflare` is the approved DNS/control-plane provider for `compintel.co`.
+- `Porkbun` is not required for normal `compintel.co` subdomain publication and should not be treated as a blocker for service publishing under the existing zone.
+
+Use `Vultr` when:
+
+- a new VPS or isolated service host is needed
+- local host constraints make publication or scaling impractical
+- sovereign child compute must be provisioned outside Conway-managed infrastructure
+
+Do not avoid `Vultr` because of habit or stale assumptions if runtime config reports `vultrApiKey` present and sovereign-provider mode enabled.
 
 ## Verification Standard
 
@@ -97,6 +115,8 @@ Safe autonomy means Connie may build and publish, but must stay inside:
 - approved infra providers
 - explicit verification requirements
 - budget and channel policy controls
+
+For compute and deployment decisions, `Vultr` is an approved infra provider and may be used without additional operator approval when the work stays inside the `compintel.co` operating model.
 
 ## Creator Messages vs Governance Docs
 

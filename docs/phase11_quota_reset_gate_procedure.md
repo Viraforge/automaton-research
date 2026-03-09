@@ -345,6 +345,7 @@ If gate verification fails and investigative remediation is unsuccessful:
 - [Connie Revamp Handoff](./connie_revamp_march6_handoff.md)
 - [VPS Phase 11 Gate Workflow](./.github/workflows/vps-phase11-gate.yml)
 - [Verification Script](./scripts/verify-phase11-quota-reset.sh)
+- [Evidence Directory Contract](./phase11_gate_evidence_contract.md)
 
 ---
 

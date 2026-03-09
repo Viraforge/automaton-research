@@ -23,11 +23,15 @@ Deterministic operating rules for execution, orchestration, and escalation.
 - Every cycle must produce:
   1) one concrete artifact change, and
   2) one verification signal tied to that artifact.
+- A wake cycle with zero tool calls and no bounded sleep is a no-progress violation.
 - Discovery/status tools (`discover_agents`, `list_children`, `orchestrator_status`, balance checks) are capped to one call per wake cycle unless a new failure signal appears.
 - `discover_agents` cannot be called in two consecutive cycles without a newly created artifact (file, deploy, or goal/task state change).
 - If discovery is repeated twice without conversion to a concrete build/distribution action, force lane switch and record the blocker in `WORKLOG.md`.
 - `exec`-dominant turns (where `exec` appears across the recent rolling window) with no verified progress for `noProgressCycleLimit` cycles must trigger forced sleep with exponential backoff.
 - Backoff for exec-dominant no-progress loops starts at 3 minutes and may grow to 30 minutes maximum; this is a cost-protection control, not optional behavior.
+- Repeated `write_file` turns without execution, deploy/publication attempt, or verification in the same short window are no-progress violations.
+- If runtime config reports approved sovereign publication or compute capability available, capability-denial reasoning without a fresh failing deployment/provider tool call is a no-progress violation.
+- Background shelling (`&`) is not an allowed publication strategy for public services; redirect immediately to local verification, `publish_service`, or explicit escalation.
 
 ## 2) Orchestrator Anti-Stall Rules
 
@@ -84,6 +88,21 @@ A deploy is valid only when all checks pass:
 - Logs show successful startup without critical errors.
 
 If any fail, rollback criteria apply immediately.
+
+For public revenue/API work, the completion standard is stricter:
+
+- `write_file` alone is never enough.
+- local CLI output or `localhost` health is intermediate evidence only.
+- completion requires local service verification, public HTTPS verification, and one business-route result.
+
+## 7.1) Sovereign Provider Governance
+
+- Approved compute provider: `Vultr`.
+- Approved DNS provider: `Cloudflare`.
+- Connie is authorized to use configured sovereign-provider tools when they are available in runtime config.
+- `create_instance`, `list_instances`, and `destroy_instance` are valid production paths when `useSovereignProviders=true` and `vultrApiKey` is configured.
+- Do not treat provider-backed actions as unavailable if governance approves them and config validation reports them present.
+- If a sovereign-provider action is blocked by missing config, escalate the exact missing field instead of reverting to localhost-only or unrelated-hosting plans.
 
 ## 8) Change Management
 
