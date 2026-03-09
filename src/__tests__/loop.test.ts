@@ -4,6 +4,8 @@
  * Deterministic tests for the agent loop using mock clients.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { runAgentLoop } from "../agent/loop.js";
 import {
@@ -18,6 +20,41 @@ import {
 } from "./mocks.js";
 import type { AutomatonDatabase, AgentTurn, AgentState } from "../types.js";
 
+function getLoopDetectionState(db: AutomatonDatabase): Record<string, unknown> {
+  const raw = db.getKV("loop_detection_state");
+  return raw ? JSON.parse(raw) : {};
+}
+
+let uniqueResponseCounter = 0;
+
+function uniqueToolResponse(
+  name: string,
+  args: Record<string, unknown>,
+): ReturnType<typeof toolCallResponse> {
+  uniqueResponseCounter += 1;
+  const uid = `fixture_${uniqueResponseCounter}`;
+  return {
+    id: `resp_${uid}`,
+    model: "mock-model",
+    message: {
+      role: "assistant",
+      content: "",
+      tool_calls: [{
+        id: `call_${uid}`,
+        type: "function" as const,
+        function: { name, arguments: JSON.stringify(args) },
+      }],
+    },
+    toolCalls: [{
+      id: `call_${uid}`,
+      type: "function" as const,
+      function: { name, arguments: JSON.stringify(args) },
+    }],
+    usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+    finishReason: "tool_calls",
+  };
+}
+
 describe("Agent Loop", () => {
   let db: AutomatonDatabase;
   let conway: MockConwayClient;
@@ -29,6 +66,7 @@ describe("Agent Loop", () => {
     conway = new MockConwayClient();
     identity = createTestIdentity();
     config = createTestConfig();
+    uniqueResponseCounter = 0;
   });
 
   afterEach(() => {
@@ -150,6 +188,43 @@ describe("Agent Loop", () => {
     });
 
     expect(db.getAgentState()).toBe("sleeping");
+  });
+
+  it.skip("classifies a no-tool wake cycle as empty_wake_cycle (requires: lastNoProgressSignals tracking)", async () => {
+    const inference = new MockInferenceClient([
+      noToolResponse("I cannot do anything right now."),
+    ]);
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+    });
+
+    const loopState = getLoopDetectionState(db);
+    expect(loopState.lastNoProgressSignals).toContain("empty_wake_cycle");
+    expect(db.getKV("portfolio.no_progress_cycles")).toBe("1");
+  });
+
+  it("does not classify bounded sleep as empty_wake_cycle", async () => {
+    const inference = new MockInferenceClient([
+      toolCallResponse([
+        { name: "sleep", arguments: { duration_seconds: 60, reason: "waiting on dependency" } },
+      ]),
+    ]);
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+    });
+
+    const loopState = getLoopDetectionState(db);
+    expect(loopState.lastNoProgressSignals ?? []).not.toContain("empty_wake_cycle");
   });
 
   it("respects existing sleep_until on startup and skips inference", async () => {
@@ -1087,6 +1162,226 @@ describe("Agent Loop", () => {
       .find((call) => call.name === "list_instances");
     expect(blockedInstances).toBeDefined();
     expect(blockedInstances?.error).toContain("tool temporarily blocked during no-progress stall");
+  });
+
+  it.skip("flags repeated write_file turns without verification (requires: write_without_verification intervention)", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("write_file", { path: "/tmp/one.txt", content: "one" }),
+      uniqueToolResponse("write_file", { path: "/tmp/two.txt", content: "two" }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const interventionTurn = turns.find((turn) => turn.input?.includes("WRITE WITHOUT VERIFICATION"));
+    expect(interventionTurn).toBeDefined();
+  });
+
+  it("does not flag write_file when the next cycle verifies the artifact", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("write_file", { path: "/tmp/one.txt", content: "one" }),
+      uniqueToolResponse("exec", { command: "echo verify" }),
+      noToolResponse("done"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.some((turn) => turn.input?.includes("WRITE WITHOUT VERIFICATION"))).toBe(false);
+    const loopState = getLoopDetectionState(db);
+    expect(loopState.lastNoProgressSignals ?? []).not.toContain("write_without_verification");
+  });
+
+  it.skip("flags stale capability claims when sovereign publication is available (requires: publish_service intervention)", async () => {
+    const sovereignConfig = createTestConfig({
+      useSovereignProviders: true,
+      cloudflareApiToken: "cf-token",
+      vultrApiKey: "vultr-token",
+      maxTurnsPerCycle: 3,
+      portfolio: {
+        noProgressCycleLimit: 1,
+      },
+    });
+    const inference = new MockInferenceClient([
+      noToolResponse("I have 0 USDC so I cannot deploy or publish anything."),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config: sovereignConfig,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const correctionTurn = turns.find((turn) => turn.input?.includes("STALE CAPABILITY CLAIM"));
+    expect(correctionTurn).toBeDefined();
+  });
+
+  it("does not flag stale capability claims when sovereign publication is unavailable", async () => {
+    const inference = new MockInferenceClient([
+      noToolResponse("I have 0 USDC so I cannot deploy or publish anything."),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.some((turn) => turn.input?.includes("STALE CAPABILITY CLAIM"))).toBe(false);
+  });
+
+  it.skip("redirects forbidden background exec toward publish_service or verification (requires: background_exec redirection)", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("exec", { command: "node server.js &" }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const correctionTurn = turns.find((turn) => turn.input?.includes("PUBLICATION REDIRECT"));
+    expect(correctionTurn).toBeDefined();
+    const blockedExec = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "exec");
+    expect(blockedExec?.error ?? blockedExec?.result ?? "").toContain("background operator &");
+  });
+
+  it.skip("blocks complete_task for public revenue work without public proof (requires: completion_validation logic)", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run("task-public-proof", "goal-public-proof", "Publish revenue API", "Expose paid API publicly", now);
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof",
+        output: "Verified on localhost only",
+        artifacts: "http://localhost:8081/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get("task-public-proof") as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("allows complete_task for public revenue work with public route evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-ok", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run("task-public-proof-ok", "goal-public-proof-ok", "Publish revenue API", "Expose paid API publicly", now);
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-ok",
+        output: "Verified https://api.compintel.co/health and https://api.compintel.co/v1/pricing",
+        artifacts: "https://api.compintel.co/health,https://api.compintel.co/v1/pricing",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get("task-public-proof-ok") as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it.skip("replays the reviewed loop fixture and surfaces corrective interventions (requires: connie-loop-closure-regression.json fixture)", async () => {
+    const fixturePath = path.join(process.cwd(), "src/__tests__/fixtures/connie-loop-closure-regression.json");
+    const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf-8")) as {
+      steps: Array<Record<string, unknown>>;
+    };
+    const fixtureResponses = fixture.steps.map((step, index) => {
+      if (step.type === "no_tool") {
+        return noToolResponse(String(step.message || `fixture-no-tool-${index}`));
+      }
+      return uniqueToolResponse(
+        String(step.name),
+        (step.arguments as Record<string, unknown>) || {},
+      );
+    });
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config: createTestConfig({
+        maxTurnsPerCycle: 6,
+        portfolio: {
+          noProgressCycleLimit: 1,
+        },
+      }),
+      db,
+      conway,
+      inference: new MockInferenceClient(fixtureResponses),
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.some((turn) => turn.input?.includes("WRITE WITHOUT VERIFICATION"))).toBe(true);
+    expect(turns.some((turn) => turn.input?.includes("PUBLICATION REDIRECT"))).toBe(true);
   });
 
   it("allows introspection tools for explicit agent/creator inputs during stalls", async () => {
