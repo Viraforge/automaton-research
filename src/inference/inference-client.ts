@@ -239,15 +239,27 @@ export class UnifiedInferenceClient {
     const apiKeyInfo = typeof configuredApiKey === "string" && configuredApiKey.length > 0
       ? `${provider.apiKeyEnvVar}:set(len=${configuredApiKey.length})`
       : `${provider.apiKeyEnvVar}:missing`;
+    const clientApiKeyInfo = (client as any).apiKey
+      ? `set(len=${String((client as any).apiKey).length})`
+      : "missing";
     const expectedEndpoint = `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`;
-    logger.info("Unified inference request", {
+
+    const logData = {
       providerId: provider.id,
       modelId: model.id,
       requestedTier,
       baseUrl: provider.baseUrl,
       endpoint: expectedEndpoint,
-      apiKey: apiKeyInfo,
+      env_apiKey: apiKeyInfo,
+      client_apiKey: clientApiKeyInfo,
+    };
+    logger.info("[INFERENCE-CLIENT] Using provider", {
+      providerId: provider.id,
+      expectedApiKey: provider.apiKeyEnvVar,
+      envVarName: provider.apiKeyEnvVar,
+      envVarValue: apiKeyInfo,
     });
+    logger.info("Unified inference request", logData);
     const payload = this.buildChatCompletionRequest(provider.id, model.id, params);
     if (params.stream) {
       const stream = await client.chat.completions.create({

@@ -37,6 +37,23 @@ const logger = createLogger("main");
 const VERSION = "0.2.1";
 
 async function main(): Promise<void> {
+  // Set up fetch interceptor to log MiniMax API requests for debugging
+  const originalFetch = global.fetch;
+  // @ts-ignore
+  global.fetch = async (url: string | Request, init?: RequestInit): Promise<Response> => {
+    if (typeof url === "string" && url.includes("api.minimax.io")) {
+      const headers = init?.headers as Record<string, string> | undefined || {};
+      const authHeader = headers["authorization"] || headers["Authorization"] || "MISSING";
+      logger.info("[FETCH] MiniMax request", {
+        url,
+        method: init?.method || "GET",
+        hasAuthHeader: authHeader !== "MISSING",
+        authHeaderPreview: authHeader === "MISSING" ? "MISSING" : `${authHeader.substring(0, 20)}...`,
+      });
+    }
+    return originalFetch(url, init);
+  };
+
   const args = process.argv.slice(2);
 
   // ─── CLI Commands ────────────────────────────────────────────
@@ -171,6 +188,10 @@ Version:    ${config.version}
 
 async function run(): Promise<void> {
   logger.info(`[${new Date().toISOString()}] Conway Automaton v${VERSION} starting...`);
+
+  // Debug: log environment variables
+  logger.info(`[ENV DEBUG] MINIMAX_API_KEY: ${process.env.MINIMAX_API_KEY ? `set(len=${process.env.MINIMAX_API_KEY.length})` : "MISSING"}`);
+  logger.info(`[ENV DEBUG] ZAI_API_KEY: ${process.env.ZAI_API_KEY ? `set(len=${process.env.ZAI_API_KEY.length})` : "MISSING"}`);
 
   // Load config — first run triggers interactive setup wizard
   let config = loadConfig();
@@ -314,10 +335,17 @@ async function run(): Promise<void> {
       if (entry.provider === "anthropic" && !config.anthropicApiKey) {
         modelRegistry.setEnabled(entry.modelId, false);
       }
+      // In BYOK mode, disable ZAI models (they won't be accessible via BYOK endpoint)
+      if (entry.provider === "zai") {
+        modelRegistry.setEnabled(entry.modelId, false);
+      }
     }
 
     logger.info(`[${new Date().toISOString()}] BYOK inference: ${config.inferenceBaseUrl}`);
   }
+
+  logger.info(`[${new Date().toISOString()}] [CONFIG DEBUG] inferenceApiKey: ${config.inferenceApiKey ? `set(len=${config.inferenceApiKey.length})` : "MISSING"}`);
+  logger.info(`[${new Date().toISOString()}] [CONFIG DEBUG] fallback apiKey: ${apiKey.substring(0, 20)}...`);
 
   const inference = createInferenceClient({
     apiKey: config.inferenceApiKey || apiKey,
@@ -325,7 +353,7 @@ async function run(): Promise<void> {
     inferenceApiKey: config.inferenceApiKey,
     defaultModel: config.inferenceModel,
     maxTokens: config.maxTokensPerTurn,
-    lowComputeModel: config.modelStrategy?.lowComputeModel || "glm-5",
+    lowComputeModel: config.modelStrategy?.lowComputeModel || config.inferenceModel || "glm-5",
     openaiApiKey: config.openaiApiKey,
     anthropicApiKey: config.anthropicApiKey,
     ollamaBaseUrl,

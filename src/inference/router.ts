@@ -198,10 +198,12 @@ export class InferenceRouter {
 
     // 1. Try routing-matrix candidates
     const preference = this.getPreference(tier, taskType);
+    console.error(`[ROUTER] Selecting model for tier=${tier}, taskType=${taskType}, candidates=${preference?.candidates.join(",")}`);
     if (preference && preference.candidates.length > 0) {
       for (const candidateId of preference.candidates) {
         const entry = this.registry.get(candidateId);
         if (entry && entry.enabled) {
+          console.error(`[ROUTER] Found matrix candidate: ${candidateId} (enabled: ${entry.enabled})`);
           return entry;
         }
       }
@@ -215,17 +217,22 @@ export class InferenceRouter {
         ? [strategy.criticalModel, strategy.inferenceModel, strategy.lowComputeModel]
         : [strategy.inferenceModel, strategy.lowComputeModel, strategy.criticalModel];
 
+    console.error(`[ROUTER] Fallback strategy: inferenceModel=${strategy.inferenceModel}, lowComputeModel=${strategy.lowComputeModel}, criticalModel=${strategy.criticalModel}, fallbackIds=${fallbackIds.join(",")}`);
     for (const modelId of fallbackIds) {
       if (!modelId) continue;
       const entry = this.registry.get(modelId);
+      console.error(`[ROUTER] Checking fallback ${modelId}: exists=${!!entry}, enabled=${entry?.enabled}`);
       if (!entry || !entry.enabled) continue;
       const isFree = entry.costPer1kInput === 0 && entry.costPer1kOutput === 0;
       const tierOk = tierRank >= (TIER_ORDER[entry.tierMinimum] ?? 0);
+      console.error(`[ROUTER] Fallback ${modelId}: isFree=${isFree}, tierOk=${tierOk}, selected=${isFree || tierOk}`);
       if (isFree || tierOk) {
+        console.error(`[ROUTER] Selected fallback: ${modelId}`);
         return entry;
       }
     }
 
+    console.error(`[ROUTER] No model selected! Returning null.`);
     return null;
   }
 

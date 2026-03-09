@@ -55,16 +55,16 @@ const DEFAULT_EMERGENCY_STOP_CREDITS = 100;
 
 const DEFAULT_TIER_DEFAULTS: Record<ModelTier, TierDefault> = {
   reasoning: {
-    preferredProvider: "zai",
-    fallbackOrder: ["minimax"],
+    preferredProvider: "minimax",
+    fallbackOrder: ["zai"],
   },
   fast: {
-    preferredProvider: "zai",
-    fallbackOrder: ["minimax"],
+    preferredProvider: "minimax",
+    fallbackOrder: ["zai"],
   },
   cheap: {
-    preferredProvider: "zai",
-    fallbackOrder: ["minimax"],
+    preferredProvider: "minimax",
+    fallbackOrder: ["zai"],
   },
 };
 
@@ -527,10 +527,18 @@ export class ProviderRegistry {
   }
 
   private buildResolvedModel(provider: ProviderConfig, model: ModelConfig): ResolvedModel {
+    // Log that we're building a client for this provider
+    fs.appendFileSync("/tmp/provider-registry.log", `[${new Date().toISOString()}] buildResolvedModel: ${provider.id}\n`, "utf-8");
+
     const apiKey = this.resolveApiKey(provider);
+    const apiKeyPreview = apiKey.substring(0, 15);
+    fs.appendFileSync("/tmp/provider-registry.log", `[${new Date().toISOString()}]   API Key from ${provider.apiKeyEnvVar}: ${apiKeyPreview}\n`, "utf-8");
+
+    // Enable debug logging to diagnose auth header issues
     const client = new OpenAI({
       apiKey,
       baseURL: provider.baseUrl,
+      logLevel: "debug",
     });
 
     return {
@@ -542,15 +550,16 @@ export class ProviderRegistry {
 
   private resolveApiKey(provider: ProviderConfig): string {
     const configured = process.env[provider.apiKeyEnvVar];
-    if (typeof configured === "string" && configured.length > 0) {
-      return configured;
-    }
+    const resolved = typeof configured === "string" && configured.length > 0
+      ? configured
+      : provider.id === "local"
+        ? "local"
+        : `missing-${provider.apiKeyEnvVar.toLowerCase()}`;
 
-    if (provider.id === "local") {
-      return "local";
-    }
-
-    return `missing-${provider.apiKeyEnvVar.toLowerCase()}`;
+    const keyPreview = resolved.substring(0, 15);
+    const logEntry = `[${new Date().toISOString()}] Provider: ${provider.id}, EnvVar: ${provider.apiKeyEnvVar}, Key: ${keyPreview}\n`;
+    fs.appendFileSync("/tmp/api-key-resolution.log", logEntry, { encoding: "utf-8" });
+    return resolved;
   }
 
   private isProviderActive(provider: ProviderConfig): boolean {
