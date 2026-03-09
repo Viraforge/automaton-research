@@ -35,7 +35,7 @@ import {
   executeTool,
 } from "./tools.js";
 import { sanitizeInput } from "./injection-defense.js";
-import { getSurvivalTier, getSurvivalTierFromUsdc, getFinancialStateFromUsdc } from "../financial/survival.js";
+import { getSurvivalTier, getFinancialStateFromUsdc } from "../financial/survival.js";
 import { getUsdcBalance } from "../wallet/x402.js";
 import {
   claimInboxMessages,
@@ -567,8 +567,10 @@ export async function runAgentLoop(
         log(config, "[API_UNREACHABLE] Balance API unreachable, continuing in low-compute mode.");
         inference.setLowComputeMode(true);
       } else {
+        // In sovereign mode, wallet balance is for optional x402 payments only.
+        // Do not preemptively trigger critical state based on zero balance.
         const effectiveTier = config.useSovereignProviders
-          ? getSurvivalTierFromUsdc(financial.usdcBalance)
+          ? "normal" // Wallet funds are optional; don't throttle inference
           : getSurvivalTier(financial.creditsCents);
 
         if (effectiveTier === "critical") {
@@ -699,8 +701,9 @@ export async function runAgentLoop(
       pendingInput = undefined;
 
       // ── Inference Call (via router when available) ──
+      // In sovereign mode, wallet balance doesn't affect inference routing.
       const survivalTier = config.useSovereignProviders
-        ? getSurvivalTierFromUsdc(financial.usdcBalance)
+        ? "normal" // Wallet is optional; always route at normal tier
         : getSurvivalTier(financial.creditsCents);
       log(config, `[THINK] Routing inference (tier: ${survivalTier}, model: ${inference.getDefaultModel()})...`);
 

@@ -15,7 +15,7 @@ import type {
   HeartbeatConfig,
   TickContext,
 } from "../types.js";
-import { getSurvivalTier, getSurvivalTierFromUsdc } from "../financial/survival.js";
+import { getSurvivalTier } from "../financial/survival.js";
 import { getUsdcBalance } from "../wallet/x402.js";
 import { createLogger } from "../observability/logger.js";
 
@@ -79,8 +79,10 @@ export async function buildTickContext(
     }
   }
 
+  // In sovereign mode, wallet balance is for optional x402 payments only.
+  // Do not throttle heartbeat tasks based on zero wallet balance.
   const survivalTier = useSovereignProviders
-    ? getSurvivalTierFromUsdc(usdcBalance)
+    ? "normal" // Wallet funds are optional; don't throttle heartbeat
     : getSurvivalTier(creditBalance);
   const lowComputeMultiplier = config.lowComputeMultiplier ?? 4;
 
