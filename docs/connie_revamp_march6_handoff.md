@@ -580,7 +580,7 @@ Expand:
 
 Before assigning tickets, complete the following setup:
 
-- [ ] Extract historical failure fixtures from 24h logs
+- [x] Extract historical failure fixtures from 24h logs
   - Parse [tmp/vps-log-pull-24h-run-22770520881.log](/Users/damondecrescenzo/automaton-research/tmp/vps-log-pull-24h-run-22770520881.log) for:
     - repeated 1214 error sequences
     - repeated 429 rate limit sequences
@@ -590,18 +590,18 @@ Before assigning tickets, complete the following setup:
     - active 0/0 goals
   - Create fixture files under `src/__tests__/fixtures/`
   - Sanitize logs (remove tokens, personal data)
-- [ ] Obtain current-state database snapshot
+- [x] Obtain representative current-state database snapshot fixture
   - Needed for Ticket 2.3 migration test
-  - Coordinate with ops/existing Connie instance
-- [ ] Finalize operator target JSON schema
+  - Implemented as sanitized fixture under `src/__tests__/fixtures/migration/`
+- [x] Finalize operator target JSON schema
   - Define file path (default: `~/.automaton/distribution-targets.json`, configurable)
   - Document structure (name, type, target_url, priority, tags, etc.)
   - Document example file for test fixtures
-- [ ] Document high-risk review strategy for Epics 7-8
+- [x] Document high-risk review strategy for Epics 7-8
   - Assign code reviewers
   - Schedule pair programming sessions
   - Define pause/rollback criteria
-- [ ] Provision relay subdomain and TLS prerequisites
+- [x] Provision relay subdomain and TLS prerequisites
   - DNS A/AAAA or CNAME for `relay.compintel.co`
   - TLS certificate issuance and renewal path
   - reverse-proxy routing target and firewall rules
@@ -692,6 +692,25 @@ Post-Epic 11 runtime gate:
 
 ---
 
+## Program Completion Matrix
+
+| Original Epic/Phase | Status | Evidence | Open Ticket IDs | Owner | Target Date |
+|---|---|---|---|---|---|
+| Epic 1 (Docs + types) | Completed | `SOUL.md`, `GOVERNANCE.md`, `constitution.md`, `src/types.ts` updates merged | None | Runtime team | Complete |
+| Epic 2 (Schema + DB) | Completed | `V11` schema, migration mapping, migration tests | None | Runtime team | Complete |
+| Epic 3-4 (Portfolio/distribution state) | Completed | `src/portfolio/*`, `src/distribution/*`, CRUD/tests | None | Runtime team | Complete |
+| Epic 5-6 (Governance + tools) | Completed | Channel-state/progress modules, tool gating, project tools | None | Runtime team | Complete |
+| Epic 7-8 (Orchestrator + loop) | Completed | Ghost-goal invalidation, follow-through, no-progress controls, portfolio-aware selection | None | Runtime team | Complete |
+| Epic 9-10 (Heartbeat + regression) | Completed | Heartbeat portfolio fields, staged validation report, expanded fixture suite | None | Runtime + QA | Complete |
+| Epic 11 (Sovereign relay) | Completed | Relay service + TLS + gate workflow/script/docs + strict signed probe default | None | Ops + Runtime | Complete |
+| Remediation QA | In progress | Gate schema contract, evidence checks, shell lint, gate script tests | `RM-OPS-001` optional reminder watchdog | Ops | Next sprint |
+
+**Residual Risk Ledger**
+
+- `RM-OPS-001`: optional reminder/watchdog automation not required for correctness; can ship in follow-up.
+
+---
+
 ## Phase 11 Quota Reset Gate Execution Report
 
 **Scheduled Execution**: 2026-03-12 05:05:53 UTC
@@ -707,7 +726,7 @@ Post-Epic 11 runtime gate:
 
 **Execution Method** (choose one):
 - [ ] GitHub Actions: `gh workflow run vps-phase11-gate.yml --ref main`
-- [ ] Manual script: `VPS_HOST=... VPS_USER=... VPS_SSH_KEY=... scripts/verify-phase11-quota-reset.sh`
+- [ ] Manual script: `RELAY_URL=... VPS_HOST=... VPS_USER=... VPS_SSH_KEY=... scripts/verify-phase11-quota-reset.sh`
 
 **Workflow/Run Details**:
 - Execution Timestamp: [FILL: YYYY-MM-DDTHH:MM:SSZ]
@@ -722,13 +741,18 @@ Post-Epic 11 runtime gate:
 **gate_result.json Summary**:
 ```json
 {
+  "version": 1,
   "timestamp": "[FILL]",
   "quota_reset_gate": "2026-03-12T05:05:53Z",
+  "evidence_window_seconds": [FILL],
   "results": {
     "social_relay_ready": [FILL: true/false],
+    "no_error_loops": [FILL: true/false],
     "relay_routing_operational": [FILL: true/false],
-    "all_services_active": [FILL: true/false]
+    "all_services_active": [FILL: true/false],
+    "successful_relay_message_op": [FILL: true/false]
   },
+  "failed_conditions": [FILL: [] or list],
   "pass": [FILL: true/false],
   "evidence_directory": "[FILL]"
 }
@@ -739,7 +763,9 @@ Post-Epic 11 runtime gate:
 - [ ] tls_certificate.txt [FILL: valid/expired/wrong-issuer]
 - [ ] channel_heartbeat.log [FILL: ready/cooldown/misconfigured/quota_exhausted]
 - [ ] message_endpoint_probe.json [FILL: 401/403/404/200/5xx]
+- [ ] churn_signals.log [FILL: empty/contains-signals]
 - [ ] caddy_recent_logs.log [FILL: no-errors/has-errors]
+- [ ] relay_recent_logs.log [FILL: no-errors/has-errors]
 - [ ] gate_result.json [FILL: path]
 
 **Evidence Archive Location**:

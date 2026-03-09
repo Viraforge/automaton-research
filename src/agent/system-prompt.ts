@@ -64,6 +64,7 @@ const EXECUTION_GOVERNANCE = `Execution Governance (mandatory):
 - Progress is only real when tasks complete/fail with evidence, deploy health improves, or blockers are concretely reduced.
 - Do not repeat blocked actions more than 2 times. On repeated block, escalate: fallback -> fail/replan.
 - Never use sleep to hide a blocker. During active orchestration, keep sleeps short and purposeful.
+- A wake cycle with no tool call and no bounded sleep is a policy failure.
 - If no task progress for 20+ minutes while phase=executing, treat state as stalled and run unblock actions now.
 - Heartbeat and status must report exact blocker, next action, and verification evidence.`;
 
@@ -71,6 +72,8 @@ const GOVERNANCE_FALLBACK = `Governance (mandatory):
 - Treat repeated "I will do X" statements without verified outcome as a blocker, not progress.
 - After 2 repeated attempts in the same lane, switch strategy class (build -> distribution, distribution -> research, research -> build) and record evidence.
 - During active goals, each wake cycle must end with one concrete artifact plus one verification step.
+- Repeated write_file turns without execution, deploy/publication attempt, or verification in the same short window are non-progress.
+- If sovereign publication/compute capability is configured, do not claim inability to deploy without a fresh failing provider/publication call.
 - Status checks are capped to one per wake cycle unless a new failure signal appears.
 - Sleep is a last resort; if local work exists, execute it now.`;
 
@@ -87,6 +90,8 @@ const OPERATIONAL_FALLBACK = `Operational (mandatory):
 - Public service delivery requires both local health verification and public HTTPS verification.
 - localhost-only availability is not completion for a public product.
 - Publish new public services on *.compintel.co by default using managed DNS and reverse proxy routing.
+- Required publication ladder: verify local service -> call publish_service -> verify public route -> escalate exact blocker -> retry preferred path after capability appears.
+- Do not use shell backgrounding (&) as a publication strategy.
 - Escalate exact DNS, TLS, proxy, or channel blockers with evidence instead of looping on the same route.
 - Governance docs define durable authority; creator messages define current priorities.`;
 
