@@ -52,7 +52,8 @@ export EVIDENCE_DIR OUTPUT_DIR
 
 # SSH key setup
 SSH_KEY_FILE="$EVIDENCE_DIR/vps_ssh_key"
-printf '%s' "$VPS_SSH_KEY" > "$SSH_KEY_FILE"
+# Preserve final newline so OpenSSH key parsing is valid.
+printf '%s\n' "$VPS_SSH_KEY" > "$SSH_KEY_FILE"
 chmod 600 "$SSH_KEY_FILE"
 
 # Colors

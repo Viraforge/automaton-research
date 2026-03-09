@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Phase 11 Quota Reset Gate Result",
+  "type": "object",
+  "required": [
+    "version",
+    "timestamp",
+    "quota_reset_gate",
+    "evidence_window_seconds",
+    "results",
+    "failed_conditions",
+    "pass",
+    "evidence_directory"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "quota_reset_gate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence_window_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "results": {
+      "type": "object",
+      "required": [
+        "social_relay_ready",
+        "no_error_loops",
+        "relay_routing_operational",
+        "all_services_active",
+        "successful_relay_message_op"
+      ],
+      "properties": {
+        "social_relay_ready": { "type": "boolean" },
+        "no_error_loops": { "type": "boolean" },
+        "relay_routing_operational": { "type": "boolean" },
+        "all_services_active": { "type": "boolean" },
+        "successful_relay_message_op": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "failed_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "social_relay_ready",
+          "no_error_loops",
+          "relay_routing_operational",
+          "all_services_active",
+          "successful_relay_message_op"
+        ]
+      }
+    },
+    "pass": {
+      "type": "boolean"
+    },
+    "evidence_directory": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

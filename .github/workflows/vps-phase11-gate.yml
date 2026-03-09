@@ -28,7 +28,7 @@ jobs:
       RELAY_SERVICE_NAME: ${{ vars.RELAY_SERVICE_NAME || 'automaton-social-relay' }}
       GATE_TIMESTAMP: ${{ github.event.inputs.gate_timestamp || '2026-03-12T05:05:53Z' }}
       RELAY_URL: ${{ github.event.inputs.relay_url || 'https://relay.compintel.co' }}
-      SIGNED_PROBE_REQUIRED: ${{ github.event.inputs.signed_probe_required || 'false' }}
+      SIGNED_PROBE_REQUIRED: ${{ github.event.inputs.signed_probe_required || 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

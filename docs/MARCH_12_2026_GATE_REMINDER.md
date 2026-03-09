@@ -53,6 +53,10 @@ Reminders:
 
 - [ ] **Option B**: Manual script
   ```bash
+  RELAY_URL="https://relay.compintel.co" \
+  VPS_HOST="66.135.29.159" \
+  VPS_USER="root" \
+  VPS_SSH_KEY="$(cat ~/.ssh/vps_key)" \
   scripts/verify-phase11-quota-reset.sh
   ```
 
@@ -75,6 +79,10 @@ Reminders:
 - [ ] Check result status:
   - If `"pass": true` → **Proceed to Post-Gate Operations**
   - If `"pass": false` → **DO NOT RESUME; investigate blocker**
+  - Inspect failure reasons:
+    ```bash
+    cat /tmp/phase11_evidence_*/gate_result.json | jq '.failed_conditions'
+    ```
 
 ---
 
