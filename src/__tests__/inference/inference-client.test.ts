@@ -150,7 +150,7 @@ describe("UnifiedInferenceClient", () => {
         apiKeyEnvVar: "MINIMAX_TEST_KEY",
         models: [
           {
-            id: "MiniMax-M2.5",
+            id: "MiniMax-M2.5-highspeed",
             tier: "reasoning",
             contextWindow: 1_000_000,
             maxOutputTokens: 65_536,

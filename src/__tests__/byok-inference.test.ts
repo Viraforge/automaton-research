@@ -107,7 +107,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
       new Response(
         JSON.stringify({
           id: "resp_minimax_system_rewrite",
-          model: "MiniMax-M2.5",
+          model: "MiniMax-M2.5-highspeed",
           choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         }),
@@ -121,7 +121,7 @@ describe("resolveInferenceBackend — BYOK precedence", () => {
         apiKey: "test-key",
         inferenceApiKey: "test-byok-key",
         inferenceBaseUrl: "https://api.minimax.io/v1",
-        defaultModel: "MiniMax-M2.5",
+        defaultModel: "MiniMax-M2.5-highspeed",
         maxTokens: 64,
       });
 
@@ -467,9 +467,9 @@ describe("BYOK model registration", () => {
     // Register a custom BYOK model as "other"
     const now = new Date().toISOString();
     registry.upsert({
-      modelId: "glm-5",
+      modelId: "custom-llm",
       provider: "other",
-      displayName: "GLM-5",
+      displayName: "Custom LLM",
       tierMinimum: "critical",
       costPer1kInput: 0,
       costPer1kOutput: 0,
@@ -487,7 +487,7 @@ describe("BYOK model registration", () => {
     // Re-initialize (simulates agent loop restart)
     registry.initialize();
 
-    const entry = registry.get("glm-5");
+    const entry = registry.get("custom-llm");
     expect(entry).toBeDefined();
     expect(entry!.enabled).toBe(true);
     expect(entry!.provider).toBe("other");
@@ -499,9 +499,9 @@ describe("BYOK model registration", () => {
 
     const now = new Date().toISOString();
     registry.upsert({
-      modelId: "glm-5",
+      modelId: "defunct-llm",
       provider: "defunct",
-      displayName: "GLM-5",
+      displayName: "Defunct LLM",
       tierMinimum: "critical",
       costPer1kInput: 0,
       costPer1kOutput: 0,
@@ -519,7 +519,7 @@ describe("BYOK model registration", () => {
     // Re-initialize — cleanup disables non-baseline, non-ollama, non-other models
     registry.initialize();
 
-    const entry = registry.get("glm-5");
+    const entry = registry.get("defunct-llm");
     expect(entry).toBeDefined();
     expect(entry!.enabled).toBe(false); // "defunct" is NOT protected
   });
@@ -574,32 +574,26 @@ describe("InferenceRouter — BYOK model selection", () => {
     const registry = new ModelRegistry(db);
     registry.initialize();
 
-    // Scenario: user sets inferenceModel: "gpt-5.2" but with inferenceBaseUrl
-    // The BYOK registration should convert gpt-5.2 to provider "other"
-    const gpt52 = registry.get("gpt-5.2")!;
+    // Scenario: user sets inferenceModel: "glm-5" but with inferenceBaseUrl
+    // The BYOK registration should convert glm-5 to provider "other"
+    const glm5 = registry.get("glm-5")!;
     registry.upsert({
-      ...gpt52,
+      ...glm5,
       provider: "other",
       enabled: true,
       updatedAt: new Date().toISOString(),
     });
 
-    // Disable all OTHER baseline models
-    for (const entry of registry.getAll()) {
-      if (entry.modelId === "gpt-5.2") continue;
-      if (entry.provider === "openai") registry.setEnabled(entry.modelId, false);
-    }
-
     const strategyConfig: ModelStrategyConfig = {
       ...DEFAULT_MODEL_STRATEGY_CONFIG,
-      inferenceModel: "gpt-5.2",
+      inferenceModel: "glm-5",
     };
     const budget = new InferenceBudgetTracker(db, strategyConfig);
     const router = new InferenceRouter(db, registry, budget);
 
     const selected = router.selectModel("high", "agent_turn");
     expect(selected).toBeDefined();
-    expect(selected!.modelId).toBe("gpt-5.2");
+    expect(selected!.modelId).toBe("glm-5");
     expect(selected!.provider).toBe("other");
   });
 });

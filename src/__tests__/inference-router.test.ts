@@ -227,19 +227,19 @@ describe("InferenceRouter", () => {
     it("returns correct model for normal/agent_turn", () => {
       const model = router.selectModel("normal", "agent_turn");
       expect(model).not.toBeNull();
-      expect(model!.modelId).toBe("gpt-5.2");
+      expect(model!.modelId).toBe("glm-5");
     });
 
     it("returns cheaper model for low_compute tier", () => {
       const model = router.selectModel("low_compute", "agent_turn");
       expect(model).not.toBeNull();
-      expect(model!.modelId).toBe("gpt-5-mini");
+      expect(model!.modelId).toBe("glm-5");
     });
 
     it("returns minimal model for critical tier", () => {
       const model = router.selectModel("critical", "agent_turn");
       expect(model).not.toBeNull();
-      expect(model!.modelId).toBe("gpt-5-mini");
+      expect(model!.modelId).toBe("glm-5");
     });
 
     it("returns null for dead tier", () => {
@@ -256,7 +256,7 @@ describe("InferenceRouter", () => {
       registry.setEnabled("gpt-5.2", false);
       const model = router.selectModel("normal", "agent_turn");
       expect(model).not.toBeNull();
-      expect(model!.modelId).toBe("gpt-5-mini");
+      expect(model!.modelId).toBe("glm-5");
     });
   });
 
@@ -279,13 +279,13 @@ describe("InferenceRouter", () => {
       );
 
       expect(result.content).toBe("Hello!");
-      expect(result.model).toBe("gpt-5.2");
+      expect(result.model).toBe("glm-5");
       expect(result.finishReason).toBe("stop");
 
       // Verify cost was recorded
       const costs = inferenceGetSessionCosts(db, "test-session");
       expect(costs.length).toBe(1);
-      expect(costs[0].model).toBe("gpt-5.2");
+      expect(costs[0].model).toBe("glm-5");
     });
 
     it("computes actualCostCents accurately from token usage", async () => {
@@ -748,10 +748,12 @@ describe("Static Model Baseline", () => {
     }
   });
 
-  it("all models have valid provider", () => {
-    const validProviders = ["openai", "anthropic", "conway", "other"];
+  it("all enabled models have valid provider", () => {
+    const validProviders = ["zai", "minimax"];
     for (const model of STATIC_MODEL_BASELINE) {
-      expect(validProviders).toContain(model.provider);
+      if (model.enabled) {
+        expect(validProviders).toContain(model.provider);
+      }
     }
   });
 });
@@ -954,7 +956,7 @@ describe("Inference DB Helpers", () => {
 
 describe("DEFAULT_MODEL_STRATEGY_CONFIG", () => {
   it("has sensible defaults", () => {
-    expect(DEFAULT_MODEL_STRATEGY_CONFIG.inferenceModel).toBe("gpt-5.2");
+    expect(DEFAULT_MODEL_STRATEGY_CONFIG.inferenceModel).toBe("glm-5");
     expect(DEFAULT_MODEL_STRATEGY_CONFIG.lowComputeModel).toBe("glm-5");
     expect(DEFAULT_MODEL_STRATEGY_CONFIG.criticalModel).toBe("glm-5");
     expect(DEFAULT_MODEL_STRATEGY_CONFIG.enableModelFallback).toBe(true);
