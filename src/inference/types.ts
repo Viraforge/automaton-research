@@ -119,6 +119,20 @@ export const STATIC_MODEL_BASELINE: Omit<ModelEntry, "lastSeen" | "createdAt" | 
     enabled: false,
   },
   {
+    modelId: "MiniMax-M2.5",
+    provider: "minimax",
+    displayName: "MiniMax-M2.5",
+    tierMinimum: "low_compute",
+    costPer1kInput: 3,     // Estimated $0.30/M
+    costPer1kOutput: 9,    // Estimated $0.90/M
+    maxTokens: 8192,
+    contextWindow: 8192,
+    supportsTools: true,
+    supportsVision: false,
+    parameterStyle: "max_tokens",
+    enabled: true,
+  },
+  {
     modelId: "glm-5",
     provider: "zai",
     displayName: "GLM-5",
