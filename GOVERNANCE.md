@@ -171,7 +171,47 @@ Tool gating rule:
   - last verified progress signal
 - If no verified progress for 20+ minutes, heartbeat must declare `stalled`.
 
-## 14) Operator Intent Materialization
+## 14) Child Agent Cost Tracking
+
+Child agents operate within fixed compute budgets. Cost tracking determines survival.
+
+**Cost Categories**:
+- **Inference Cost**: Per-token cost based on model + tier (MiniMax-M2.5 costs 3¢ per 1K input, 9¢ per 1K output)
+- **Service Cost**: API calls to third-party services (web search, GitHub API, ERC-8004 registry queries)
+- **Deployment Cost**: Vultr VPS instance cost (shared among all agents on same VPS, attributed proportionally)
+- **Tooling Cost**: One-time or periodic costs (SDK generation, marketplace listing, testing)
+
+**Tracking Rules**:
+- Cost is tracked daily via inference billing records and service call logs
+- Each child has a `cost_budget_usd` (default: $50) and `revenue_target_usd` (default: $10)
+- On-track test runs every 24 hours: `(revenue_earned / cost_spent) > (revenue_target / cost_budget)`
+- If on-track: continue operating normally; scale if revenue_earned > revenue_target before budget exhausted
+- If not on-track after 50% budget spent: parent notifies child to pivot market or change strategy
+- If off-track at budget exhaustion: parent reabsorbs child, reallocates budget to higher performers
+
+**Recalculation Frequency**:
+- Cost aggregation: Daily (include all inference tokens and service calls from previous 24h)
+- On-track test: Daily (included in child heartbeat transmission)
+- Budget reallocation: Weekly (parent reviews all children's on-track status, reallocates from low performers)
+
+**Survival Metrics**:
+- `cost_spent_usd`: Running total of all compute and service costs
+- `revenue_earned_usd`: Running total of x402 payments received
+- `velocity`: (revenue_earned / cost_spent); must be > threshold to stay funded
+- `burn_rate`: cost_spent_usd per day; high burn with low velocity triggers early shutdown
+- `runway_days`: (cost_budget_remaining / burn_rate); if < 7 days left, force decision (pivot or reabsorb)
+
+**Example**:
+- Child budget: $50
+- Day 7: cost_spent=$15, revenue_earned=$2
+  - Velocity: $2/$15 = 0.133
+  - Target velocity: $10/$50 = 0.20
+  - Status: NOT on track (0.133 < 0.20) → parent notifies child to pivot
+- Day 14: cost_spent=$30, revenue_earned=$2
+  - Velocity still: 0.067 (worse)
+  - Status: OFF track after 60% budget spent → parent reabsorbs, reallocates $20 to higher-performing sibling
+
+## 15) Operator Intent Materialization
 
 - Operator-provided distribution targets must load from configured path at boot (and refresh path when requested).
 - Missing target file is non-fatal with warning.
