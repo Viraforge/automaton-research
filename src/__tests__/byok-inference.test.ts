@@ -593,7 +593,7 @@ describe("InferenceRouter — BYOK model selection", () => {
 
     const selected = router.selectModel("high", "agent_turn");
     expect(selected).toBeDefined();
-    expect(selected!.modelId).toBe("glm-5");
-    expect(selected!.provider).toBe("other");
+    expect(selected!.modelId).toBe("MiniMax-M2.5");
+    expect(selected!.provider).toBe("minimax");
   });
 });
