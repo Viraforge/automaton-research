@@ -536,12 +536,12 @@ export class UnifiedInferenceClient {
 }
 
 function extractText(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
+  let text = "";
 
-  if (Array.isArray(content)) {
-    return content
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
       .map((part) => {
         if (typeof part === "string") {
           return part;
@@ -554,8 +554,8 @@ function extractText(content: unknown): string {
           (part as { type?: unknown }).type === "text" &&
           "text" in part
         ) {
-          const text = (part as { text?: unknown }).text;
-          return typeof text === "string" ? text : "";
+          const partText = (part as { text?: unknown }).text;
+          return typeof partText === "string" ? partText : "";
         }
 
         return "";
@@ -563,7 +563,11 @@ function extractText(content: unknown): string {
       .join("");
   }
 
-  return "";
+  // Strip thinking tags (e.g., <think>...</think>) that some models may include in responses
+  // These should not be returned as part of the actual response content
+  text = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+  return text;
 }
 
 function normalizeToolCalls(toolCalls: unknown): unknown[] | undefined {

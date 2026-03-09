@@ -491,8 +491,26 @@ function parsePlannerResponse(content: string): unknown {
     throw new Error("Planner returned an empty response");
   }
 
+  // Strip thinking tags and other non-JSON content that models might include
+  let jsonContent = content;
+
+  // Remove <think>...</think> blocks (Claude thinking tags)
+  jsonContent = jsonContent.replace(/<think>[\s\S]*?<\/think>/g, "");
+
+  // Extract JSON object from content (handles cases where JSON is embedded in text)
+  const jsonMatch = jsonContent.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    jsonContent = jsonMatch[0];
+  }
+
+  jsonContent = jsonContent.trim();
+
+  if (jsonContent.length === 0) {
+    throw new Error("Planner returned no JSON content (only thinking or non-JSON text)");
+  }
+
   try {
-    return JSON.parse(content);
+    return JSON.parse(jsonContent);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Planner returned invalid JSON: ${message}`);
