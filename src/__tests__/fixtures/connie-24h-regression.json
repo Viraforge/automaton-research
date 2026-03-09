@@ -1,31 +1,97 @@
 {
-  "events": [
+  "version": 2,
+  "source": "tmp/vps-log-pull-24h-run-22770520881.log",
+  "window": "24h",
+  "scenarios": [
     {
-      "type": "loop_error",
-      "message": "Inference error (byok): 400: {\"error\":{\"code\":\"1214\",\"message\":\"The messages parameter is illegal.\"}}"
+      "id": "byok_1214_burst",
+      "category": "byok_1214",
+      "events": [
+        {
+          "type": "loop_error",
+          "message": "Inference error (byok): 400: {\"error\":{\"code\":\"1214\",\"message\":\"The messages parameter is illegal.\"}}"
+        },
+        {
+          "type": "loop_error",
+          "message": "Inference error (byok): 400 code 1214 invalid messages payload (model=glm-5, endpoint=https://api.z.ai/api/coding/paas/v4/chat/completions): The messages parameter is illegal."
+        }
+      ]
     },
     {
-      "type": "loop_error",
-      "message": "Inference error (byok): 429: Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-03-12 05:05:53"
+      "id": "byok_429_burst",
+      "category": "quota_429",
+      "events": [
+        {
+          "type": "loop_error",
+          "message": "Inference error (byok): 429: Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-03-12 05:05:53"
+        }
+      ]
     },
     {
-      "type": "tool_result",
-      "tool": "send_message",
-      "message": "Social relay not configured. Set socialRelayUrl in config."
+      "id": "relay_misconfiguration_retries",
+      "category": "relay_misconfiguration_retries",
+      "events": [
+        {
+          "type": "tool_result",
+          "tool": "send_message",
+          "message": "Social relay not configured. Set socialRelayUrl in config."
+        },
+        {
+          "type": "tool_result",
+          "tool": "send_message",
+          "message": "Social relay not configured. Set socialRelayUrl in config."
+        }
+      ]
     },
     {
-      "type": "tool_result",
-      "tool": "register_erc8004",
-      "message": "Registration failed: Insufficient ETH for gas. Please fund your wallet with ETH for gas."
+      "id": "discover_loop_churn",
+      "category": "discover_loop_churn",
+      "events": [
+        {
+          "type": "tool_result",
+          "tool": "discover_agents",
+          "message": "No agents found."
+        },
+        {
+          "type": "loop_notice",
+          "message": "discover_agents loop detected: 2 idle discovery turns. Applying cooldown."
+        }
+      ]
     },
     {
-      "type": "tool_result",
-      "tool": "discover_agents",
-      "message": "No agents found."
+      "id": "venue_without_followthrough",
+      "category": "venue_without_followthrough",
+      "events": [
+        {
+          "type": "discovery_output",
+          "message": "Found opportunities on ClawNews and AgentDirectory."
+        },
+        {
+          "type": "loop_notice",
+          "message": "No distribution target created after known venue discovery."
+        }
+      ]
     },
     {
-      "type": "loop_notice",
-      "message": "discover_agents loop detected: 2 idle discovery turns. Applying cooldown."
+      "id": "ghost_goal_zero_task",
+      "category": "ghost_goal_zero_task",
+      "events": [
+        {
+          "type": "orchestrator_notice",
+          "message": "active goal g_ghost remains at 0/0 tasks after planning fallback"
+        }
+      ]
+    },
+    {
+      "id": "funding_gate",
+      "category": "funding_required",
+      "events": [
+        {
+          "type": "tool_result",
+          "tool": "register_erc8004",
+          "message": "Registration failed: Insufficient ETH for gas. Please fund your wallet with ETH for gas."
+        }
+      ]
     }
   ]
 }

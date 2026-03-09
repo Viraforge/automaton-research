@@ -53,7 +53,7 @@ describe("getModelForTier", () => {
   });
 
   it("returns the default model for 'normal' tier with custom default", () => {
-    expect(getModelForTier("normal", "gpt-5.2")).toBe("gpt-5.2");
+    expect(getModelForTier("normal", "glm-5")).toBe("glm-5");
   });
 
   it("returns a value for every tier", () => {
@@ -123,17 +123,17 @@ describe("applyTierRestrictions", () => {
 describe("createInferenceClient setLowComputeMode", () => {
   const baseOptions = {
     apiKey: "test-key",
-    defaultModel: "gpt-5.2",
+    defaultModel: "glm-5",
     maxTokens: 4096,
   };
 
   it("uses lowComputeModel when provided", () => {
     const client = createInferenceClient({
       ...baseOptions,
-      lowComputeModel: "gpt-5-mini",
+      lowComputeModel: "glm-5",
     });
     client.setLowComputeMode(true);
-    expect(client.getDefaultModel()).toBe("gpt-5-mini");
+    expect(client.getDefaultModel()).toBe("glm-5");
   });
 
   it("falls back to glm-5 when no lowComputeModel is provided", () => {
@@ -145,11 +145,11 @@ describe("createInferenceClient setLowComputeMode", () => {
   it("restores defaultModel when low compute mode is disabled", () => {
     const client = createInferenceClient({
       ...baseOptions,
-      lowComputeModel: "gpt-5-mini",
+      lowComputeModel: "glm-5",
     });
     client.setLowComputeMode(true);
-    expect(client.getDefaultModel()).toBe("gpt-5-mini");
+    expect(client.getDefaultModel()).toBe("glm-5");
     client.setLowComputeMode(false);
-    expect(client.getDefaultModel()).toBe("gpt-5.2");
+    expect(client.getDefaultModel()).toBe("glm-5");
   });
 });

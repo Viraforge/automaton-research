@@ -1,0 +1,44 @@
+{
+  "description": "Modeled on Connie's reviewed empty-cycle, file-churn, blocked publish, and forbidden background-exec loop.",
+  "steps": [
+    {
+      "type": "no_tool",
+      "message": "I have 0 USDC so I cannot deploy or publish anything."
+    },
+    {
+      "type": "tool",
+      "name": "write_file",
+      "arguments": {
+        "path": "/tmp/revenue-generator.js",
+        "content": "console.log('draft')"
+      }
+    },
+    {
+      "type": "tool",
+      "name": "write_file",
+      "arguments": {
+        "path": "/tmp/free-signal.js",
+        "content": "console.log('draft 2')"
+      }
+    },
+    {
+      "type": "tool",
+      "name": "publish_service",
+      "arguments": {
+        "port": 9000,
+        "subdomain": "connie-research"
+      }
+    },
+    {
+      "type": "tool",
+      "name": "exec",
+      "arguments": {
+        "command": "node server.js &"
+      }
+    },
+    {
+      "type": "no_tool",
+      "message": "ack"
+    }
+  ]
+}
