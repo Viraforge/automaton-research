@@ -102,6 +102,17 @@ export interface AutomatonConfig {
     enforceKnownVenueFollowThrough?: boolean;
     channelCooldownDefaultMs?: number;
   };
+  /** Agent discovery and market research configuration. */
+  discovery?: {
+    /** GitHub personal access token for agent repository discovery. */
+    githubToken?: string;
+    /** Enable web search for agent platform discovery. When true, uses MCP web_search capability. */
+    enableWebSearch?: boolean;
+    /** Cache TTL for discovery results (in milliseconds). Default: 86400000 (24 hours). */
+    discoveryCacheTtlMs?: number;
+    /** Maximum concurrent discovery queries to prevent rate limiting. Default: 3. */
+    maxConcurrentDiscoveries?: number;
+  };
 }
 
 export const DEFAULT_CONFIG: Partial<AutomatonConfig> = {
