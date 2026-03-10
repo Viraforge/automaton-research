@@ -20,7 +20,7 @@ import {
   sanitizeChatMessages,
 } from "./message-sanitizer.js";
 
-const INFERENCE_TIMEOUT_MS = 60_000;
+const INFERENCE_TIMEOUT_MS = 120_000;  // 2 minutes (was 60s, too short for large contexts)
 const INFERENCE_MIN_REQUEST_INTERVAL_MS = 5_000;
 
 interface InferenceClientOptions {

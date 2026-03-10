@@ -259,7 +259,18 @@ export class LocalWorkerPool {
             try {
               const args = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : fn.arguments;
               toolOutput = await tool.execute(args as Record<string, unknown>);
-              logger.info(`[WORKER ${workerId}] ${fn.name} → ${redactSensitiveText(toolOutput).slice(0, 120)}`);
+              const safeOutput = redactSensitiveText(toolOutput);
+              // Log in chunks to avoid stdout buffer truncation (256-512 byte limit)
+              const chunkSize = 200;
+              if (safeOutput.length > chunkSize) {
+                logger.info(`[WORKER ${workerId}] ${fn.name} → [output: ${safeOutput.length} bytes]`);
+                for (let i = 0; i < safeOutput.length; i += chunkSize) {
+                  const chunk = safeOutput.slice(i, i + chunkSize);
+                  logger.info(`[WORKER ${workerId}] [chunk ${Math.floor(i / chunkSize) + 1}] ${chunk}`);
+                }
+              } else {
+                logger.info(`[WORKER ${workerId}] ${fn.name} → ${safeOutput}`);
+              }
 
               // Track file artifacts
               if (fn.name === "write_file" && typeof (args as any).path === "string") {

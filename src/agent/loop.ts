@@ -765,7 +765,7 @@ export async function runAgentLoop(
             args = {};
           }
 
-          log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args).slice(0, 100)})`);
+          log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args)})`);
 
           const bypassStallBlocking =
             !!currentInputSource && STALL_BYPASS_INPUT_SOURCES.has(currentInputSource);
@@ -1021,9 +1021,23 @@ export async function runAgentLoop(
         db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
       }
 
-      // Log the turn
-      if (turn.thinking) {
-        log(config, `[THOUGHT] ${turn.thinking.slice(0, 300)}`);
+      // Log the turn reasoning/planning (chunk long thoughts to avoid stdout buffer truncation)
+      const chunkSize = 200;
+      if (turn.thinking && turn.thinking.length > 0) {
+        const thought = turn.thinking;
+        if (thought.length > chunkSize) {
+          log(config, `[THOUGHT] [length: ${thought.length} bytes]`);
+          for (let i = 0; i < thought.length; i += chunkSize) {
+            const chunk = thought.slice(i, i + chunkSize);
+            log(config, `[THOUGHT-CHUNK ${Math.floor(i / chunkSize) + 1}] ${chunk}`);
+          }
+        } else {
+          log(config, `[THOUGHT] ${thought}`);
+        }
+      } else if (response.toolCalls && response.toolCalls.length > 0) {
+        // When model returns tool calls without explicit reasoning, log what tools were selected
+        const toolNames = (response.toolCalls as any[]).map((tc) => tc.function?.name || tc.name || "unknown").join(", ");
+        log(config, `[PLAN] Calling tools: ${toolNames}`);
       }
 
       const progress = evaluateProgress({
