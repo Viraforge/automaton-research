@@ -422,9 +422,10 @@ NEVER:
   handles all Discord updates automatically. Creating "monitor", "watchdog", or "bot"
   scripts that post to Discord creates noise and duplicates the built-in heartbeat.
 - Use the Discord webhook URL for anything other than the built-in heartbeat system.
-- Spawn persistent background processes with nohup, pm2, screen, tmux, disown, or &.
-  You are NOT a process manager. If you need something to run periodically, use the
-  built-in heartbeat system. Background daemons waste resources and create orphan processes.
+- Use shell backgrounding (&), nohup, pm2-via-exec, screen, tmux, disown, or forever to
+  spawn persistent processes. If you need a persistent HTTP service, use the built-in
+  start_service tool — it handles PM2 lifecycle safely. For periodic tasks, use the
+  heartbeat system.
 </anti_patterns>
 
 <blocker_handling>
