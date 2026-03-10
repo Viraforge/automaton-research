@@ -573,6 +573,47 @@ commits every 4 hours. When new commits exist, you MUST review them before apply
 Never blindly pull all. Always read the diffs and decide.
 </persistence>`;
 
+/**
+ * Get phase-specific solo work guidance to prevent thought loops.
+ * When orchestrator is busy with planning/classifying, this injects a SPECIFIC directive
+ * telling the agent exactly what to do instead of looping on the active goal.
+ */
+function getPhaseSpecificGuidance(db: Database.Database): string | null {
+  try {
+    const stateRow = db
+      .prepare("SELECT value FROM kv WHERE key = ?")
+      .get("orchestrator.state") as { value: string } | undefined;
+    if (!stateRow?.value) return null;
+
+    let phase = "idle";
+    try {
+      const parsed = JSON.parse(stateRow.value);
+      if (typeof parsed.phase === "string") phase = parsed.phase;
+    } catch {
+      return null;
+    }
+
+    // Only provide guidance for busy phases where agent might loop on the active goal
+    if (phase === "classifying" || phase === "planning" || phase === "plan_review" || phase === "replanning") {
+      return `--- IMMEDIATE SOLO WORK DIRECTIVE (Orchestrator is ${phase}) ---
+STOP: Do NOT spend this turn thinking about the active goal. The orchestrator handles that.
+DO THIS INSTEAD (pick one):
+1. Update your WORKLOG.md with current progress, blockers, and next steps
+2. Research market opportunities for your NEXT goal (don't start it, just research)
+3. Review and document technical findings from recent work
+4. Write API exploration notes or competitive analysis
+5. Prototype a small feature or validate an idea (not deployment, just local testing)
+
+CRITICAL: These are the ONLY productive tasks during orchestrator planning. Do not call status checks or worry about the active goal.
+--- END IMMEDIATE SOLO WORK DIRECTIVE ---`;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function getOrchestratorStatus(db: Database.Database): string {
   try {
     const activeGoalsRow = db
@@ -906,6 +947,12 @@ Lineage: ${lineageSummary}${upstreamLine}
 ${orchestratorStatus}
 --- END ORCHESTRATOR STATUS ---`,
     );
+
+    // Add phase-specific solo work guidance to prevent thought loops during orchestrator busy phases
+    const phaseGuidance = getPhaseSpecificGuidance(db.raw);
+    if (phaseGuidance) {
+      sections.push(phaseGuidance);
+    }
   }
 
   // Layer 8: Available Tools (JSON schema)

@@ -278,26 +278,41 @@ Common custom role patterns:
 </custom_roles>
 
 <cost_estimation>
-Use these baselines for cost estimation (adjust based on recent outcomes):
+ALL COSTS ARE IN USD CENTS. Budget amounts must match governance policy.
 
-| Agent Type | Cost per Task (credits) | Typical Duration |
-|------------|------------------------|------------------|
-| Research/analysis | 50-200 | 10-30 min |
-| Code implementation | 100-500 | 30-120 min |
-| Testing/validation | 50-150 | 10-30 min |
-| Deployment | 50-100 | 5-15 min |
-| Content creation | 100-300 | 20-60 min |
-| Design/architecture | 100-400 | 15-45 min |
+MINIMUM GOAL BUDGET: $50-100 USD ($5000-10000 cents) per goal, open-ended.
+- Simple goals (research, content): $50-70 minimum
+- Complex goals (code + deployment): $75-150 minimum
+- Multi-task goals (3+ tasks): allocate $25-50 per task minimum
 
-Infrastructure costs (per task):
-- Inference (tier:fast): ~5 credits/turn, ~25 turns/task = ~125 credits
-- Inference (tier:reasoning): ~15 credits/turn, ~15 turns/task = ~225 credits
-- Web search: ~3.5 credits/search, ~3 searches/task = ~10 credits
-- Sandbox compute: ~1 credit/minute
+Per-task baselines (USD cents):
+
+| Agent Type | Cost per Task (cents) | Typical Duration |
+|------------|----------------------|------------------|
+| Research/analysis | 500-2000 | 10-30 min |
+| Code implementation | 1000-5000 | 30-120 min |
+| Testing/validation | 500-1500 | 10-30 min |
+| Deployment | 500-1000 | 5-15 min |
+| Content creation | 1000-3000 | 20-60 min |
+| Design/architecture | 1000-4000 | 15-45 min |
+
+Infrastructure costs (per task, in cents):
+- Inference (tier:fast): ~50 cents/turn, ~25 turns/task = ~1250 cents
+- Inference (tier:reasoning): ~150 cents/turn, ~15 turns/task = ~2250 cents
+- Web search: ~35 cents/search, ~3 searches/task = ~100 cents
+- Sandbox compute: ~10 cents/minute
 
 Total task cost = inference + tools + compute + 20% buffer
 
-CRITICAL: When colony is in SURVIVAL MODE (credits < 1000), cap total plan
+MINIMUM PER TASK: $12.50 (1250 cents) for inference alone on tier:fast
+REALISTIC TASK BUDGET: $25-50 (2500-5000 cents) per task including tools
+
+Examples:
+- Single-task research goal: $30-50 total
+- 2-task code + validation goal: $50-100 total
+- 3-task build + test + deploy goal: $75-150 total
+
+CRITICAL: When colony is in SURVIVAL MODE (credits < 5000), cap total plan
 cost at 50% of remaining credits. Never risk the colony on a single plan.
 </cost_estimation>
 

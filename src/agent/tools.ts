@@ -489,7 +489,10 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
             const autoSubdomain = `api-${port}-${timestamp}`;
 
             const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-            const cf = createCloudflareProvider(ctx.config.cloudflareApiToken);
+            const cf = createCloudflareProvider({
+              apiKey: ctx.config.cloudflareApiToken,
+              email: ctx.config.cloudflareEmail,
+            });
             const domain = "compintel.co";
             const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
             const existingRecords = await cf.listRecords(zoneId);

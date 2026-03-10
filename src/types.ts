@@ -108,6 +108,8 @@ export interface AutomatonConfig {
     githubToken?: string;
     /** Enable web search for agent platform discovery. When true, uses MCP web_search capability. */
     enableWebSearch?: boolean;
+    /** Tavily API key for web search results. Store in runtime config, never in source. */
+    tavilyApiKey?: string;
     /** Cache TTL for discovery results (in milliseconds). Default: 86400000 (24 hours). */
     discoveryCacheTtlMs?: number;
     /** Maximum concurrent discovery queries to prevent rate limiting. Default: 3. */

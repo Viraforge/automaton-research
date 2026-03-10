@@ -37,7 +37,16 @@ function authHeaders(credentials: CloudflareCredentials): Record<string, string>
 }
 
 function normalizeCredentials(input: string | CloudflareCredentials): CloudflareCredentials {
-  return typeof input === "string" ? { apiToken: input } : input;
+  if (typeof input === "string") {
+    // API keys are typically 40-char hex; tokens are longer base64
+    // If it's a 40-char hex string, treat as legacy API key (requires email separately)
+    if (input.length === 40 && /^[a-f0-9]{40}$/.test(input)) {
+      // Legacy API key detected but email not provided
+      throw new Error("Cloudflare API key requires email. Pass credentials as { apiKey, email } object instead.");
+    }
+    return { apiToken: input };
+  }
+  return input;
 }
 
 /**

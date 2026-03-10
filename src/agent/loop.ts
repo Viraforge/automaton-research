@@ -1021,19 +1021,16 @@ export async function runAgentLoop(
         db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
       }
 
-      // Log the turn reasoning/planning (chunk long thoughts to avoid stdout buffer truncation)
-      const chunkSize = 200;
+      // Log the turn reasoning/planning with smart chunking on sentence/paragraph boundaries
       if (turn.thinking && turn.thinking.length > 0) {
         const thought = turn.thinking;
-        if (thought.length > chunkSize) {
-          log(config, `[THOUGHT] [length: ${thought.length} bytes]`);
-          for (let i = 0; i < thought.length; i += chunkSize) {
-            const chunk = thought.slice(i, i + chunkSize);
-            log(config, `[THOUGHT-CHUNK ${Math.floor(i / chunkSize) + 1}] ${chunk}`);
-          }
-        } else {
-          log(config, `[THOUGHT] ${thought}`);
+        const chunks = smartChunkThinking(thought);
+        if (chunks.length > 1) {
+          log(config, `[THOUGHT] [length: ${thought.length} bytes, ${chunks.length} chunks]`);
         }
+        chunks.forEach((chunk, index) => {
+          log(config, `[THOUGHT-CHUNK ${index + 1}] ${chunk}`);
+        });
       } else if (response.toolCalls && response.toolCalls.length > 0) {
         // When model returns tool calls without explicit reasoning, log what tools were selected
         const toolNames = (response.toolCalls as any[]).map((tc) => tc.function?.name || tc.name || "unknown").join(", ");
@@ -1552,6 +1549,57 @@ async function getFinancialState(
     usdcBalance,
     lastChecked: new Date().toISOString(),
   };
+}
+
+/**
+ * Smart chunking: breaks thinking text on sentence/paragraph boundaries.
+ * Aims for ~400 char chunks but respects sentence and paragraph breaks.
+ */
+function smartChunkThinking(text: string): string[] {
+  if (text.length <= 400) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+
+  // Split by paragraphs first (double newline)
+  const paragraphs = text.split("\n\n");
+
+  for (const para of paragraphs) {
+    // If a paragraph is small enough, add it to current chunk
+    if ((current + para).length <= 400) {
+      current += (current ? "\n\n" : "") + para;
+    } else {
+      // Paragraph is large, need to split it by sentences
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+
+      // Split paragraph into sentences (rough: period, question mark, exclamation)
+      const sentences = para.match(/[^.!?]+[.!?]+/g) || [para];
+
+      for (const sentence of sentences) {
+        if ((current + sentence).length <= 400) {
+          current += current ? " " : "";
+          current += sentence.trim();
+        } else {
+          if (current) {
+            chunks.push(current);
+          }
+          current = sentence.trim();
+        }
+      }
+    }
+  }
+
+  // Add remaining content
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks.length > 0 ? chunks : [text];
 }
 
 function log(_config: AutomatonConfig, message: string): void {

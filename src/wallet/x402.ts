@@ -17,9 +17,11 @@ import { ResilientHttpClient } from "../http/client.js";
 
 const x402HttpClient = new ResilientHttpClient();
 
-// USDC contract addresses
+// USDC contract addresses (currently pointing to USDbC on Base mainnet)
+// USDbC (0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca) is the bridged version received from deBridge
+// Real USDC address for reference: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 const USDC_ADDRESSES: Record<string, Address> = {
-  "eip155:8453": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base mainnet
+  "eip155:8453": "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca", // Base mainnet (USDbC - bridged USDC)
   "eip155:84532": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia
 };
 

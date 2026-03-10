@@ -1,5 +1,6 @@
 import type { AutomatonTool, ToolContext } from "../../types.js";
 import { createLogger } from "../../observability/logger.js";
+import { ResilientHttpClient } from "../../http/client.js";
 
 const logger = createLogger("web-search");
 
@@ -98,14 +99,107 @@ export function getWebSearchTool(): AutomatonTool {
       }
 
       try {
-        // For now, return mock results that demonstrate the schema
-        // In production, this would route to Anthropic's MCP web_search capability
-        logger.info(`[WEB_SEARCH] "${input.query}" (type: ${searchType})`);
+        // Get Tavily API key from injected runtime config
+        const config = _context.config as any;
+        const tavilyApiKey = config?.discovery?.tavilyApiKey;
+
+        // Graceful degradation if key not configured
+        if (!tavilyApiKey) {
+          logger.warn(
+            `[WEB_SEARCH] tavilyApiKey not configured — returning empty results`
+          );
+          const emptyResult: WebSearchResult = {
+            query: input.query,
+            resultsCount: 0,
+            results: [],
+            executedAt: new Date().toISOString(),
+            cacheHit: false,
+          };
+          cache.set(cacheKey, { data: emptyResult, timestamp: Date.now() });
+          return JSON.stringify(emptyResult);
+        }
+
+        // Map search_type to Tavily parameters
+        const searchTypeMap = {
+          all: { topic: "general", search_depth: "basic" },
+          news: { topic: "news", search_depth: "basic" },
+          research: { topic: "general", search_depth: "advanced" },
+          code: { topic: "general", search_depth: "basic" },
+        } as const;
+
+        const tavilyParams = searchTypeMap[searchType as keyof typeof searchTypeMap];
+        if (searchType === "code") {
+          logger.info(
+            `[WEB_SEARCH] "${input.query}" (type: code, note: no code-specific search available in Tavily, using general)`
+          );
+        } else {
+          logger.info(`[WEB_SEARCH] "${input.query}" (type: ${searchType})`);
+        }
+
+        // Call Tavily API
+        const httpClient = new ResilientHttpClient();
+        const tavilyResponse = await httpClient.request(
+          "https://api.tavily.com/search",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              api_key: tavilyApiKey,
+              query: input.query,
+              max_results: maxResults,
+              topic: tavilyParams.topic,
+              search_depth: tavilyParams.search_depth,
+              include_raw_content: false,
+            }),
+          }
+        );
+
+        if (!tavilyResponse.ok) {
+          const errorText = await tavilyResponse.text();
+          throw new Error(
+            `Tavily API error ${tavilyResponse.status}: ${errorText}`
+          );
+        }
+
+        const tavilyData = (await tavilyResponse.json()) as {
+          results?: Array<{
+            title: string;
+            url: string;
+            content?: string;
+            score?: number;
+            published_date?: string;
+          }>;
+        };
+
+        // Validate Tavily response has results array
+        if (!Array.isArray(tavilyData.results)) {
+          tavilyData.results = [];
+        }
+
+        // Map Tavily response to WebSearchResult
+        const results = tavilyData.results.map((r) => {
+          let domain = "unknown";
+          try {
+            domain = new URL(r.url).hostname;
+          } catch {
+            // Malformed URL, use fallback
+          }
+
+          return {
+            title: r.title,
+            url: r.url,
+            snippet: r.content ?? "",
+            source: domain,
+            domain,
+            relevanceScore: r.score ?? 1.0,
+            publishedAt: r.published_date ?? undefined,
+          };
+        });
 
         const result: WebSearchResult = {
           query: input.query,
-          resultsCount: 0,
-          results: [],
+          resultsCount: results.length,
+          results,
           executedAt: new Date().toISOString(),
           cacheHit: false,
         };

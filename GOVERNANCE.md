@@ -217,3 +217,15 @@ Child agents operate within fixed compute budgets. Cost tracking determines surv
 - Missing target file is non-fatal with warning.
 - Malformed target file must produce clear diagnostics and continue safely without crashing.
 - Valid targets must persist into structured distribution target state.
+
+## 16) Goal Budget Initialization Rules
+
+- **Minimum Goal Budget**: Every goal must have estimated total budget of at least $50 USD (5000 cents).
+- **Planner Path**: When planner succeeds, use estimated costs from decomposed tasks. Sum must not be less than $50.
+- **Fallback Path**: When planner fails or returns no tasks, create single-task goal with `estimatedCostCents: 5000` ($50 minimum).
+- **Enforcement Points**:
+  - Validate planner output against $50 minimum before persisting tasks.
+  - Apply fallback $50 budget when planner errors or empty task list detected.
+  - Reject goals with total estimated budget below $50; escalate as governance violation.
+- **Rationale**: Prevents low-budget goals ($2 placeholders) from misleading orchestrator and blocking realistic work planning.
+- **Changed**: Commit 2d28a3b (2026-03-10) — updated fallback values from 200 cents to 5000 cents to align with $50-100 policy.

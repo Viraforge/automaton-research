@@ -180,7 +180,8 @@ export function buildContextMessages(
           type: "function" as const,
           function: {
             name: tc.name,
-            arguments: JSON.stringify(tc.arguments),
+            // arguments may be a string (from MiniMax) or object — only stringify if object
+            arguments: typeof tc.arguments === "string" ? tc.arguments : JSON.stringify(tc.arguments),
           },
         }));
       }
