@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createBuiltinTools, loadInstalledTools, executeTool } from "../agent/tools.js";
+import { initSpawnQueue, _resetSpawnQueue } from "../replication/spawn-queue.js";
 import {
   MockInferenceClient,
   MockConwayClient,
@@ -31,7 +32,12 @@ describe("Tool Risk Level Classification", () => {
   let tools: AutomatonTool[];
 
   beforeEach(() => {
+    initSpawnQueue();  // Initialize spawn queue for tests that use spawn_child
     tools = createBuiltinTools("test-sandbox-id");
+  });
+
+  afterEach(() => {
+    _resetSpawnQueue();  // Reset spawn queue singleton between tests
   });
 
   // Expected risk classifications

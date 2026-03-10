@@ -57,6 +57,10 @@ export interface AutomatonConfig {
   skillsDir: string;
   agentId?: string;
   maxChildren: number;
+  /** Milliseconds between queued child spawn operations. Default: 5_000. */
+  spawnStaggerMs?: number;
+  /** Maximum pending spawn requests before rejecting with backpressure. Default: 2. */
+  maxSpawnQueueDepth?: number;
   maxTurnsPerCycle?: number;
   /** Child sandbox memory in MB, default 1024 */
   childSandboxMemoryMb?: number;

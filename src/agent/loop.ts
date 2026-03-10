@@ -218,6 +218,13 @@ export async function runAgentLoop(
   const budgetTracker = new InferenceBudgetTracker(db.raw, modelStrategyConfig);
   const inferenceRouter = new InferenceRouter(db.raw, modelRegistry, budgetTracker);
 
+  // Initialize spawn queue (sequential execution with backpressure)
+  const { initSpawnQueue } = await import("../replication/spawn-queue.js");
+  initSpawnQueue({
+    spawnStaggerMs: (config as any).spawnStaggerMs ?? 5_000,
+    maxQueueDepth: (config as any).maxSpawnQueueDepth ?? 2,
+  });
+
   // Optional orchestration bootstrap (requires V9 goals/task tables)
   let planModeController: PlanModeController | undefined;
   let orchestrator: Orchestrator | undefined;
@@ -343,6 +350,7 @@ export async function runAgentLoop(
               const { generateGenesisConfig } = await import("../replication/genesis.js");
               const { spawnChild } = await import("../replication/spawn.js");
               const { ChildLifecycle } = await import("../replication/lifecycle.js");
+              const { getSpawnQueue } = await import("../replication/spawn-queue.js");
 
               const role = task.agentRole ?? "generalist";
               const genesis = generateGenesisConfig(identity, config, {
@@ -351,7 +359,9 @@ export async function runAgentLoop(
               });
 
               const lifecycle = new ChildLifecycle(db.raw);
-              const child = await spawnChild(conway, identity, db, genesis, lifecycle);
+              const child = await getSpawnQueue().enqueue(() =>
+                spawnChild(conway, identity, db, genesis, lifecycle)
+              );
 
               return {
                 address: child.address,

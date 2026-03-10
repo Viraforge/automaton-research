@@ -23,6 +23,29 @@ import {
 const INFERENCE_TIMEOUT_MS = 120_000;  // 2 minutes (was 60s, too short for large contexts)
 const INFERENCE_MIN_REQUEST_INTERVAL_MS = 5_000;
 
+/**
+ * Compute dynamic timeout based on estimated message context size.
+ * Formula: min(30s + 5ms * estimatedTokens, 5min)
+ * - Small contexts (500 tokens): ~32.5s
+ * - Medium contexts (3000 tokens): ~45s
+ * - Large contexts (15000+ tokens): 105s+
+ * - Maximum cap: 300s (5 minutes)
+ *
+ * Note: token estimate is naive (message.content.length / 4) and excludes tool payloads
+ * to keep the calculation fast. Slight underestimation on tool-heavy turns is acceptable.
+ */
+function computeDynamicTimeout(messages: { content?: string }[]): number {
+  const BASE_MS = 30_000;    // 30s minimum
+  const MS_PER_TOKEN = 5;    // 5ms per estimated token
+  const MAX_MS = 300_000;    // 5-minute hard cap
+
+  const estimatedTokens = messages.reduce(
+    (sum, m) => sum + (m.content?.length || 0) / 4,
+    0,
+  );
+  return Math.min(BASE_MS + estimatedTokens * MS_PER_TOKEN, MAX_MS);
+}
+
 interface InferenceClientOptions {
   apiKey: string;
   /** Base URL for a custom inference provider (e.g. https://api.z.ai/api/coding/paas/v4). When set, /chat/completions is appended and Bearer auth is used. */
@@ -131,6 +154,7 @@ export function createInferenceClient(
     return chatViaOpenAiCompatible({
       model,
       body,
+      messages,
       apiUrl: openAiLikeApiUrl,
       apiKey: openAiLikeApiKey,
       backend,
@@ -224,6 +248,7 @@ export function resolveInferenceBackend(
 async function chatViaOpenAiCompatible(params: {
   model: string;
   body: Record<string, unknown>;
+  messages: ChatMessage[];
   apiUrl: string;
   apiKey: string;
   backend: "byok" | "openai" | "ollama";
@@ -244,7 +269,7 @@ async function chatViaOpenAiCompatible(params: {
           : params.apiKey,
     },
     body: JSON.stringify(params.body),
-    timeout: INFERENCE_TIMEOUT_MS,
+    timeout: computeDynamicTimeout(params.messages),
   });
 
   if (!resp.ok) {
@@ -359,7 +384,7 @@ async function chatViaAnthropic(params: {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(body),
-    timeout: INFERENCE_TIMEOUT_MS,
+    timeout: computeDynamicTimeout(params.messages),
   });
 
   if (!resp.ok) {

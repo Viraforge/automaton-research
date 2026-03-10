@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createBuiltinTools } from "../../agent/tools.js";
+import { initSpawnQueue, _resetSpawnQueue } from "../../replication/spawn-queue.js";
 import { loadConfig } from "../../config.js";
 
 // Mock ResilientHttpClient for web_search so tests don't depend on network
@@ -43,6 +44,14 @@ vi.mock("../../http/client.js", () => ({
 }));
 
 describe("discovery tools integration", () => {
+  beforeEach(() => {
+    initSpawnQueue();  // Initialize spawn queue for tests that use spawn_child
+  });
+
+  afterEach(() => {
+    _resetSpawnQueue();  // Reset spawn queue singleton between tests
+  });
+
   it("should execute web_search and return valid result structure", async () => {
     const tools = createBuiltinTools("test-sandbox");
     const webSearch = tools.find((t) => t.name === "web_search");

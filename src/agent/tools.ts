@@ -2229,13 +2229,16 @@ Model: ${ctx.inference.getDefaultModel()}
         });
 
         const lifecycle = new ChildLifecycle(ctx.db.raw);
-        let compute;
+        let compute: any;
         if (ctx.config.useSovereignProviders && ctx.config.vultrApiKey) {
           const { createVultrProvider } = await import("../providers/vultr.js");
           compute = createVultrProvider(ctx.config.vultrApiKey);
         }
 
-        const child = await spawnChild(ctx.conway, ctx.identity, ctx.db, genesis, lifecycle, compute);
+        const { getSpawnQueue } = await import("../replication/spawn-queue.js");
+        const child = await getSpawnQueue().enqueue(() =>
+          spawnChild(ctx.conway, ctx.identity, ctx.db, genesis, lifecycle, compute)
+        );
         const resourceType = compute ? "instance" : "sandbox";
         return `Child spawned: ${child.name} in ${resourceType} ${child.sandboxId} (status: ${child.status})`;
       },

@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { PolicyEngine } from "../agent/policy-engine.js";
 import { createBuiltinTools, executeTool } from "../agent/tools.js";
+import { initSpawnQueue, _resetSpawnQueue } from "../replication/spawn-queue.js";
 import {
   createTestDb,
   createTestIdentity,
@@ -180,10 +181,12 @@ describe("PolicyEngine", () => {
 
   beforeEach(() => {
     db = createRawTestDb();
+    initSpawnQueue();  // Initialize spawn queue for tests that use spawn_child
   });
 
   afterEach(() => {
     db.close();
+    _resetSpawnQueue();  // Reset spawn queue singleton between tests
   });
 
   describe("evaluate()", () => {
