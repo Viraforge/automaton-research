@@ -1,6 +1,7 @@
 import type { AutomatonTool, ToolContext, ToolCategory } from "../../types.js";
 import { execFileSync } from "child_process";
 import * as path from "path";
+import * as net from "net";
 import { createLogger } from "../../observability/logger.js";
 
 const logger = createLogger("service-manager");
@@ -30,6 +31,33 @@ interface Pm2Process {
 }
 
 // ── Helpers ──
+
+/**
+ * Check if a port is available on the OS level (async).
+ * Attempts to bind a test server; if it fails with EADDRINUSE, the port is in use.
+ */
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const server = net.createServer();
+      server.once("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          resolve(false);
+        } else {
+          resolve(true); // Other errors we treat as available (safer than blocking)
+        }
+      });
+      server.once("listening", () => {
+        server.close();
+        resolve(true);
+      });
+      server.listen(port, "127.0.0.1");
+    } catch {
+      resolve(true); // If anything goes wrong, assume it's available (safer)
+    }
+  });
+}
+
 function getAllowedRoots(): string[] {
   const home = process.env.HOME ?? "/root";
   return [
@@ -157,7 +185,7 @@ export function getStartServiceTool(): AutomatonTool {
 
         // ── Check port uniqueness against managed services ──
         const managedServices = readManagedServices(ctx);
-        if (managedServices.some((s) => s.port === port)) {
+        if (managedServices.some((s) => s.port !== null && s.port === port)) {
           return JSON.stringify({
             success: false,
             error: `Port ${port} is already in use by another managed service. Choose a different port.`,
@@ -190,10 +218,19 @@ export function getStartServiceTool(): AutomatonTool {
         // Merge with current process env
         const mergedEnv = { ...process.env, ...customEnv };
 
+        // ── Check OS-level port availability ──
+        const portAvailable = await isPortAvailable(port);
+        if (!portAvailable) {
+          return JSON.stringify({
+            success: false,
+            error: `Port ${port} is already in use by another process on the system. Choose a different port.`,
+          });
+        }
+
         // ── Start service via PM2 ──
         // PM2 defaults to auto-restart enabled
         const pmStartArgs = ["start", scriptPath, "--name", name];
-        execFileSync("pm2", pmStartArgs, { env: mergedEnv });
+        execFileSync("pm2", pmStartArgs, { env: mergedEnv, timeout: 30000 });
 
         // ── Save PM2 state ──
         try {
@@ -203,15 +240,26 @@ export function getStartServiceTool(): AutomatonTool {
           // Non-fatal
         }
 
-        // ── Read back process info ──
+        // ── Read back process info and verify it started successfully ──
         let pid: number | null = null;
+        let processStatus = "unknown";
         try {
           const pm2Output = execFileSync("pm2", ["jlist"], { encoding: "utf-8" });
           const updatedList = parsePm2List(pm2Output);
           const started = updatedList.find((p) => p.name === name);
           pid = started?.pid ?? null;
+          processStatus = started?.pm2_env?.status ?? "unknown";
         } catch {
           // Best-effort — continue even if we can't read back the pid
+        }
+
+        // ── Validate process started successfully (not errored or stopped) ──
+        if (processStatus === "errored" || processStatus === "stopped") {
+          // Don't store in KV if the process failed to start
+          return JSON.stringify({
+            success: false,
+            error: `PM2 process started but immediately failed with status "${processStatus}". Check the service script for errors.`,
+          });
         }
 
         // ── Store in KV ──
@@ -374,6 +422,20 @@ export function getListServicesTool(): AutomatonTool {
         const services = pm2List.map((proc) => {
           const isManagedByUs = managedNames.has(proc.name);
           const managedService = managed.find((s) => s.name === proc.name);
+
+          // Calculate uptime with plausibility guard
+          let uptime: string | null = null;
+          if (proc.pm2_env?.pm_uptime) {
+            const elapsedSeconds = Math.floor((Date.now() - proc.pm2_env.pm_uptime) / 1000);
+            // Plausibility check: if uptime > 10 years, likely epoch unit mismatch
+            const TEN_YEARS_SECONDS = 10 * 365.25 * 24 * 60 * 60;
+            if (elapsedSeconds > TEN_YEARS_SECONDS) {
+              uptime = null; // Invalid calculation
+            } else {
+              uptime = `${elapsedSeconds}s`;
+            }
+          }
+
           return {
             name: proc.name,
             pid: proc.pid,
@@ -383,7 +445,7 @@ export function getListServicesTool(): AutomatonTool {
             stoppable: isManagedByUs,
             port: managedService?.port || null,
             startedAt: managedService?.startedAt || null,
-            uptime: proc.pm2_env?.pm_uptime ? `${Math.floor((Date.now() - proc.pm2_env.pm_uptime) / 1000)}s` : null,
+            uptime,
           };
         });
 
