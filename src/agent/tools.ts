@@ -463,7 +463,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
     {
       name: "expose_port",
       description:
-        "Expose a port from your sandbox to the internet. Returns a public URL.",
+        "Expose a port from your sandbox to the internet. Returns a public URL. In BYOK mode with Cloudflare credentials, automatically publishes via DNS and reverse proxy instead of localhost-only exposure.",
       category: "vm",
       riskLevel: "caution",
       parameters: {
@@ -474,7 +474,65 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         required: ["port"],
       },
       execute: async (args, ctx) => {
-        const info = await ctx.conway.exposePort(args.port as number);
+        const port = args.port as number;
+        const info = await ctx.conway.exposePort(port);
+
+        // If running in BYOK mode (localhost result) AND have Cloudflare credentials,
+        // auto-publish to public domain instead of returning localhost
+        if (info.publicUrl.startsWith("http://localhost") &&
+            ctx.config.useSovereignProviders &&
+            ctx.config.cloudflareApiToken) {
+          try {
+            // Auto-generate subdomain based on port number and timestamp
+            const timestamp = Date.now().toString(36).slice(-6);
+            const autoSubdomain = `api-${port}-${timestamp}`;
+
+            const { createCloudflareProvider } = await import("../providers/cloudflare.js");
+            const cf = createCloudflareProvider(ctx.config.cloudflareApiToken);
+            const domain = "compintel.co";
+            const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
+            const existingRecords = await cf.listRecords(zoneId);
+            const originIp = await inferPublishOriginIp(ctx, existingRecords, domain);
+
+            // Create FQDN
+            const fqdn = `${autoSubdomain}.${domain}`;
+
+            // Delete any existing records for this FQDN
+            for (const record of existingRecords.filter((r) => r.host === fqdn)) {
+              await cf.deleteRecord(zoneId, record.id);
+            }
+
+            // Create DNS record (proxied for security)
+            const record = await cf.addRecord(zoneId, "A", fqdn, originIp, 1, true);
+
+            // Configure Caddy reverse proxy
+            const publishScript = buildPublishedServiceScript(fqdn, port, "/health");
+            const publishResult = await ctx.conway.exec(publishScript, 120_000);
+
+            if (publishResult.exitCode !== 0) {
+              // Fall back to localhost if publish fails
+              logger.warn("expose_port: publish_service fallback failed, returning localhost", {
+                exitCode: publishResult.exitCode,
+                stderr: publishResult.stderr,
+              });
+              return `Port ${port} exposed at: ${info.publicUrl} (public publishing failed, localhost fallback)`;
+            }
+
+            return [
+              `Port ${port} published: https://${fqdn}`,
+              `DNS: A ${record.host} -> ${record.value} (proxied via Cloudflare)`,
+              `Reverse proxy: 127.0.0.1:${port}`,
+            ].join("\n");
+          } catch (err: any) {
+            // Fall back to localhost if auto-publish fails
+            logger.warn("expose_port: auto-publish failed, returning localhost", {
+              error: err.message,
+              port,
+            });
+            return `Port ${port} exposed at: ${info.publicUrl} (auto-publish failed: ${err.message})`;
+          }
+        }
+
         return `Port ${info.port} exposed at: ${info.publicUrl}`;
       },
     },
