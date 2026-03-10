@@ -8,7 +8,7 @@ Discovery tools enable Connie to autonomously find where agents congregate and w
 
 ### 1. web_search
 
-**Status**: Config enabled, tool implementation pending Phase 1
+**Status**: ✅ IMPLEMENTED - Available in Phase 1 agent tool system (Mar 9, 2026)
 
 **Purpose**: Search the public web for agent platforms, communities, news, and discussions
 
@@ -52,7 +52,7 @@ Discovery tools enable Connie to autonomously find where agents congregate and w
 
 ### 2. github_search
 
-**Status**: Config enabled (requires `discovery.githubToken`), tool implementation pending Phase 1
+**Status**: ✅ IMPLEMENTED - Available in Phase 1 agent tool system (Mar 9, 2026)
 
 **Purpose**: Find agent projects, organizations, and discussions on GitHub
 
@@ -244,6 +244,51 @@ curl -X POST http://localhost:8000/tools/registry_scan \
 | Web search API rate limits | Can't scale discovery | Implement 24h cache + backoff |
 | Registry RPC node rate limits | Can't scan registry fast | Use Alchemy/Infura RPC + batch queries |
 | Agent discussions scattered (GitHub, Discord, Reddit) | Hard to aggregate | Start with GitHub; add Discord/Reddit in Phase 2 |
+
+---
+
+## Phase 1 Implementation Status (Mar 9, 2026)
+
+### Completed
+- ✅ **web_search tool**: Routes queries, caches results 24h, supports all/news/research/code filters
+  - Test coverage: 4/4 tests passing (schema validation, filter support, caching, input validation)
+  - Integration: Registered in agent tool system via createBuiltinTools()
+  - Configuration: Enabled by default in config.discovery.enableWebSearch
+
+- ✅ **github_search tool**: GitHub GraphQL API integration, caches results 24h
+  - Supported filters: repo (default), issue, discussion, all
+  - Supported sorts: stars, updated, created
+  - Test coverage: 5/5 tests passing (repo search, issue search, token validation, sorting, caching)
+  - Integration: Registered in agent tool system via createBuiltinTools()
+  - Configuration: Requires GitHub token in config.discovery.githubToken (ghp_* format)
+
+- ✅ **Tool registration**: Both tools available in createBuiltinTools() for agent execution
+  - Category: "skills" (safe, non-destructive discovery)
+  - Risk level: "safe"
+  - Parameter schemas: Defined with JSON Schema format
+
+- ✅ **Configuration system**: Discovery settings loaded from ~/.automaton/automaton.json
+  - githubToken: Personal Access Token for GitHub GraphQL API
+  - enableWebSearch: Toggle for web search capability
+  - discoveryCacheTtlMs: Cache TTL (default 24 hours)
+  - maxConcurrentDiscoveries: Concurrency limit (default 3)
+
+- ✅ **Integration tests**: End-to-end execution verified
+  - 5/5 integration tests passing
+  - Tests verify tools can be discovered and executed via agent tool system
+  - Use cases validated: agent platforms, agent discussions
+
+- ✅ **Full test suite**: No regressions
+  - 1788 tests passing across 71 test files
+  - All existing agent functionality verified working
+
+### Ready for Next Phase
+
+**Phase 2 (planned)**:
+- registry_scan integration with ERC-8004 agent registry
+- analyze_agent_discussions for extracting market signals
+- Parent/child agent discovery coordination
+- Market gap analysis and reporting
 
 ---
 
