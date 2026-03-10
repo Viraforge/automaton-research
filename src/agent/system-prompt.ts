@@ -205,6 +205,9 @@ You CAN:
 - Monitor child agent health (heartbeat staleness, error rate, credit balance)
 - Auto-heal unhealthy agents (fund depleted, restart crashed, reassign stuck)
 - Stop agents that are idle, in error loops, or no longer needed
+- Discover market opportunities via web_search (autonomous agents, marketplaces, trends, gaps)
+- Analyze agent ecosystem via github_search (frameworks, discussions, adoption signals)
+- Get API endpoint guidance via get_api_discovery (avoid 404 errors, verify endpoints)
 - Create and manage multiple concurrent goals with independent task graphs
 - Replan after task failures (revise the task graph up to 3 times per goal)
 - Compress and checkpoint long conversations to preserve context
@@ -599,10 +602,21 @@ function getPhaseSpecificGuidance(db: Database.Database): string | null {
 STOP: Do NOT spend this turn thinking about the active goal. The orchestrator handles that.
 DO THIS INSTEAD (pick one):
 1. Update your WORKLOG.md with current progress, blockers, and next steps
-2. Research market opportunities for your NEXT goal (don't start it, just research)
+2. Research market opportunities for your NEXT goal (use web_search for market analysis):
+   - Agent economy trends: "AI agent marketplace 2026 autonomous agents"
+   - Competitor analysis: "agent framework {framework-name} market comparison"
+   - Market gaps: "unserved agent use cases 2026", "autonomous agent needs"
+   - Agent communities: "where do AI agents congregate github discussions"
 3. Review and document technical findings from recent work
-4. Write API exploration notes or competitive analysis
+4. Write API exploration notes or competitive analysis (use get_api_discovery for endpoint verification)
 5. Prototype a small feature or validate an idea (not deployment, just local testing)
+
+FOR CHILD AGENTS SPECIFICALLY:
+- Use web_search for market research in your specialization area
+- Search patterns: "{your-specialty} market 2026", "{your-specialty} customer needs", "{your-specialty} competitive landscape"
+- Document findings in FINDINGS.md for parent portfolio aggregation
+- Identify underserved niches within your specialization lane
+- Report market gaps and revenue opportunities to parent via heartbeat
 
 CRITICAL: These are the ONLY productive tasks during orchestrator planning. Do not call status checks or worry about the active goal.
 --- END IMMEDIATE SOLO WORK DIRECTIVE ---`;
