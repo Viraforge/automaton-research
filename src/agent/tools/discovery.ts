@@ -20,14 +20,21 @@ interface ApiServiceInfo {
   notes?: string;
 }
 
-interface DiscoveryInput {
-  service_name: string;
-}
-
 interface DiscoveryResult {
   success: boolean;
   error?: string;
+  service_name?: string;
   service?: ApiServiceInfo;
+  executedAt: string;
+  cacheHit: boolean;
+}
+
+// Simple in-memory cache
+const cache = new Map<string, { data: DiscoveryResult; timestamp: number }>();
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function getCacheKey(serviceName: string): string {
+  return `api_discovery:${serviceName}`;
 }
 
 // API Discovery Database
@@ -91,9 +98,9 @@ const API_REGISTRY: Record<string, ApiServiceInfo> = {
         url: "https://api.github.com/search/repositories",
         method: "GET",
         description:
-          "Search for repositories by query (language, stars, created date, etc)",
+          "Search for repositories by query (language, stars, created date, etc). Returns paginated results (default 30 per page, max 100).",
         example:
-          "curl -s 'https://api.github.com/search/repositories?q=agent+language:typescript&sort=stars'",
+          "curl -s 'https://api.github.com/search/repositories?q=agent+language:typescript&sort=stars&per_page=100'",
       },
       get_repository: {
         url: "https://api.github.com/repos/{owner}/{repo}",
@@ -105,7 +112,7 @@ const API_REGISTRY: Record<string, ApiServiceInfo> = {
         url: "https://api.github.com/repos/{owner}/{repo}/contents/{path}",
         method: "GET",
         description:
-          "List files and directories in a repository path. Returns 404 if path does not exist.",
+          "List files and directories in a repository path. Returns 404 if path does not exist. Always use this before attempting file access.",
         example:
           "curl -s https://api.github.com/repos/coinbase/x402/contents/packages",
       },
@@ -113,7 +120,7 @@ const API_REGISTRY: Record<string, ApiServiceInfo> = {
         url: "https://api.github.com/repos/{owner}/{repo}/contents/{file_path}",
         method: "GET",
         description:
-          "Get file content from repository (returns 404 if file does not exist)",
+          "Get file content from repository (returns 404 if file does not exist). Check list_directory first to verify path exists.",
         example:
           "curl -s https://api.github.com/repos/coinbase/x402/contents/package.json",
       },
@@ -121,20 +128,24 @@ const API_REGISTRY: Record<string, ApiServiceInfo> = {
         url: "https://api.github.com/search/issues",
         method: "GET",
         description:
-          "Search for issues and discussions across all repositories",
+          "Search for issues and discussions across all repositories. Returns paginated results (default 30 per page, max 100).",
         example:
-          "curl -s 'https://api.github.com/search/issues?q=agent+type:issue&sort=comments'",
+          "curl -s 'https://api.github.com/search/issues?q=agent+type:issue&sort=comments&per_page=100'",
       },
     },
     rateLimits:
-      "Unauthenticated: 60 requests/hour per IP. Authenticated (with token): 5000 requests/hour per user.",
+      "Unauthenticated: 60 requests/hour per IP (10 searches/minute). Authenticated: 5000 requests/hour per user (30 searches/minute). " +
+      "Search endpoints have separate rate limit window. Use ?per_page=100 to reduce pagination overhead.",
     authentication:
-      "Optional personal access token (set Authorization: token ghp_xxx header). " +
-      "Recommended for higher rate limits and accessing private repositories.",
+      "Optional personal access token. Set Authorization header: 'Authorization: token ghp_xxx'. " +
+      "RECOMMENDED for production agents (5000/hour quota vs 60/hour unauthenticated). " +
+      "Create at https://github.com/settings/tokens with 'public_repo' and 'read:discussion' scopes.",
     notes:
       "GitHub API returns 404 when a repository path or file does not exist. " +
-      "Use the search endpoints to discover repositories first, then list_directory to explore structure. " +
-      "Always check if a path exists in directory listings before attempting file access to avoid 404 errors.",
+      "ALWAYS list_directory before get_file to verify path exists (saves failed requests and rate limit quota). " +
+      "Search results are paginated (default 30). Use ?per_page=100&page=N to fetch all results efficiently. " +
+      "Use filters in search queries (language:typescript, stars:>10000, created:>2024-01-01) to reduce result sets. " +
+      "Unauthenticated requests may hit rate limits quickly on public agents—use authentication tokens in production.",
   },
 
   "x402-payment-protocol": {
@@ -193,12 +204,33 @@ export function getApiDiscoveryTool(): AutomatonTool {
       args: Record<string, unknown>,
       _context: ToolContext
     ): Promise<string> {
-      const input = {
-        service_name: String(args.service_name),
-      } as DiscoveryInput;
+      const serviceName = String(args.service_name || "").toLowerCase().trim();
+
+      // Validate input
+      if (!serviceName || serviceName === "undefined") {
+        const available = Object.keys(API_REGISTRY);
+        logger.warn(
+          `[API_DISCOVERY] Missing service_name. Available: ${available.join(", ")}`
+        );
+        return JSON.stringify({
+          success: false,
+          error: `service_name is required. Available services: ${available.join(", ")}`,
+          executedAt: new Date().toISOString(),
+          cacheHit: false,
+        });
+      }
 
       try {
-        const serviceName = input.service_name.toLowerCase();
+        const cacheKey = getCacheKey(serviceName);
+
+        // Check cache
+        const cached = cache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+          logger.debug(`[CACHE HIT] api_discovery: "${serviceName}"`);
+          const result = { ...cached.data, cacheHit: true };
+          return JSON.stringify(result);
+        }
+
         const serviceInfo = API_REGISTRY[serviceName];
 
         if (!serviceInfo) {
@@ -206,10 +238,13 @@ export function getApiDiscoveryTool(): AutomatonTool {
           logger.warn(
             `[API_DISCOVERY] Service not found: ${serviceName}. Available: ${available.join(", ")}`
           );
-          return JSON.stringify({
+          const result: DiscoveryResult = {
             success: false,
             error: `Service "${serviceName}" not found. Available services: ${available.join(", ")}`,
-          });
+            executedAt: new Date().toISOString(),
+            cacheHit: false,
+          };
+          return JSON.stringify(result);
         }
 
         logger.info(
@@ -218,8 +253,14 @@ export function getApiDiscoveryTool(): AutomatonTool {
 
         const result: DiscoveryResult = {
           success: true,
+          service_name: serviceName,
           service: serviceInfo,
+          executedAt: new Date().toISOString(),
+          cacheHit: false,
         };
+
+        // Cache the result
+        cache.set(cacheKey, { data: result, timestamp: Date.now() });
 
         return JSON.stringify(result);
       } catch (error) {
@@ -229,6 +270,8 @@ export function getApiDiscoveryTool(): AutomatonTool {
         return JSON.stringify({
           success: false,
           error: `api_discovery failed: ${errorMsg}`,
+          executedAt: new Date().toISOString(),
+          cacheHit: false,
         });
       }
     },
