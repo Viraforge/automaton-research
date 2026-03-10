@@ -765,7 +765,7 @@ export async function runAgentLoop(
             args = {};
           }
 
-          log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args).slice(0, 100)})`);
+          log(config, `[TOOL] ${tc.function.name}(${JSON.stringify(args)})`);
 
           const bypassStallBlocking =
             !!currentInputSource && STALL_BYPASS_INPUT_SOURCES.has(currentInputSource);
@@ -1023,7 +1023,7 @@ export async function runAgentLoop(
 
       // Log the turn
       if (turn.thinking) {
-        log(config, `[THOUGHT] ${turn.thinking.slice(0, 300)}`);
+        log(config, `[THOUGHT] ${turn.thinking}`);
       }
 
       const progress = evaluateProgress({
