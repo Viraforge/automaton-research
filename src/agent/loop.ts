@@ -221,8 +221,8 @@ export async function runAgentLoop(
   // Initialize spawn queue (sequential execution with backpressure)
   const { initSpawnQueue } = await import("../replication/spawn-queue.js");
   initSpawnQueue({
-    spawnStaggerMs: (config as any).spawnStaggerMs ?? 5_000,
-    maxQueueDepth: (config as any).maxSpawnQueueDepth ?? 2,
+    spawnStaggerMs: config.spawnStaggerMs ?? 5_000,
+    maxQueueDepth: config.maxSpawnQueueDepth ?? 2,
   });
 
   // Optional orchestration bootstrap (requires V9 goals/task tables)
