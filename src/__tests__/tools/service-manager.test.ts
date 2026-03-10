@@ -240,6 +240,11 @@ describe("service_manager tools", () => {
       expect(parsed.pid).toBe(54321);
       expect(parsed.url).toBe("http://127.0.0.1:3010");
 
+      // Verify PM2 calls were made with correct arguments
+      expect(mockExec).toHaveBeenCalledWith("pm2", ["jlist"], expect.any(Object)); // collision check
+      expect(mockExec).toHaveBeenCalledWith("pm2", ["start", scriptPath, "--name", "test-service"], expect.any(Object));
+      expect(mockExec).toHaveBeenCalledWith("pm2", ["save"]);
+
       // Verify it's stored in KV
       const managed = JSON.parse(ctx.db.getKV("services.managed")!);
       expect(managed).toHaveLength(1);

@@ -11,7 +11,7 @@ const ALLOWED_SCRIPT_EXT = /\.js$/;
 const PORT_MIN = 3000;
 const PORT_MAX = 9999;
 const FORBIDDEN_PORTS = new Set([9615]); // pm2 bus
-const SAFE_ENV_KEY_RE = /^[A-Z_][A-Z0-9_]{0,63}$/i;
+const SAFE_ENV_KEY_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const SERVICES_KV_KEY = "services.managed";
 
 // ── Types ──
@@ -145,6 +145,15 @@ export function getStartServiceTool(): AutomatonTool {
           });
         }
 
+        // ── Check port uniqueness against managed services ──
+        const managedServices = readManagedServices(ctx);
+        if (managedServices.some((s) => s.port === port)) {
+          return JSON.stringify({
+            success: false,
+            error: `Port ${port} is already in use by another managed service. Choose a different port.`,
+          });
+        }
+
         // ── Check PM2 name collision (HIGH priority) ──
         let pm2List: Pm2Process[] = [];
         try {
@@ -180,7 +189,8 @@ export function getStartServiceTool(): AutomatonTool {
         const mergedEnv = { ...process.env, ...customEnv };
 
         // ── Start service via PM2 ──
-        const pmStartArgs = ["start", scriptPath, "--name", name, "--no-autorestart"];
+        // PM2 defaults to auto-restart enabled; only specify --no-autorestart if explicitly requested
+        const pmStartArgs = ["start", scriptPath, "--name", name];
         execFileSync("pm2", pmStartArgs, { env: mergedEnv });
 
         // ── Save PM2 state ──
@@ -277,11 +287,25 @@ export function getStopServiceTool(): AutomatonTool {
         }
 
         // ── Delete via PM2 ──
+        // First check if process exists in PM2
+        let processExists = false;
+        try {
+          const pm2Output = execFileSync("pm2", ["jlist"], { encoding: "utf-8" });
+          const pm2List = parsePm2List(pm2Output);
+          processExists = pm2List.some((p) => p.name === name);
+        } catch {
+          // Can't check, proceed with delete attempt anyway
+        }
+
+        // Attempt to delete
         try {
           execFileSync("pm2", ["delete", name]);
         } catch (err) {
-          // Treat non-zero exit as success — process may already be gone
-          logger.warn(`pm2 delete exited with error (process may already be gone): ${err instanceof Error ? err.message : String(err)}`);
+          // Only treat as success if process didn't exist; otherwise this is a real error
+          if (processExists) {
+            throw err;
+          }
+          logger.warn(`pm2 delete failed but process was not in PM2 (already gone): ${err instanceof Error ? err.message : String(err)}`);
         }
 
         // ── Save PM2 state ──
@@ -357,7 +381,7 @@ export function getListServicesTool(): AutomatonTool {
             stoppable: isManagedByUs,
             port: managedService?.port || null,
             startedAt: managedService?.startedAt || null,
-            uptime: proc.pm2_env?.pm_uptime ? `${Math.floor(proc.pm2_env.pm_uptime / 1000)}s` : null,
+            uptime: proc.pm2_env?.pm_uptime ? `${Math.floor((Date.now() - proc.pm2_env.pm_uptime) / 1000)}s` : null,
           };
         });
 
