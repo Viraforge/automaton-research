@@ -241,13 +241,15 @@ export function getGitHubSearchTool(): AutomatonTool {
           if (issueData.search?.edges) {
             issueData.search.edges.forEach((edge) => {
               const issue = edge.node as Record<string, unknown>;
+              const repoName =
+                issue.repository && typeof issue.repository === "object"
+                  ? String((issue.repository as Record<string, unknown>).name)
+                  : "unknown";
               results.push({
                 type: "issue",
                 title: String(issue.title),
                 url: String(issue.url),
-                owner: String(
-                  (issue.repository as Record<string, unknown>).name
-                ),
+                owner: repoName,
                 createdAt: String(issue.createdAt),
                 updatedAt: String(issue.updatedAt),
               });
