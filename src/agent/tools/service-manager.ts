@@ -155,27 +155,13 @@ export function getStartServiceTool(): AutomatonTool {
           // Continue anyway — if pm2 isn't available, the start will fail below
         }
 
-        // ── Check port uniqueness against managed services and live PM2 ──
+        // ── Check port uniqueness against managed services ──
         const managedServices = readManagedServices(ctx);
         if (managedServices.some((s) => s.port === port)) {
           return JSON.stringify({
             success: false,
             error: `Port ${port} is already in use by another managed service. Choose a different port.`,
           });
-        }
-
-        // Also check against any running PM2 processes that might have the same port
-        const managedNames = new Set(managedServices.map((s) => s.name));
-        for (const proc of pm2List) {
-          // Skip processes we're tracking (already checked above); only warn about divergence
-          if (!managedNames.has(proc.name)) continue;
-          const managedService = managedServices.find((s) => s.name === proc.name);
-          if (managedService?.port === port) {
-            return JSON.stringify({
-              success: false,
-              error: `Port ${port} is already allocated to service "${proc.name}". Choose a different port.`,
-            });
-          }
         }
 
         // ── Check PM2 name collision (HIGH priority) ──
@@ -205,7 +191,7 @@ export function getStartServiceTool(): AutomatonTool {
         const mergedEnv = { ...process.env, ...customEnv };
 
         // ── Start service via PM2 ──
-        // PM2 defaults to auto-restart enabled; only specify --no-autorestart if explicitly requested
+        // PM2 defaults to auto-restart enabled
         const pmStartArgs = ["start", scriptPath, "--name", name];
         execFileSync("pm2", pmStartArgs, { env: mergedEnv });
 
