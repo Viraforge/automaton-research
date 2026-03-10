@@ -259,7 +259,7 @@ export class LocalWorkerPool {
             try {
               const args = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : fn.arguments;
               toolOutput = await tool.execute(args as Record<string, unknown>);
-              logger.info(`[WORKER ${workerId}] ${fn.name} → ${redactSensitiveText(toolOutput).slice(0, 120)}`);
+              logger.info(`[WORKER ${workerId}] ${fn.name} → ${redactSensitiveText(toolOutput)}`);
 
               // Track file artifacts
               if (fn.name === "write_file" && typeof (args as any).path === "string") {
