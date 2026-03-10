@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { getGitHubSearchTool } from "../../agent/tools/github-search.js";
 import { loadConfig } from "../../config.js";
+import type { AutomatonTool } from "../../types.js";
 
 describe("github_search tool", () => {
-  let tool;
+  let tool: AutomatonTool;
 
   beforeEach(() => {
     tool = getGitHubSearchTool();
@@ -51,7 +52,7 @@ describe("github_search tool", () => {
 
     expect(result.filter).toBe("issue");
     expect(result.results).toBeInstanceOf(Array);
-    result.results.forEach((item) => {
+    result.results.forEach((item: any) => {
       expect(item.type).toBe("issue");
       expect(item.title).toBeDefined();
       expect(item.url).toBeDefined();
@@ -82,8 +83,8 @@ describe("github_search tool", () => {
     if (result.results.length > 1) {
       // Results should be sorted by stars (descending)
       const stars = result.results
-        .filter((r) => r.stars !== undefined)
-        .map((r) => r.stars);
+        .filter((r: any) => r.stars !== undefined)
+        .map((r: any) => r.stars);
       for (let i = 1; i < stars.length; i++) {
         expect(stars[i]).toBeLessThanOrEqual(stars[i - 1]);
       }

@@ -1,4 +1,4 @@
-import type { AutomatonTool, ToolContext, ToolCallResult } from "../../types.js";
+import type { AutomatonTool, ToolContext, ToolCallResult, ToolCategory } from "../../types.js";
 import { loadConfig } from "../../config.js";
 import { createLogger } from "../../observability/logger.js";
 
@@ -11,7 +11,9 @@ interface GitHubSearchInput {
   max_results?: number;
 }
 
-interface GitHubSearchResult extends ToolCallResult {
+interface GitHubSearchResult {
+  success?: boolean;
+  error?: string;
   query: string;
   filter: string;
   results: Array<{
@@ -110,11 +112,11 @@ export function getGitHubSearchTool(): AutomatonTool {
       required: ["query"],
     },
     riskLevel: "safe",
-    category: "discovery",
+    category: "skills" as ToolCategory,
 
     async execute(
       args: Record<string, unknown>,
-      context: ToolContext
+      _context: ToolContext
     ): Promise<string> {
       const input = {
         query: String(args.query),
