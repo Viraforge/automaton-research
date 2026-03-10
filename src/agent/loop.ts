@@ -1021,9 +1021,19 @@ export async function runAgentLoop(
         db.setKV("failed_tool_counts", JSON.stringify([...failedToolCounts]));
       }
 
-      // Log the turn
+      // Log the turn (chunk long thoughts to avoid stdout buffer truncation)
       if (turn.thinking) {
-        log(config, `[THOUGHT] ${turn.thinking}`);
+        const thought = turn.thinking;
+        const chunkSize = 200;
+        if (thought.length > chunkSize) {
+          log(config, `[THOUGHT] [length: ${thought.length} bytes]`);
+          for (let i = 0; i < thought.length; i += chunkSize) {
+            const chunk = thought.slice(i, i + chunkSize);
+            log(config, `[THOUGHT-CHUNK ${Math.floor(i / chunkSize) + 1}] ${chunk}`);
+          }
+        } else {
+          log(config, `[THOUGHT] ${thought}`);
+        }
       }
 
       const progress = evaluateProgress({
