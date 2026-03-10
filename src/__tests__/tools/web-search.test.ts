@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { getWebSearchTool } from "../../agent/tools/web-search.js";
 
 describe("web_search tool", () => {
