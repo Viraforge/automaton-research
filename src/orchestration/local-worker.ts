@@ -283,7 +283,7 @@ export class LocalWorkerPool {
 
       // No tool calls — the model is done (final response)
       finalOutput = response.content || "Task completed.";
-      logger.info(`[WORKER ${workerId}] Done on turn ${turn + 1} — ${finalOutput.slice(0, 200)}`);
+      logger.info(`[WORKER ${workerId}] Done on turn ${turn + 1} — ${finalOutput}`);
       break;
     }
 
