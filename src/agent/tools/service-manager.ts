@@ -73,7 +73,7 @@ export function getStartServiceTool(): AutomatonTool {
     name: "start_service",
     description:
       "Start a persistent HTTP service via PM2. Provide script path, port, and optional environment variables. " +
-      "Service runs in background and restarts on crash (unless --no-autorestart is set). " +
+      "Service runs in background and restarts automatically on crash. " +
       "Only manages services in ~/.automaton/services or ~/.automaton-research-home directories.",
     parameters: {
       type: "object",
@@ -145,16 +145,7 @@ export function getStartServiceTool(): AutomatonTool {
           });
         }
 
-        // ── Check port uniqueness against managed services ──
-        const managedServices = readManagedServices(ctx);
-        if (managedServices.some((s) => s.port === port)) {
-          return JSON.stringify({
-            success: false,
-            error: `Port ${port} is already in use by another managed service. Choose a different port.`,
-          });
-        }
-
-        // ── Check PM2 name collision (HIGH priority) ──
+        // ── Query PM2 for name collision and port collision checks ──
         let pm2List: Pm2Process[] = [];
         try {
           const pm2Output = execFileSync("pm2", ["jlist"], { encoding: "utf-8" });
@@ -163,6 +154,31 @@ export function getStartServiceTool(): AutomatonTool {
           logger.warn(`Failed to query pm2 jlist: ${err instanceof Error ? err.message : String(err)}`);
           // Continue anyway — if pm2 isn't available, the start will fail below
         }
+
+        // ── Check port uniqueness against managed services and live PM2 ──
+        const managedServices = readManagedServices(ctx);
+        if (managedServices.some((s) => s.port === port)) {
+          return JSON.stringify({
+            success: false,
+            error: `Port ${port} is already in use by another managed service. Choose a different port.`,
+          });
+        }
+
+        // Also check against any running PM2 processes that might have the same port
+        const managedNames = new Set(managedServices.map((s) => s.name));
+        for (const proc of pm2List) {
+          // Skip processes we're tracking (already checked above); only warn about divergence
+          if (!managedNames.has(proc.name)) continue;
+          const managedService = managedServices.find((s) => s.name === proc.name);
+          if (managedService?.port === port) {
+            return JSON.stringify({
+              success: false,
+              error: `Port ${port} is already allocated to service "${proc.name}". Choose a different port.`,
+            });
+          }
+        }
+
+        // ── Check PM2 name collision (HIGH priority) ──
 
         const existingProc = pm2List.find((p) => p.name === name);
         if (existingProc) {

@@ -285,6 +285,11 @@ describe("service_manager tools", () => {
       );
 
       mockExec
+        .mockReturnValueOnce(
+          JSON.stringify([
+            { name: "test-service", pid: 54321, pm_id: 0, pm2_env: { status: "online" } },
+          ]) as any
+        ) // pm2 jlist (check if process exists)
         .mockReturnValueOnce("" as any) // pm2 delete
         .mockReturnValueOnce("" as any); // pm2 save
 
@@ -297,6 +302,11 @@ describe("service_manager tools", () => {
       // Verify it's removed from KV
       const managed = ctx.db.getKV("services.managed");
       expect(managed).toBe('[]');
+
+      // Verify pm2 jlist was called before delete
+      expect(mockExec).toHaveBeenCalledWith("pm2", ["jlist"], expect.any(Object));
+      expect(mockExec).toHaveBeenCalledWith("pm2", ["delete", "test-service"]);
+      expect(mockExec).toHaveBeenCalledWith("pm2", ["save"]);
     });
   });
 
