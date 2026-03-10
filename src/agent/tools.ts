@@ -24,6 +24,7 @@ import { createLogger } from "../observability/logger.js";
 import { classifyExecTimeout } from "../orchestration/exec-timeout.js";
 import { getWebSearchTool } from "./tools/web-search.js";
 import { getGitHubSearchTool } from "./tools/github-search.js";
+import { getApiDiscoveryTool } from "./tools/discovery.js";
 import { getStartServiceTool, getStopServiceTool, getListServicesTool } from "./tools/service-manager.js";
 
 const logger = createLogger("tools");
@@ -3955,9 +3956,10 @@ Model: ${ctx.inference.getDefaultModel()}
       },
     },
 
-    // ── Discovery Tools (web search, GitHub intelligence) ──
+    // ── Discovery Tools (web search, GitHub intelligence, API documentation) ──
     getWebSearchTool(),
     getGitHubSearchTool(),
+    getApiDiscoveryTool(),
 
     // ── Service Management Tools (PM2 lifecycle) ──
     getStartServiceTool(),
