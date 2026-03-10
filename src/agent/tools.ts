@@ -22,6 +22,8 @@ import type { PolicyEngine } from "./policy-engine.js";
 import { sanitizeToolResult, sanitizeInput } from "./injection-defense.js";
 import { createLogger } from "../observability/logger.js";
 import { classifyExecTimeout } from "../orchestration/exec-timeout.js";
+import { getWebSearchTool } from "./tools/web-search.js";
+import { getGitHubSearchTool } from "./tools/github-search.js";
 
 const logger = createLogger("tools");
 
@@ -3893,6 +3895,11 @@ Model: ${ctx.inference.getDefaultModel()}
         );
       },
     },
+
+    // ── Discovery Tools (web search, GitHub intelligence) ──
+    getWebSearchTool(),
+    getGitHubSearchTool(),
+
     {
       name: "list_goals",
       description:
