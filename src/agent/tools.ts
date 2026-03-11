@@ -208,21 +208,13 @@ function buildPublishedServiceScript(
   port: number,
   healthcheckPath: string,
 ): string {
-  const safeFile = fqdn.replace(/[^a-z0-9.-]/g, "-");
-  const caddyPath = `/etc/caddy/automaton-sites/${safeFile}.caddy`;
   return [
     "set -e",
     "SUDO=\"\"",
     "if command -v sudo >/dev/null 2>&1; then SUDO=\"sudo\"; fi",
-    `$SUDO mkdir -p /etc/caddy/automaton-sites`,
-    "if ! grep -q 'BEGIN AUTOMATON SITES IMPORT' /etc/caddy/Caddyfile; then",
-    "  {",
-    "    printf '\\n# BEGIN AUTOMATON SITES IMPORT\\n'",
-    "    printf 'import /etc/caddy/automaton-sites/*.caddy\\n'",
-    "    printf '# END AUTOMATON SITES IMPORT\\n'",
-    "  } | $SUDO tee -a /etc/caddy/Caddyfile >/dev/null",
-    "fi",
-    `cat <<'CADDY_SITE' | $SUDO tee ${escapeShellArg(caddyPath)} >/dev/null`,
+    // Directly append site blocks to Caddyfile instead of using import (which doesn't support site blocks in Caddy)
+    `if ! grep -q '${escapeShellArg(`http://${fqdn}`)}' /etc/caddy/Caddyfile 2>/dev/null; then`,
+    `  cat <<'CADDY_SITE' | $SUDO tee -a /etc/caddy/Caddyfile >/dev/null`,
     `http://${fqdn} {`,
     `    reverse_proxy http://127.0.0.1:${port}`,
     "}",
@@ -230,6 +222,7 @@ function buildPublishedServiceScript(
     `    reverse_proxy http://127.0.0.1:${port}`,
     "}",
     "CADDY_SITE",
+    "fi",
     "$SUDO caddy validate --config /etc/caddy/Caddyfile",
     "$SUDO systemctl reload caddy",
     `curl -fsS ${escapeShellArg(`http://127.0.0.1:${port}${healthcheckPath}`)} >/dev/null`,
