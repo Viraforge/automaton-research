@@ -482,17 +482,19 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         // auto-publish to public domain instead of returning localhost
         if (info.publicUrl.startsWith("http://localhost") &&
             ctx.config.useSovereignProviders &&
-            ctx.config.cloudflareApiToken) {
+            (ctx.config.cloudflareApiToken || ctx.config.cloudflareApiKey)) {
           try {
             // Auto-generate subdomain based on port number and timestamp
             const timestamp = Date.now().toString(36).slice(-6);
             const autoSubdomain = `api-${port}-${timestamp}`;
 
             const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-            const cf = createCloudflareProvider({
-              apiKey: ctx.config.cloudflareApiToken,
-              email: ctx.config.cloudflareEmail,
-            });
+            const cfToken = ctx.config.cloudflareApiToken;
+            const cfKey = ctx.config.cloudflareApiKey;
+            const cfEmail = ctx.config.cloudflareEmail;
+            const cf = createCloudflareProvider(
+              (cfToken && cfEmail) ? { apiKey: cfToken, email: cfEmail } : { apiToken: cfKey },
+            );
             const domain = "compintel.co";
             const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
             const existingRecords = await cf.listRecords(zoneId);
@@ -624,10 +626,11 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-        const cf = createCloudflareProvider({
-          apiKey: cfToken,
-          email: ctx.config.cloudflareEmail,
-        });
+        const cfKey = ctx.config.cloudflareApiKey;
+        const cfEmail = ctx.config.cloudflareEmail;
+        const cf = createCloudflareProvider(
+          (cfToken && cfEmail) ? { apiKey: cfToken, email: cfEmail } : { apiToken: cfKey },
+        );
         const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
         const existingRecords = await cf.listRecords(zoneId);
         const originIp = String(args.origin_ip || "").trim()
