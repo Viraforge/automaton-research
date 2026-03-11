@@ -86,9 +86,10 @@ async function spawnChildSovereign(
   lifecycle: ChildLifecycle,
 ): Promise<ChildAutomaton> {
   // Count only "viable" children (those that might succeed, not cleanup/terminal states)
-  // Excludes: dead, cleaned_up, failed, stopped, unhealthy (will be auto-stopped)
+  // Excludes new states: dead, cleaned_up, failed, stopped, unhealthy (will be auto-stopped)
+  // Excludes old/legacy states: errored, error
   const existing = db.getChildren().filter((c) => {
-    const nonViableStates = ["dead", "cleaned_up", "failed", "stopped", "unhealthy"];
+    const nonViableStates = ["dead", "cleaned_up", "failed", "stopped", "unhealthy", "errored", "error"];
     return !nonViableStates.includes(c.status);
   });
   const maxChildren = readRuntimeNumber(db, "runtime.maxChildren", 3);
@@ -195,9 +196,10 @@ async function spawnChildConway(
   lifecycle?: ChildLifecycle,
 ): Promise<ChildAutomaton> {
   // Count only "viable" children (those that might succeed, not cleanup/terminal states)
-  // Excludes: dead, cleaned_up, failed, stopped, unhealthy (will be auto-stopped)
+  // Excludes new states: dead, cleaned_up, failed, stopped, unhealthy (will be auto-stopped)
+  // Excludes old/legacy states: errored, error
   const existing = db.getChildren().filter((c) => {
-    const nonViableStates = ["dead", "cleaned_up", "failed", "stopped", "unhealthy"];
+    const nonViableStates = ["dead", "cleaned_up", "failed", "stopped", "unhealthy", "errored", "error"];
     return !nonViableStates.includes(c.status);
   });
   const maxChildren = readRuntimeNumber(db, "runtime.maxChildren", 3);
