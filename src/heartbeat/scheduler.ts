@@ -95,10 +95,8 @@ export class DurableScheduler {
       const context = await Promise.race([
         buildTickContext(
           this.db,
-          this.legacyContext.conway,
           this.config,
           this.legacyContext.identity.address,
-          this.legacyContext.config.useSovereignProviders,
         ),
         new Promise<never>((_, reject) => {
           setTimeout(

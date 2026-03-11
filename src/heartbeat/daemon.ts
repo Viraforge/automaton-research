@@ -155,7 +155,7 @@ export function createHeartbeatDaemon(
 
   const forceRun = async (taskName: string): Promise<void> => {
     const context = await import("./tick-context.js").then((m) =>
-      m.buildTickContext(rawDb, conway, heartbeatConfig, identity.address, config.useSovereignProviders),
+      m.buildTickContext(rawDb, heartbeatConfig, identity.address),
     );
     await scheduler.executeTask(taskName, context);
   };

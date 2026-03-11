@@ -2,20 +2,16 @@
  * Tick Context
  *
  * Builds a shared context for each heartbeat tick.
- * Fetches balance ONCE per tick, derives survival tier,
- * and shares across all tasks to avoid redundant API calls.
- *
- * Supports both legacy Conway credits and sovereign USDC mode.
+ * Fetches USDC balance ONCE per tick and shares across all tasks
+ * to avoid redundant API calls.
  */
 
 import type BetterSqlite3 from "better-sqlite3";
 import type { Address } from "viem";
 import type {
-  ConwayClient,
   HeartbeatConfig,
   TickContext,
 } from "../types.js";
-import { getSurvivalTier } from "../financial/survival.js";
 import { getUsdcBalance } from "../wallet/x402.js";
 import { createLogger } from "../observability/logger.js";
 
@@ -40,10 +36,8 @@ function generateTickId(): string {
  */
 export async function buildTickContext(
   db: DatabaseType,
-  conway: ConwayClient,
   config: HeartbeatConfig,
   walletAddress?: Address,
-  useSovereignProviders?: boolean,
 ): Promise<TickContext> {
   const tickId = generateTickId();
   const startedAt = new Date();
@@ -51,39 +45,20 @@ export async function buildTickContext(
   let creditBalance = 0;
   let usdcBalance = 0;
 
-  if (useSovereignProviders) {
-    // Sovereign mode: USDC is the sole financial metric
-    if (walletAddress) {
-      try {
-        usdcBalance = await getUsdcBalance(walletAddress);
-      } catch (err: any) {
-        logger.error("Failed to fetch USDC balance", err instanceof Error ? err : undefined);
-      }
-    }
-    // Convert USDC to cents for creditBalance compatibility
-    creditBalance = Math.round(usdcBalance * 100);
-  } else {
-    // Legacy mode: fetch both
+  // Always use USDC (Conway removed)
+  if (walletAddress) {
     try {
-      creditBalance = await conway.getCreditsBalance();
+      usdcBalance = await getUsdcBalance(walletAddress);
     } catch (err: any) {
-      logger.error("Failed to fetch credit balance", err instanceof Error ? err : undefined);
-    }
-
-    if (walletAddress) {
-      try {
-        usdcBalance = await getUsdcBalance(walletAddress);
-      } catch (err: any) {
-        logger.error("Failed to fetch USDC balance", err instanceof Error ? err : undefined);
-      }
+      logger.error("Failed to fetch USDC balance", err instanceof Error ? err : undefined);
     }
   }
+  // Convert USDC to cents for creditBalance compatibility
+  creditBalance = Math.round(usdcBalance * 100);
 
-  // In sovereign mode, wallet balance is for optional x402 payments only.
+  // Wallet balance is for optional x402 payments only.
   // Do not throttle heartbeat tasks based on zero wallet balance.
-  const survivalTier = useSovereignProviders
-    ? "normal" // Wallet funds are optional; don't throttle heartbeat
-    : getSurvivalTier(creditBalance);
+  const survivalTier = "normal"; // Wallet funds are optional; don't throttle heartbeat
   const lowComputeMultiplier = config.lowComputeMultiplier ?? 4;
 
   return {
