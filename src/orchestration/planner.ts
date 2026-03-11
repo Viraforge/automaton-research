@@ -248,7 +248,13 @@ You CANNOT:
 12. No task should take more than 4 hours - split longer tasks
 13. Include at least one checkpoint task per 5 execution tasks
 14. Parallelizable tasks should have no mutual dependencies
-15. For revenue goals, include at least one \`distribution\` task and one \`monetization\` task
+
+**CRITICAL FOR REVENUE GOALS** (#15-16):
+15. **EVERY revenue goal MUST include BOTH**:
+   - At least one \`distribution\` task (how to reach customers: outreach, marketing, listing, community)
+   - At least one \`monetization\` task (how to charge: pricing, checkout, subscriptions, affiliate)
+   - Example: Goal "Launch paid weather API" → Task A: "List API on public registries + beta signup outreach" (distribution) → Task B: "Implement checkout flow and usage billing" (monetization)
+16. If a plan is missing distribution or monetization for a revenue goal, revise and add it
 </decomposition_rules>
 
 <custom_roles>
@@ -352,6 +358,38 @@ Respond with a JSON object matching the PlannerOutput schema:
   "estimatedTimeMinutes": 120
 }
 \`\`\`
+
+REVENUE GOAL EXAMPLE (goal = "Launch paid API with $500 MRR target"):
+\`\`\`json
+{
+  "tasks": [
+    {
+      "title": "Build API pricing & Stripe checkout",
+      "taskClass": "monetization",
+      "description": "Implement usage-based billing with $0.01 per request. Integrate Stripe Webhooks for subscriptions. Create pricing page with tiered plans..."
+    },
+    {
+      "title": "List API on ProductHunt and developer communities",
+      "taskClass": "distribution",
+      "description": "Post ProductHunt launch thread, share in HN/Reddit/Discord communities, reach out to 20 API directory services for free listing..."
+    },
+    {
+      "title": "Validate demand and gather early users",
+      "taskClass": "research",
+      "description": "Conduct customer interviews with 10 potential users, measure signup conversion rate, measure API adoption metrics..."
+    }
+  ]
+}
+\`\`\`
+
+NOTICE: Both "monetization" AND "distribution" are required (and research validates the whole thing).
+
+**CRITICAL: REVENUE GOAL CHECK** (rule #15-16):
+8. **IF goal is a revenue goal** (expectedRevenueCents > 0 OR matches revenue keywords):
+   - BEFORE decomposing: plan MUST include at least one DISTRIBUTION task (customer acquisition/outreach)
+   - BEFORE decomposing: plan MUST include at least one MONETIZATION task (revenue collection/pricing)
+   - Example: "Build SaaS payment API" → Task 1 (distribution): "List on ProductHunt + developer community outreach" → Task 2 (monetization): "Implement Stripe integration with usage-based pricing"
+   - If your draft plan lacks either, add it before returning JSON
 
 Task descriptions must be self-contained. An agent reading only the task
 description (not the goal or other tasks) should know exactly what to do.
@@ -621,10 +659,10 @@ function parseTaskClass(
 
 function inferTaskClass(title: string, description: string): PlannedTaskClass {
   const text = `${title} ${description}`.toLowerCase();
-  if (/(pricing|payment|checkout|invoice|billing|trial|conversion|close deal|monetiz|revenue)/.test(text)) {
+  if (/(pricing|payment|checkout|invoice|billing|trial|conversion|close deal|monetiz|revenue|subscription|charge|customer pay|stripe|paypal|purchase|sales page|freemium|upsell)/.test(text)) {
     return "monetization";
   }
-  if (/(publish|post|message|outreach|distribut|listing|announce|launch thread|dm|community)/.test(text)) {
+  if (/(publish|post|message|outreach|distribut|listing|announce|launch thread|dm|community|marketing|social|promotion|beta signup|waitlist|directory|marketplace|forum|blog post|email campaign|partnership|integrate.*api|api submission)/.test(text)) {
     return "distribution";
   }
   if (/(research|analy|validate market|customer interview|discovery)/.test(text)) {
