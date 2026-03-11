@@ -3547,7 +3547,12 @@ Model: ${ctx.inference.getDefaultModel()}
         const body = args.body as string | undefined;
         const extraHeaders = args.headers
           ? JSON.parse(args.headers as string)
-          : undefined;
+          : {};
+
+        // Automatically inject internal API token for localhost URLs (agent's own services)
+        if (ctx.config.internalApiToken && url.includes("localhost")) {
+          extraHeaders["x-internal-token"] = ctx.config.internalApiToken;
+        }
 
         const maxPayment =
           ctx.config.treasuryPolicy?.maxX402PaymentCents ??

@@ -104,6 +104,16 @@ function paymentRequiredResponse(res) {
 // x402 payment middleware
 async function requirePayment(req, res, next) {
   const priceCents = getPriceCents();
+
+  // Allow internal requests with valid token (skip payment for agent's own services)
+  const internalToken = req.headers["x-internal-token"];
+  const expectedToken = "5bfe960f681175324c8b27bacf20a225ba1cbf93f2e63c57b3af99c8ec8d6a1b";
+
+  if (internalToken === expectedToken) {
+    req.payer = "internal";
+    return next();
+  }
+
   const paymentHeader = req.headers["x-payment"];
   if (!paymentHeader) {
     return paymentRequiredResponse(res);

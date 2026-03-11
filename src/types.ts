@@ -78,6 +78,8 @@ export interface AutomatonConfig {
   cloudflareZoneId?: string;
   porkbunApiKey?: string;
   porkbunSecretKey?: string;
+  /** Internal API token for accessing payment-gated services without x402 payment */
+  internalApiToken?: string;
   /** When true, sovereign providers replace Conway API calls */
   useSovereignProviders?: boolean;
   /** Protocol version for social relay signing: "conway" (backward compat) or "automaton" (new) */
