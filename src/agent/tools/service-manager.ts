@@ -14,6 +14,7 @@ const PORT_MAX = 9999;
 const FORBIDDEN_PORTS = new Set([9615]); // pm2 bus
 const SAFE_ENV_KEY_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const SERVICES_KV_KEY = "services.managed";
+const DEFAULT_PORT_RANGE_SIZE = 50; // Find first available in 50-port range if not specified
 
 // ── Types ──
 interface ManagedService {
@@ -58,6 +59,31 @@ async function isPortAvailable(port: number): Promise<boolean> {
   });
 }
 
+/**
+ * Find the first available port in a range.
+ * Checks both KV registry and OS-level availability.
+ * Returns first available port or null if none found.
+ */
+async function findAvailablePort(
+  minPort: number,
+  maxPort: number,
+  managedServices: ManagedService[]
+): Promise<number | null> {
+  for (let tryPort = minPort; tryPort <= maxPort; tryPort++) {
+    // Skip forbidden ports
+    if (FORBIDDEN_PORTS.has(tryPort)) continue;
+
+    // Skip ports already in KV registry
+    if (managedServices.some((s) => s.port === tryPort)) continue;
+
+    // Check OS-level availability
+    if (await isPortAvailable(tryPort)) {
+      return tryPort;
+    }
+  }
+  return null;
+}
+
 function getAllowedRoots(): string[] {
   const home = process.env.HOME ?? "/root";
   return [
@@ -100,9 +126,10 @@ export function getStartServiceTool(): AutomatonTool {
   return {
     name: "start_service",
     description:
-      "Start a persistent HTTP service via PM2. Provide script path, port, and optional environment variables. " +
+      "Start a persistent HTTP service via PM2. Provide script path and either a specific port or a port range for auto-discovery. " +
       "Service runs in background and restarts automatically on crash. " +
-      "Only manages services in ~/.automaton/services or ~/.automaton-research-home directories.",
+      "Only manages services in ~/.automaton/services or ~/.automaton-research-home directories. " +
+      "When portRange is provided, finds and uses the first available port automatically.",
     parameters: {
       type: "object",
       properties: {
@@ -118,7 +145,20 @@ export function getStartServiceTool(): AutomatonTool {
         },
         port: {
           type: "number",
-          description: "Port number (3000-9999). Cannot use 9615 (PM2 reserved).",
+          description:
+            "Specific port number (3000-9999). Cannot use 9615 (PM2 reserved). " +
+            "Omit this if using portRange for automatic port discovery.",
+        },
+        portRange: {
+          type: "object",
+          description:
+            "Port range for automatic discovery (alternative to fixed port). " +
+            "Finds first available port in range, skipping KV-registered and OS-in-use ports.",
+          properties: {
+            min: { type: "number", description: "Minimum port (inclusive)" },
+            max: { type: "number", description: "Maximum port (inclusive)" },
+          },
+          additionalProperties: false,
         },
         env: {
           type: "object",
@@ -126,7 +166,7 @@ export function getStartServiceTool(): AutomatonTool {
           description: "Optional environment variables (uppercase keys only, max 63 chars).",
         },
       },
-      required: ["name", "scriptPath", "port"],
+      required: ["name", "scriptPath"],
     },
     riskLevel: "caution",
     category: "services" as ToolCategory,
@@ -170,25 +210,84 @@ export function getStartServiceTool(): AutomatonTool {
           });
         }
 
-        if (args.port === undefined || args.port === null) {
+        // ── Read managed services early (needed for both fixed port validation and portRange discovery) ──
+        const managedServices = readManagedServices(ctx);
+
+        // ── Resolve port: either from fixed value or portRange auto-discovery ──
+        const hasPort = args.port !== undefined && args.port !== null;
+        const hasPortRange = args.portRange !== undefined && args.portRange !== null;
+
+        if (!hasPort && !hasPortRange) {
           return JSON.stringify({
             success: false,
-            error: "Port is required and must be a number.",
-          });
-        }
-        const port = Number(args.port);
-        if (!Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX) {
-          return JSON.stringify({
-            success: false,
-            error: `Port must be integer ${PORT_MIN}-${PORT_MAX}. Got: ${port}`,
+            error: "Either 'port' (specific port number) or 'portRange' (min/max object) must be provided.",
           });
         }
 
-        if (FORBIDDEN_PORTS.has(port)) {
+        if (hasPort && hasPortRange) {
           return JSON.stringify({
             success: false,
-            error: `Port ${port} is reserved by PM2 and cannot be used.`,
+            error: "Cannot specify both 'port' and 'portRange'. Choose one.",
           });
+        }
+
+        let port: number;
+
+        if (hasPort) {
+          // ── Use fixed port ──
+          port = Number(args.port);
+          if (!Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX) {
+            return JSON.stringify({
+              success: false,
+              error: `Port must be integer ${PORT_MIN}-${PORT_MAX}. Got: ${port}`,
+            });
+          }
+
+          if (FORBIDDEN_PORTS.has(port)) {
+            return JSON.stringify({
+              success: false,
+              error: `Port ${port} is reserved by PM2 and cannot be used.`,
+            });
+          }
+        } else {
+          // ── Auto-discover port from range ──
+          const range = args.portRange as Record<string, unknown>;
+          const rangeMin = Number(range?.min ?? PORT_MIN);
+          const rangeMax = Number(range?.max ?? PORT_MIN + DEFAULT_PORT_RANGE_SIZE);
+
+          if (!Number.isInteger(rangeMin) || rangeMin < PORT_MIN || rangeMin > PORT_MAX) {
+            return JSON.stringify({
+              success: false,
+              error: `portRange.min must be integer ${PORT_MIN}-${PORT_MAX}. Got: ${rangeMin}`,
+            });
+          }
+
+          if (!Number.isInteger(rangeMax) || rangeMax < PORT_MIN || rangeMax > PORT_MAX) {
+            return JSON.stringify({
+              success: false,
+              error: `portRange.max must be integer ${PORT_MIN}-${PORT_MAX}. Got: ${rangeMax}`,
+            });
+          }
+
+          if (rangeMin > rangeMax) {
+            return JSON.stringify({
+              success: false,
+              error: `portRange.min (${rangeMin}) cannot be greater than portRange.max (${rangeMax})`,
+            });
+          }
+
+          // Find first available port in range
+          const availablePort = await findAvailablePort(rangeMin, rangeMax, managedServices);
+
+          if (availablePort === null) {
+            return JSON.stringify({
+              success: false,
+              error: `No available ports found in range ${rangeMin}-${rangeMax}. All ports in range are either registered or in use.`,
+            });
+          }
+
+          port = availablePort;
+          logger.info(`[START_SERVICE] Auto-selected port ${port} from range ${rangeMin}-${rangeMax}`);
         }
 
         // ── Query PM2 for name collision and port collision checks ──
@@ -202,7 +301,6 @@ export function getStartServiceTool(): AutomatonTool {
         }
 
         // ── Check port uniqueness against managed services ──
-        const managedServices = readManagedServices(ctx);
         if (managedServices.some((s) => s.port !== null && s.port === port)) {
           return JSON.stringify({
             success: false,
@@ -281,14 +379,15 @@ export function getStartServiceTool(): AutomatonTool {
         }
 
         // ── Store in KV ──
-        const managed = readManagedServices(ctx);
-        managed.push({
+        // Re-read to get latest state (another request may have added services)
+        const latestServices = readManagedServices(ctx);
+        latestServices.push({
           name,
           scriptPath,
           port,
           startedAt: new Date().toISOString(),
         });
-        writeManagedServices(ctx, managed);
+        writeManagedServices(ctx, latestServices);
 
         logger.info(`[START_SERVICE] Started "${name}" on port ${port}` + (pid ? ` (PID ${pid})` : ""));
 

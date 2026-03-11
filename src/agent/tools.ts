@@ -3905,8 +3905,8 @@ Model: ${ctx.inference.getDefaultModel()}
         const { getActiveGoals, getProjectById, listActiveProjects } = await import("../state/database.js");
         const { findSingleEligibleProject } = await import("../portfolio/policy.js");
 
-        const title = (args.title as string).trim();
-        const description = (args.description as string).trim();
+        const title = typeof args.title === "string" ? args.title.trim() : "";
+        const description = typeof args.description === "string" ? args.description.trim() : "";
         const strategy =
           typeof args.strategy === "string" ? args.strategy.trim() : undefined;
         let projectId =
