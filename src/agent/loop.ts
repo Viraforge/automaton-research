@@ -1140,11 +1140,40 @@ export async function runAgentLoop(
           };
           continue;
         }
-        log(config, "[SLEEP] Agent chose to sleep.");
+
+        // Track consecutive sleeps to prevent infinite sleep loops
+        const consecutiveSleepStr = db.getKV("consecutive_sleeps") || "0";
+        const consecutiveSleeps = Math.max(0, parseInt(consecutiveSleepStr, 10));
+        const MAX_CONSECUTIVE_SLEEPS = 3;
+
+        if (consecutiveSleeps >= MAX_CONSECUTIVE_SLEEPS) {
+          log(config, `[SLEEP BLOCKER] Agent attempted ${consecutiveSleeps + 1} consecutive sleeps. Forcing new goal instead.`);
+          pendingInput = {
+            content:
+              `You've called sleep ${consecutiveSleeps + 1} times in a row. This indicates you're stuck in a loop.\n\n` +
+              `REQUIRED ACTION: You must either:\n` +
+              `1. Create a new goal via create_goal (change direction)\n` +
+              `2. Build something via write_file + start_service\n` +
+              `3. Analyze metrics via check_balance\n` +
+              `4. Execute a meaningful action (not status checks or sleep)\n\n` +
+              `Do NOT call sleep again until you've made tangible progress on one of these actions.`,
+            source: "system",
+          };
+          db.deleteKV("consecutive_sleeps");
+          continue;
+        }
+
+        // Increment consecutive sleep counter
+        db.setKV("consecutive_sleeps", String(consecutiveSleeps + 1));
+
+        log(config, `[SLEEP] Agent chose to sleep (${consecutiveSleeps + 1}/${MAX_CONSECUTIVE_SLEEPS} consecutive).`);
         db.setAgentState("sleeping");
         onStateChange?.("sleeping");
         running = false;
         break;
+      } else if (turn.toolCalls.length > 0 && turn.toolCalls.some((tc) => !tc.error)) {
+        // Reset sleep counter when agent does any non-sleep work
+        db.deleteKV("consecutive_sleeps");
       }
 
       // ── Idle turn detection ──
