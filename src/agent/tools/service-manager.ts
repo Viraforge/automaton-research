@@ -135,6 +135,12 @@ export function getStartServiceTool(): AutomatonTool {
       try {
         // ── Validate inputs ──
         const name = String(args.name);
+        if (!name || name === "undefined") {
+          return JSON.stringify({
+            success: false,
+            error: "Service name is required.",
+          });
+        }
         if (!SAFE_NAME_RE.test(name)) {
           return JSON.stringify({
             success: false,
@@ -142,7 +148,13 @@ export function getStartServiceTool(): AutomatonTool {
           });
         }
 
-        const scriptPath = String(args.scriptPath);
+        const scriptPath = args.scriptPath ? String(args.scriptPath) : "";
+        if (!scriptPath || scriptPath === "undefined") {
+          return JSON.stringify({
+            success: false,
+            error: "Script path is required and must be provided.",
+          });
+        }
         if (!ALLOWED_SCRIPT_EXT.test(scriptPath)) {
           return JSON.stringify({
             success: false,
@@ -158,6 +170,12 @@ export function getStartServiceTool(): AutomatonTool {
           });
         }
 
+        if (args.port === undefined || args.port === null) {
+          return JSON.stringify({
+            success: false,
+            error: "Port is required and must be a number.",
+          });
+        }
         const port = Number(args.port);
         if (!Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX) {
           return JSON.stringify({
