@@ -811,12 +811,12 @@ export class Orchestrator {
           description: goal.description,
           agentRole: "generalist",
           dependencies: [],
-          estimatedCostCents: 200,
+          estimatedCostCents: 5000,
           priority: 50,
           timeoutMs: this.getDefaultTaskTimeoutMs(),
         }],
         risks: ["Replanner unavailable — re-executing without decomposition"],
-        estimatedTotalCostCents: 200,
+        estimatedTotalCostCents: 5000,
         estimatedTimeMinutes: 30,
       };
     }
@@ -830,10 +830,11 @@ export class Orchestrator {
           description: goal.description,
           agentRole: "generalist",
           dependencies: [],
-          estimatedCostCents: 200,
+          estimatedCostCents: 5000,
           priority: 50,
           timeoutMs: this.getDefaultTaskTimeoutMs(),
         }],
+        estimatedTotalCostCents: 5000,
       };
     }
 
