@@ -490,7 +490,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
 
             const { createCloudflareProvider } = await import("../providers/cloudflare.js");
             const cf = createCloudflareProvider({
-              apiToken: ctx.config.cloudflareApiToken,
+              apiKey: ctx.config.cloudflareApiToken,
+              email: ctx.config.cloudflareEmail,
             });
             const domain = "compintel.co";
             const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
@@ -624,7 +625,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
         const cf = createCloudflareProvider({
-          apiToken: cfToken,
+          apiKey: cfToken,
+          email: ctx.config.cloudflareEmail,
         });
         const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
         const existingRecords = await cf.listRecords(zoneId);
