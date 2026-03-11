@@ -95,6 +95,7 @@ export class ChildHealthMonitor {
   /**
    * Check health of all active children (healthy + unhealthy).
    * Respects concurrency limits. Transitions children based on results.
+   * Auto-stops children after 5 consecutive health check failures.
    */
   async checkAllChildren(): Promise<HealthCheckResult[]> {
     const healthyChildren = this.lifecycle.getChildrenInState("healthy");
@@ -105,6 +106,7 @@ export class ChildHealthMonitor {
 
     const results: HealthCheckResult[] = [];
     const maxConcurrent = this.config.maxConcurrentChecks;
+    const failureThreshold = 5; // Auto-stop after this many consecutive failures
 
     // Process in batches for concurrency limiting
     for (let i = 0; i < allChildren.length; i += maxConcurrent) {
@@ -119,9 +121,42 @@ export class ChildHealthMonitor {
 
         try {
           if (!result.healthy && child.status === "healthy") {
-            this.lifecycle.transition(result.childId, "unhealthy", result.issues.join("; "));
+            // Healthy → Unhealthy: First failure, initialize counter
+            this.lifecycle.transition(result.childId, "unhealthy", result.issues.join("; "), {
+              consecutiveFailures: 1,
+            });
+          } else if (!result.healthy && child.status === "unhealthy") {
+            // Unhealthy → More Unhealthy: Increment failure counter
+            const history = this.lifecycle.getHistory(child.id);
+            const latestEvent = history[history.length - 1];
+            let consecutiveFailures = 1;
+
+            try {
+              const metadata = latestEvent?.metadata ? JSON.parse(latestEvent.metadata) : {};
+              consecutiveFailures = (metadata.consecutiveFailures ?? 0) + 1;
+            } catch {
+              consecutiveFailures = 1;
+            }
+
+            // Auto-stop if threshold exceeded
+            if (consecutiveFailures >= failureThreshold) {
+              this.lifecycle.transition(
+                result.childId,
+                "stopped",
+                `Auto-stopped after ${consecutiveFailures} consecutive health check failures`,
+                { consecutiveFailures, autoStopped: true },
+              );
+            } else {
+              // Still unhealthy, just update failure count
+              this.lifecycle.transition(result.childId, "unhealthy", result.issues.join("; "), {
+                consecutiveFailures,
+              });
+            }
           } else if (result.healthy && child.status === "unhealthy") {
-            this.lifecycle.transition(result.childId, "healthy", "recovered");
+            // Unhealthy → Healthy: Recovery
+            this.lifecycle.transition(result.childId, "healthy", "recovered", {
+              consecutiveFailures: 0,
+            });
           }
         } catch {
           // Transition may fail if state changed concurrently; non-fatal

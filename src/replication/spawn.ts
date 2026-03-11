@@ -85,13 +85,16 @@ async function spawnChildSovereign(
   genesis: GenesisConfig,
   lifecycle: ChildLifecycle,
 ): Promise<ChildAutomaton> {
-  const existing = db.getChildren().filter(
-    (c) => c.status !== "dead" && c.status !== "cleaned_up" && c.status !== "failed",
-  );
+  // Count only "viable" children (those that might succeed, not cleanup/terminal states)
+  // Excludes: dead, cleaned_up, failed, stopped, unhealthy (will be auto-stopped)
+  const existing = db.getChildren().filter((c) => {
+    const nonViableStates = ["dead", "cleaned_up", "failed", "stopped", "unhealthy"];
+    return !nonViableStates.includes(c.status);
+  });
   const maxChildren = readRuntimeNumber(db, "runtime.maxChildren", 3);
   if (existing.length >= maxChildren) {
     throw new Error(
-      `Cannot spawn: already at max children (${maxChildren}). Kill or wait for existing children to die.`,
+      `Cannot spawn: already at max children (${maxChildren}). Active: ${existing.length}. Kill or wait for existing children to complete.`,
     );
   }
 
@@ -191,19 +194,16 @@ async function spawnChildConway(
   genesis: GenesisConfig,
   lifecycle?: ChildLifecycle,
 ): Promise<ChildAutomaton> {
-  // Check child limit from config
-  const existing = db
-    .getChildren()
-    .filter(
-      (c) =>
-        c.status !== "dead" &&
-        c.status !== "cleaned_up" &&
-        c.status !== "failed",
-    );
+  // Count only "viable" children (those that might succeed, not cleanup/terminal states)
+  // Excludes: dead, cleaned_up, failed, stopped, unhealthy (will be auto-stopped)
+  const existing = db.getChildren().filter((c) => {
+    const nonViableStates = ["dead", "cleaned_up", "failed", "stopped", "unhealthy"];
+    return !nonViableStates.includes(c.status);
+  });
   const maxChildren = readRuntimeNumber(db, "runtime.maxChildren", 3);
   if (existing.length >= maxChildren) {
     throw new Error(
-      `Cannot spawn: already at max children (${maxChildren}). Kill or wait for existing children to die.`,
+      `Cannot spawn: already at max children (${maxChildren}). Active: ${existing.length}. Kill or wait for existing children to complete.`,
     );
   }
 
