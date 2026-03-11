@@ -7,6 +7,30 @@
  * the heartbeat daemon + agent loop.
  */
 
+// Suppress SDK debug output BEFORE any imports
+// These messages bypass the structured logger and corrupt JSON log streams
+const originalLog = console.log;
+const originalInfo = console.info;
+const originalDebug = console.debug;
+console.log = (...args: any[]) => {
+  const msg = args.join(" ");
+  if (!msg.includes("[ROUTER]") && !msg.includes("[MATRIX]")) {
+    originalLog(...args);
+  }
+};
+console.info = (...args: any[]) => {
+  const msg = args.join(" ");
+  if (!msg.includes("[ROUTER]") && !msg.includes("[MATRIX]")) {
+    originalInfo(...args);
+  }
+};
+console.debug = (...args: any[]) => {
+  const msg = args.join(" ");
+  if (!msg.includes("[ROUTER]") && !msg.includes("[MATRIX]")) {
+    originalDebug(...args);
+  }
+};
+
 import { getWallet, getAutomatonDir } from "./identity/wallet.js";
 import { provision, loadApiKeyFromConfig } from "./identity/provision.js";
 import { loadConfig, resolvePath } from "./config.js";
