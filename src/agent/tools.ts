@@ -624,7 +624,10 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-        const cf = createCloudflareProvider(cfToken);
+        const cf = createCloudflareProvider({
+          apiKey: cfToken,
+          email: ctx.config.cloudflareEmail,
+        });
         const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
         const existingRecords = await cf.listRecords(zoneId);
         const originIp = String(args.origin_ip || "").trim()
