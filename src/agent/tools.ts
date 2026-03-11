@@ -3015,13 +3015,13 @@ Model: ${ctx.inference.getDefaultModel()}
           const cfToken = ctx.config.cloudflareApiToken;
           const cfKey = ctx.config.cloudflareApiKey;
           const cfEmail = ctx.config.cloudflareEmail;
-          if (!cfToken && !(cfKey && cfEmail)) {
-            return "Error: Cloudflare credentials must be set in config for DNS management (cloudflareApiToken or cloudflareApiKey + cloudflareEmail).";
+          if (!(cfToken && cfEmail) && !(cfKey)) {
+            return "Error: Cloudflare credentials must be set in config for DNS management (cloudflareApiToken + cloudflareEmail or cloudflareApiKey).";
           }
 
           const { createCloudflareProvider } = await import("../providers/cloudflare.js");
           const cf = createCloudflareProvider(
-            cfToken ? { apiToken: cfToken } : { apiKey: cfKey, email: cfEmail },
+            (cfToken && cfEmail) ? { apiKey: cfToken, email: cfEmail } : { apiToken: cfKey },
           );
 
           // Resolve zone ID: explicit arg > config > auto-lookup by domain
