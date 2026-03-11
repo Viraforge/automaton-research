@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createBuiltinTools } from "../../agent/tools.js";
 import { initSpawnQueue, _resetSpawnQueue } from "../../replication/spawn-queue.js";
-import { loadConfig } from "../../config.js";
 
 // Mock ResilientHttpClient for web_search so tests don't depend on network
 // github_search uses raw fetch() so it's not affected by this mock
@@ -43,13 +42,95 @@ vi.mock("../../http/client.js", () => ({
   })),
 }));
 
+// Mock loadConfig() for github_search so it doesn't need real credentials
+vi.mock("../../config.js", () => ({
+  loadConfig: vi.fn().mockReturnValue({
+    discovery: { githubToken: "ghp_mock_token_for_testing" },
+  }),
+}));
+
+// Deterministic GraphQL mock responses for github_search
+function makeMockFetch() {
+  return vi.fn(async (_url: string, opts: RequestInit) => {
+    const body = JSON.parse(opts.body as string);
+    const q: string = body.query ?? "";
+    if (q.includes("type: REPOSITORY")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            search: {
+              repositoryCount: 1,
+              edges: [{
+                node: {
+                  name: "mock-agent-framework",
+                  owner: { login: "testorg" },
+                  description: "A mock agent framework",
+                  url: "https://github.com/testorg/mock-agent-framework",
+                  stargazerCount: 1337,
+                  createdAt: "2024-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  primaryLanguage: { name: "TypeScript" },
+                },
+              }],
+            },
+          },
+        }),
+      };
+    }
+    if (q.includes("type: ISSUE")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            search: {
+              edges: [{
+                node: {
+                  title: "Agent latency issue",
+                  url: "https://github.com/testorg/repo/issues/1",
+                  repository: { name: "mock-repo" },
+                  createdAt: "2024-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                },
+              }],
+            },
+          },
+        }),
+      };
+    }
+    if (q.includes("type: DISCUSSION")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            search: {
+              edges: [{
+                node: {
+                  title: "Agent coordination patterns",
+                  url: "https://github.com/testorg/repo/discussions/1",
+                  repository: { name: "mock-repo", owner: { login: "testorg" } },
+                  createdAt: "2024-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                },
+              }],
+            },
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ data: { search: { edges: [] } } }) };
+  });
+}
+
 describe("discovery tools integration", () => {
   beforeEach(() => {
     initSpawnQueue();  // Initialize spawn queue for tests that use spawn_child
+    vi.stubGlobal("fetch", makeMockFetch());  // Mock fetch for github_search
   });
 
   afterEach(() => {
     _resetSpawnQueue();  // Reset spawn queue singleton between tests
+    vi.unstubAllGlobals();  // Clean up global fetch stub
   });
 
   it("should execute web_search and return valid result structure", async () => {
@@ -82,9 +163,6 @@ describe("discovery tools integration", () => {
   });
 
   it("should execute github_search with valid GitHub token", async () => {
-    const config = loadConfig();
-    expect(config?.discovery?.githubToken).toMatch(/^ghp_/);
-
     const tools = createBuiltinTools("test-sandbox");
     const gitHub = tools.find((t) => t.name === "github_search");
 

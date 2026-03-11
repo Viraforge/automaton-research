@@ -146,12 +146,6 @@ export function getGitHubSearchTool(): AutomatonTool {
           `[GITHUB_SEARCH] "${input.query}" (filter: ${input.filter}, sort: ${input.sort})`
         );
 
-        // Build search query based on filter
-        let searchQuery = input.query;
-        if (input.filter === "repo") {
-          searchQuery += " language:typescript";
-        }
-
         // Execute GitHub search
         const results: GitHubSearchResult["results"] = [];
 
@@ -179,7 +173,7 @@ export function getGitHubSearchTool(): AutomatonTool {
           `;
 
           const repoData = (await queryGitHubGraphQL(repoQuery, {
-            query: searchQuery,
+            query: input.query,
             first: Math.min(input.max_results || 30, 30),
           })) as {
             search: { edges: Array<{ node: Record<string, unknown> }> };
@@ -252,6 +246,49 @@ export function getGitHubSearchTool(): AutomatonTool {
                 owner: repoName,
                 createdAt: String(issue.createdAt),
                 updatedAt: String(issue.updatedAt),
+              });
+            });
+          }
+        }
+
+        if (input.filter === "discussion" || input.filter === "all") {
+          const discussionQuery = `
+            query SearchDiscussions($query: String!, $first: Int!) {
+              search(query: $query, type: DISCUSSION, first: $first) {
+                edges {
+                  node {
+                    ... on Discussion {
+                      title
+                      url
+                      repository { name owner { login } }
+                      createdAt
+                      updatedAt
+                    }
+                  }
+                }
+              }
+            }
+          `;
+
+          const discussionData = (await queryGitHubGraphQL(discussionQuery, {
+            query: input.query,
+            first: Math.min(input.max_results || 30, 30),
+          })) as {
+            search: { edges: Array<{ node: Record<string, unknown> }> };
+          };
+
+          if (discussionData.search?.edges) {
+            discussionData.search.edges.forEach((edge) => {
+              const discussion = edge.node as Record<string, unknown>;
+              const repo = discussion.repository as Record<string, unknown> | undefined;
+              const owner = repo?.owner as Record<string, unknown> | undefined;
+              results.push({
+                type: "discussion",
+                title: String(discussion.title),
+                url: String(discussion.url),
+                owner: owner ? String(owner.login) : undefined,
+                createdAt: String(discussion.createdAt),
+                updatedAt: String(discussion.updatedAt),
               });
             });
           }

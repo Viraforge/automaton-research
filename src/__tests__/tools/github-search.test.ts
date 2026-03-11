@@ -1,13 +1,97 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { getGitHubSearchTool } from "../../agent/tools/github-search.js";
-import { loadConfig } from "../../config.js";
 import type { AutomatonTool } from "../../types.js";
+
+// Mock loadConfig() so the token guard in github-search.ts passes without real config
+vi.mock("../../config.js", () => ({
+  loadConfig: vi.fn().mockReturnValue({
+    discovery: { githubToken: "ghp_mock_token_for_testing" },
+  }),
+}));
+
+// Deterministic GraphQL mock responses by query type
+function makeMockFetch() {
+  return vi.fn(async (_url: string, opts: RequestInit) => {
+    const body = JSON.parse(opts.body as string);
+    const q: string = body.query ?? "";
+    if (q.includes("type: REPOSITORY")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            search: {
+              repositoryCount: 1,
+              edges: [{
+                node: {
+                  name: "mock-agent-framework",
+                  owner: { login: "testorg" },
+                  description: "A mock agent framework",
+                  url: "https://github.com/testorg/mock-agent-framework",
+                  stargazerCount: 1337,
+                  createdAt: "2024-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  primaryLanguage: { name: "TypeScript" },
+                },
+              }],
+            },
+          },
+        }),
+      };
+    }
+    if (q.includes("type: ISSUE")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            search: {
+              edges: [{
+                node: {
+                  title: "Agent latency issue",
+                  url: "https://github.com/testorg/repo/issues/1",
+                  repository: { name: "mock-repo" },
+                  createdAt: "2024-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                },
+              }],
+            },
+          },
+        }),
+      };
+    }
+    if (q.includes("type: DISCUSSION")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            search: {
+              edges: [{
+                node: {
+                  title: "Agent coordination patterns",
+                  url: "https://github.com/testorg/repo/discussions/1",
+                  repository: { name: "mock-repo", owner: { login: "testorg" } },
+                  createdAt: "2024-01-01T00:00:00Z",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                },
+              }],
+            },
+          },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ data: { search: { edges: [] } } }) };
+  });
+}
 
 describe("github_search tool", () => {
   let tool: AutomatonTool;
 
   beforeEach(() => {
     tool = getGitHubSearchTool();
+    vi.stubGlobal("fetch", makeMockFetch());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("should return repositories with name, owner, stars, description, url", async () => {
@@ -38,7 +122,7 @@ describe("github_search tool", () => {
     }
   });
 
-  it("should search issues and discussions", async () => {
+  it("should search issues with issue filter", async () => {
     const resultStr = await tool.execute(
       {
         query: "agent latency problem",
@@ -59,12 +143,25 @@ describe("github_search tool", () => {
     });
   });
 
-  it("should validate GitHub token is configured", async () => {
-    const config = loadConfig();
-    if (!config?.discovery?.githubToken) {
-      expect.fail("GitHub token not configured in discovery settings");
-    }
-    expect(config.discovery.githubToken).toMatch(/^ghp_/);
+  it("should search discussions with discussion filter", async () => {
+    const resultStr = await tool.execute(
+      {
+        query: "agent coordination",
+        filter: "discussion",
+        max_results: 3,
+      },
+      {} as any
+    );
+
+    const result = JSON.parse(resultStr);
+
+    expect(result.filter).toBe("discussion");
+    expect(result.results).toBeInstanceOf(Array);
+    result.results.forEach((item: any) => {
+      expect(item.type).toBe("discussion");
+      expect(item.title).toBeDefined();
+      expect(item.url).toBeDefined();
+    });
   });
 
   it("should sort results by specified field", async () => {
@@ -81,7 +178,6 @@ describe("github_search tool", () => {
     const result = JSON.parse(resultStr);
 
     if (result.results.length > 1) {
-      // Results should be sorted by stars (descending)
       const stars = result.results
         .filter((r: any) => r.stars !== undefined)
         .map((r: any) => r.stars);
@@ -94,7 +190,7 @@ describe("github_search tool", () => {
   it("should cache results with 24-hour TTL", async () => {
     const firstStr = await tool.execute(
       {
-        query: "autonomous agents",
+        query: "autonomous agents unique-cache-key",
         filter: "repo",
       },
       {} as any
@@ -104,7 +200,7 @@ describe("github_search tool", () => {
 
     const secondStr = await tool.execute(
       {
-        query: "autonomous agents",
+        query: "autonomous agents unique-cache-key",
         filter: "repo",
       },
       {} as any

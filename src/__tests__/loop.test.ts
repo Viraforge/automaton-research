@@ -20,6 +20,12 @@ import {
 } from "./mocks.js";
 import type { AutomatonDatabase, AgentTurn, AgentState } from "../types.js";
 
+// Mock Conway registry discovery to prevent real network calls to dead endpoint
+vi.mock("../registry/discovery.js", () => ({
+  discoverAgents: vi.fn().mockResolvedValue([]),
+  searchAgents: vi.fn().mockResolvedValue([]),
+}));
+
 function getLoopDetectionState(db: AutomatonDatabase): Record<string, unknown> {
   const raw = db.getKV("loop_detection_state");
   return raw ? JSON.parse(raw) : {};
