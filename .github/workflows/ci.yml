@@ -73,6 +73,7 @@ jobs:
           script: |
             set -e
             cd /root/.openclaw/workspace/artifacts/automaton-research
+            git remote set-url origin git@github.com:nydamon/automaton-research.git || true
             git fetch origin main
             git reset --hard origin/main
             REPO_HEAD=$(git rev-parse --short HEAD)
