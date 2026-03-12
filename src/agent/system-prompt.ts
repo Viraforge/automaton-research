@@ -90,6 +90,8 @@ const OPERATIONAL_FALLBACK = `Operational (mandatory):
 - Public service delivery requires both local health verification and public HTTPS verification.
 - localhost-only availability is not completion for a public product.
 - Publish new public services on *.compintel.co by default using managed DNS and reverse proxy routing.
+- Register product drafts with create_product before publication so compintel.co can track active builds.
+- Successful publish_service calls also promote product records and regenerate the compintel.co catalog.
 - Required publication ladder: verify local service -> call publish_service -> verify public route -> escalate exact blocker -> retry preferred path after capability appears.
 - Do not use shell backgrounding (&) as a publication strategy.
 - Escalate exact DNS, TLS, proxy, or channel blockers with evidence instead of looping on the same route.

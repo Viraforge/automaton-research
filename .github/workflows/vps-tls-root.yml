@@ -1,0 +1,63 @@
+name: VPS TLS Root Site Setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tls-root:
+    name: Configure root compintel.co site on Connie host
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure Caddy root site via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            if [ -z "$CONNIE_HOME" ]; then
+              echo "Could not resolve CONNIE_HOME from local-connie.service"
+              exit 1
+            fi
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            sudo mkdir -p "$SITE_ROOT"
+
+            if [ ! -f "$SITE_ROOT/index.html" ]; then
+              cat <<'HTML' | sudo tee "$SITE_ROOT/index.html" >/dev/null
+            <!doctype html>
+            <html lang="en">
+            <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Compintel Catalog</title></head>
+            <body><main><h1>Compintel Product Catalog</h1><p>No products yet.</p></main></body>
+            </html>
+            HTML
+            fi
+
+            cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
+            compintel.co {
+                root * $SITE_ROOT
+                file_server
+            }
+
+            www.compintel.co {
+                redir https://compintel.co{uri} permanent
+            }
+            CADDY_ROOT
+
+            sudo sed -i '/Caddyfile\.root/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON ROOT IMPORT/,/END AUTOMATON ROOT IMPORT/d' /etc/caddy/Caddyfile
+            {
+              echo ""
+              echo "# BEGIN AUTOMATON ROOT IMPORT"
+              echo "import /etc/caddy/Caddyfile.root"
+              echo "# END AUTOMATON ROOT IMPORT"
+            } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            sleep 2
+
+            curl -I https://compintel.co
+            curl -I https://www.compintel.co

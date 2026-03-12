@@ -367,6 +367,94 @@ async function syncPublishedAssetRecord(
   }
 }
 
+async function syncPublishedProductRecordAndSite(
+  record: {
+    fqdn: string;
+    subdomain: string;
+    port: number;
+    healthcheckPath: string;
+  },
+): Promise<string | null> {
+  try {
+    const { promoteProductToPublished } = await import("../publication/products-registry.js");
+    await promoteProductToPublished({
+      slug: record.subdomain,
+      publicUrl: `https://${record.fqdn}`,
+      healthcheckPath: record.healthcheckPath,
+      internalPort: record.port,
+      name: record.subdomain,
+      summary: `Published service at https://${record.fqdn}`,
+      category: "service",
+      serviceName: record.subdomain,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn("publication: product promotion failed", {
+      error: errorMessage,
+      fqdn: record.fqdn,
+      port: record.port,
+    });
+    return `Warning: products registry promotion failed: ${errorMessage}`;
+  }
+
+  try {
+    const { generateCompintelSite } = await import("../publication/generate-compintel-site.js");
+    await generateCompintelSite();
+    return null;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn("publication: compintel site generation failed", {
+      error: errorMessage,
+      fqdn: record.fqdn,
+      port: record.port,
+    });
+    return `Warning: compintel site generation failed: ${errorMessage}`;
+  }
+}
+
+async function syncDraftProductRecordAndSite(
+  record: {
+    id: string;
+    name: string;
+    slug: string;
+    summary: string;
+    category: string;
+    internalPort?: number;
+    serviceName?: string;
+    entryPoint?: string;
+  },
+): Promise<string | null> {
+  try {
+    const { upsertProductRecord } = await import("../publication/products-registry.js");
+    await upsertProductRecord({
+      ...record,
+      status: "draft",
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn("publication: product draft sync failed", {
+      error: errorMessage,
+      slug: record.slug,
+      id: record.id,
+    });
+    return `Warning: products draft sync failed: ${errorMessage}`;
+  }
+
+  try {
+    const { generateCompintelSite } = await import("../publication/generate-compintel-site.js");
+    await generateCompintelSite();
+    return null;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn("publication: compintel site generation failed after draft update", {
+      error: errorMessage,
+      slug: record.slug,
+      id: record.id,
+    });
+    return `Warning: compintel site generation failed: ${errorMessage}`;
+  }
+}
+
 function isValidHealthPath(pathValue: string): boolean {
   return /^\/[A-Za-z0-9._~!$&'()*+,;=:@/%/-]*$/.test(pathValue);
 }
@@ -717,12 +805,19 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
               port,
               healthcheckPath: "/health",
             });
+            const productWarning = await syncPublishedProductRecordAndSite({
+              fqdn,
+              subdomain: autoSubdomain,
+              port,
+              healthcheckPath: "/health",
+            });
             const lines = [
               `Port ${port} published: https://${fqdn}`,
               `DNS: A ${record.host} -> ${record.value} (proxied via Cloudflare)`,
               `Reverse proxy: 127.0.0.1:${port}`,
             ];
             if (registryWarning) lines.push(registryWarning);
+            if (productWarning) lines.push(productWarning);
 
             return lines.join("\n");
           } catch (err: any) {
@@ -738,8 +833,10 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         const publishedAssetRecord = derivePublishedAssetRecordFromUrl(info.publicUrl, port);
         if (publishedAssetRecord) {
           const registryWarning = await syncPublishedAssetRecord(publishedAssetRecord);
+          const productWarning = await syncPublishedProductRecordAndSite(publishedAssetRecord);
           const lines = [`Port ${info.port} exposed at: ${info.publicUrl}`];
           if (registryWarning) lines.push(registryWarning);
+          if (productWarning) lines.push(productWarning);
           return lines.join("\n");
         }
 
@@ -761,6 +858,76 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       execute: async (args, ctx) => {
         await ctx.conway.removePort(args.port as number);
         return `Port ${args.port} removed`;
+      },
+    },
+    {
+      name: "create_product",
+      description:
+        "Create or update a draft product record for the Compintel catalog. This registers product metadata before public publication.",
+      category: "vm",
+      riskLevel: "caution",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Stable product identifier (defaults to slug)." },
+          name: { type: "string", description: "Human-readable product name." },
+          slug: { type: "string", description: "URL-safe product slug (used as canonical key)." },
+          summary: { type: "string", description: "Short product summary shown on compintel.co." },
+          category: { type: "string", description: "Product category label (for example: api, data, automation)." },
+          internal_port: { type: "number", description: "Optional local port where the service runs." },
+          service_name: { type: "string", description: "Optional internal service/process name." },
+          entry_point: { type: "string", description: "Optional repository entry point path." },
+        },
+        required: ["name", "slug", "summary", "category"],
+      },
+      execute: async (args) => {
+        const name = String(args.name || "").trim();
+        if (!name) return "Blocked: create_product requires non-empty name.";
+
+        const slug = String(args.slug || "").trim().toLowerCase();
+        if (!slug) return "Blocked: create_product requires non-empty slug.";
+        if (!/^[a-z0-9-]+$/.test(slug)) {
+          return "Blocked: create_product slug must match ^[a-z0-9-]+$";
+        }
+
+        const summary = String(args.summary || "").trim();
+        if (!summary) return "Blocked: create_product requires non-empty summary.";
+
+        const category = String(args.category || "").trim();
+        if (!category) return "Blocked: create_product requires non-empty category.";
+
+        const rawId = String(args.id || "").trim();
+        const id = rawId || slug;
+
+        const internalPort = typeof args.internal_port === "number"
+          ? Number(args.internal_port)
+          : undefined;
+        if (
+          internalPort !== undefined
+          && (!Number.isInteger(internalPort) || internalPort < 1 || internalPort > 65535)
+        ) {
+          return `Blocked: internal_port must be an integer between 1 and 65535, got ${String(args.internal_port)}`;
+        }
+
+        const warning = await syncDraftProductRecordAndSite({
+          id,
+          name,
+          slug,
+          summary,
+          category,
+          internalPort,
+          serviceName: String(args.service_name || "").trim() || undefined,
+          entryPoint: String(args.entry_point || "").trim() || undefined,
+        });
+
+        const lines = [
+          `Draft product saved: ${name}`,
+          `Slug: ${slug}`,
+          `Category: ${category}`,
+        ];
+        if (internalPort) lines.push(`Internal port: ${internalPort}`);
+        if (warning) lines.push(warning);
+        return lines.join("\n");
       },
     },
     {
@@ -862,6 +1029,12 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           port,
           healthcheckPath,
         });
+        const productWarning = await syncPublishedProductRecordAndSite({
+          fqdn,
+          subdomain,
+          port,
+          healthcheckPath,
+        });
 
         const lines = [
           `Service published: https://${fqdn}`,
@@ -870,6 +1043,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           `Health check: ${healthcheckPath}`,
         ];
         if (registryWarning) lines.push(registryWarning);
+        if (productWarning) lines.push(productWarning);
 
         return lines.join("\n");
       },
