@@ -650,7 +650,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         return [
           `Service published: https://${fqdn}`,
           `DNS: [${record.id}] A ${record.host} -> ${record.value}${proxied ? " (proxied)" : " (dns-only)"}`,
-          `Origin: 127.0.0.1:${port}`,
+          `Origin: ${originIp}:${port}`,
           `Health check: ${healthcheckPath}`,
         ].join("\n");
       },
