@@ -469,18 +469,6 @@ RULES:
             const stderr = truncateOutput(result.stderr ?? "", 4000);
             return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
           } catch (error) {
-            const timeout = classifyExecTimeout({ error });
-            if (timeout.isTimeout && timeout.summary) {
-              this.persistWorkerIssue({
-                type: "exec_timeout",
-                workerId,
-                taskId,
-                summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
-                command,
-                isPermanent: false,
-              });
-              return `exec timeout: ${timeout.summary}`;
-            }
             return `exec error: ${error instanceof Error ? error.message : String(error)}`;
           }
         },

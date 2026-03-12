@@ -396,7 +396,7 @@ export async function runAgentLoop(
       };
 
       // Local worker pool: runs inference-driven agents in-process
-      // as async tasks. Falls back from Conway sandbox spawning.
+      // as async tasks. No external platform dependency; all execution is local.
       const workerPool = new LocalWorkerPool({
         db: db.raw,
         inference: workerInference,

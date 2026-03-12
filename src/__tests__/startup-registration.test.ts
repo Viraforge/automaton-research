@@ -2,12 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { applyStartupRegistration } from "../startup/registration.js";
 
 type MockDb = {
-  getIdentity: ReturnType<typeof vi.fn>;
   setIdentity: ReturnType<typeof vi.fn>;
 };
 
-const createDb = (initial: Record<string, string | undefined> = {}): MockDb => ({
-  getIdentity: vi.fn((key: string) => initial[key]),
+const createDb = (): MockDb => ({
   setIdentity: vi.fn(),
 });
 
@@ -95,7 +93,7 @@ describe("startup registration behavior", () => {
   });
 
   it("does not mutate automatonId when registration is skipped", async () => {
-    const db = createDb({ automatonId: "persisted-id" });
+    const db = createDb();
     const registerAutomaton = vi.fn();
 
     await applyStartupRegistration({
