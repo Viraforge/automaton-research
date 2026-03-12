@@ -1,4 +1,7 @@
 import type BetterSqlite3 from "better-sqlite3";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalWorkerPool } from "../../orchestration/local-worker.js";
 import type { TaskNode } from "../../orchestration/task-graph.js";
@@ -42,22 +45,17 @@ describe("orchestration/local-worker exec timeout classification", () => {
     db.close();
   });
 
-  it("records exec_timeout when conway.exec throws ETIMEDOUT", async () => {
+  it("records exec_timeout when a command exceeds timeout", async () => {
     const pool = new LocalWorkerPool({
       db,
       inference: { chat: vi.fn() } as any,
-      conway: {
-        exec: vi.fn().mockRejectedValue(new Error("spawnSync /bin/sh ETIMEDOUT")),
-        writeFile: vi.fn(),
-        readFile: vi.fn(),
-      } as any,
       workerId: "w1",
     });
 
     const tools = (pool as any).buildWorkerTools("w1", "t1") as Array<{ name: string; execute: (args: any) => Promise<string> }>;
     const execTool = tools.find((tool) => tool.name === "exec");
     expect(execTool).toBeDefined();
-    const output = await execTool!.execute({ command: "npm run dev", timeout_ms: 1_000 });
+    const output = await execTool!.execute({ command: "sleep 1", timeout_ms: 5 });
     expect(output).toContain("exec timeout:");
 
     const issueRow = db.prepare("SELECT value FROM kv WHERE key = 'orchestrator.worker_issue.last'").get() as
@@ -68,22 +66,20 @@ describe("orchestration/local-worker exec timeout classification", () => {
     expect(issue.type).toBe("exec_timeout");
   });
 
-  it("records exec_timeout when command result contains timeout signature", async () => {
+  it("records exec_timeout when stderr contains timeout signature", async () => {
     const pool = new LocalWorkerPool({
       db,
       inference: { chat: vi.fn() } as any,
-      conway: {
-        exec: vi.fn().mockResolvedValue({ stdout: "", stderr: "command timed out after 60000ms", exitCode: 1 }),
-        writeFile: vi.fn(),
-        readFile: vi.fn(),
-      } as any,
       workerId: "w2",
     });
 
     const tools = (pool as any).buildWorkerTools("w2", "t2") as Array<{ name: string; execute: (args: any) => Promise<string> }>;
     const execTool = tools.find((tool) => tool.name === "exec");
     expect(execTool).toBeDefined();
-    const output = await execTool!.execute({ command: "long command", timeout_ms: 60_000 });
+    const output = await execTool!.execute({
+      command: "node -e \"console.error('command timed out after 60000ms'); process.exit(1)\"",
+      timeout_ms: 60_000,
+    });
     expect(output).toContain("exec timeout:");
 
     const issueRow = db.prepare("SELECT value FROM kv WHERE key = 'orchestrator.worker_issue.last'").get() as
@@ -125,11 +121,6 @@ describe("orchestration/local-worker exec timeout classification", () => {
     const pool = new LocalWorkerPool({
       db,
       inference: inference as any,
-      conway: {
-        exec: vi.fn().mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 }),
-        writeFile: vi.fn(),
-        readFile: vi.fn(),
-      } as any,
       workerId: "w3",
       maxTurns: 3,
     });
@@ -148,11 +139,6 @@ describe("orchestration/local-worker exec timeout classification", () => {
     const pool = new LocalWorkerPool({
       db,
       inference: { chat: vi.fn() } as any,
-      conway: {
-        exec: vi.fn().mockRejectedValue(new Error("Conway unavailable")),
-        writeFile: vi.fn(),
-        readFile: vi.fn(),
-      } as any,
       workerId: "w4",
     });
 
@@ -167,5 +153,90 @@ describe("orchestration/local-worker exec timeout classification", () => {
       | { value: string }
       | undefined;
     expect(issueRow).toBeUndefined();
+  });
+});
+
+describe("orchestration/local-worker local tool contract", () => {
+  let db: BetterSqlite3.Database;
+  let homeDir: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    db = createInMemoryDb();
+    originalHome = process.env.HOME;
+    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "worker-home-"));
+    process.env.HOME = homeDir;
+  });
+
+  afterEach(async () => {
+    db.close();
+    process.env.HOME = originalHome;
+    await fs.rm(homeDir, { recursive: true, force: true });
+  });
+
+  it("runs exec in HOME cwd and never uses Conway transport", async () => {
+    const pool = new LocalWorkerPool({
+      db,
+      inference: { chat: vi.fn() } as any,
+      workerId: "w-local-exec",
+    });
+
+    const tools = (pool as any).buildWorkerTools("w-local-exec", "t-local-exec") as Array<{
+      name: string;
+      execute: (args: any) => Promise<string>;
+    }>;
+    const execTool = tools.find((tool) => tool.name === "exec");
+    expect(execTool).toBeDefined();
+
+    const output = await execTool!.execute({ command: "pwd", timeout_ms: 5_000 });
+
+    expect(output).toContain(homeDir);
+  });
+
+  it("expands tilde paths and creates parent directories for write/read", async () => {
+    const pool = new LocalWorkerPool({
+      db,
+      inference: { chat: vi.fn() } as any,
+      workerId: "w-local-file",
+    });
+
+    const tools = (pool as any).buildWorkerTools("w-local-file", "t-local-file") as Array<{
+      name: string;
+      execute: (args: any) => Promise<string>;
+    }>;
+    const writeTool = tools.find((tool) => tool.name === "write_file");
+    const readTool = tools.find((tool) => tool.name === "read_file");
+    expect(writeTool).toBeDefined();
+    expect(readTool).toBeDefined();
+
+    const target = "~/nested/worker/output.txt";
+    const writeOutput = await writeTool!.execute({ path: target, content: "hello-world" });
+    const readOutput = await readTool!.execute({ path: target });
+    const resolved = path.join(homeDir, "nested/worker/output.txt");
+    const diskContent = await fs.readFile(resolved, "utf8");
+
+    expect(writeOutput).toContain("Wrote");
+    expect(readOutput).toBe("hello-world");
+    expect(diskContent).toBe("hello-world");
+  });
+
+  it("does not trigger network calls for local worker tool execution", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const pool = new LocalWorkerPool({
+      db,
+      inference: { chat: vi.fn() } as any,
+      workerId: "w-local-no-network",
+    });
+
+    const tools = (pool as any).buildWorkerTools("w-local-no-network", "t-local-no-network") as Array<{
+      name: string;
+      execute: (args: any) => Promise<string>;
+    }>;
+    const execTool = tools.find((tool) => tool.name === "exec");
+    expect(execTool).toBeDefined();
+
+    await execTool!.execute({ command: "echo local", timeout_ms: 5_000 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

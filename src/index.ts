@@ -52,6 +52,7 @@ import { createSocialClient } from "./social/client.js";
 import { PolicyEngine } from "./agent/policy-engine.js";
 import { SpendTracker } from "./agent/spend-tracker.js";
 import { createDefaultRules } from "./agent/policy-rules/index.js";
+import { applyStartupRegistration } from "./startup/registration.js";
 import type { AutomatonIdentity, AgentState, Skill, SocialClientInterface } from "./types.js";
 import { DEFAULT_TREASURY_POLICY } from "./types.js";
 import { createLogger, setGlobalLogLevel } from "./observability/logger.js";
@@ -282,34 +283,35 @@ async function run(): Promise<void> {
   });
 
   // Register automaton identity (one-time, immutable)
-  // Skipped in sovereign mode — no Conway platform to register with.
+  // Skipped in sovereign mode and BYOK/no-platform mode.
   const registrationState = db.getIdentity("conwayRegistrationStatus");
-  if (!config.useSovereignProviders && registrationState !== "registered") {
-    try {
-      const genesisPromptHash = config.genesisPrompt
-        ? keccak256(toHex(config.genesisPrompt))
-        : undefined;
-      await conway.registerAutomaton({
-        automatonId,
-        automatonAddress: account.address,
-        creatorAddress: config.creatorAddress,
-        name: config.name,
-        bio: config.creatorMessage || "",
-        genesisPromptHash,
-        account,
-      });
-      db.setIdentity("conwayRegistrationStatus", "registered");
-      logger.info(`[${new Date().toISOString()}] Automaton identity registered.`);
-    } catch (err: any) {
-      const status = err?.status;
-      if (status === 409) {
-        db.setIdentity("conwayRegistrationStatus", "conflict");
-        logger.warn(`[${new Date().toISOString()}] Automaton identity conflict: ${err.message}`);
-      } else {
-        db.setIdentity("conwayRegistrationStatus", "failed");
-        logger.warn(`[${new Date().toISOString()}] Automaton identity registration failed: ${err.message}`);
-      }
-    }
+  const genesisPromptHash = config.genesisPrompt
+    ? keccak256(toHex(config.genesisPrompt))
+    : undefined;
+  const registrationResult = await applyStartupRegistration({
+    useSovereignProviders: !!config.useSovereignProviders,
+    platformDisabled,
+    registrationState,
+    db,
+    registerAutomaton: (payload) => conway.registerAutomaton(payload as Parameters<typeof conway.registerAutomaton>[0]),
+    payload: {
+      automatonId,
+      automatonAddress: account.address,
+      creatorAddress: config.creatorAddress,
+      name: config.name,
+      bio: config.creatorMessage || "",
+      genesisPromptHash,
+      account,
+    },
+  });
+  if (registrationResult === "registered") {
+    logger.info(`[${new Date().toISOString()}] Automaton identity registered.`);
+  }
+  if (registrationResult === "conflict") {
+    logger.warn(`[${new Date().toISOString()}] Automaton identity conflict.`);
+  }
+  if (registrationResult === "failed") {
+    logger.warn(`[${new Date().toISOString()}] Automaton identity registration failed.`);
   }
 
   // Resolve Ollama base URL: env var takes precedence over config
