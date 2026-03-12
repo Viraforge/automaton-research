@@ -1,6 +1,10 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinTools } from "../agent/tools.js";
 import { createCloudflareProvider } from "../providers/cloudflare.js";
+import * as publicAssetRegistry from "../publication/public-asset-registry.js";
 import {
   MockConwayClient,
   MockInferenceClient,
@@ -28,10 +32,18 @@ describe("publish_service tool", () => {
   let db: AutomatonDatabase;
   let conway: MockConwayClient;
   let ctx: ToolContext;
+  let registryPath: string;
+  let registryDirPath: string;
+  let previousRegistryPath: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     conway = new MockConwayClient();
+    registryDirPath = await mkdtemp(join(tmpdir(), "publish-service-registry-"));
+    registryPath = join(registryDirPath, "public-assets.json");
+    await writeFile(registryPath, '{"assets":[]}\n', "utf8");
+    previousRegistryPath = process.env.PUBLIC_ASSET_REGISTRY_PATH;
+    process.env.PUBLIC_ASSET_REGISTRY_PATH = registryPath;
     ctx = {
       identity: createTestIdentity(),
       config: createTestConfig({
@@ -59,7 +71,11 @@ describe("publish_service tool", () => {
     deleteRecord.mockResolvedValue(undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    if (previousRegistryPath === undefined) delete process.env.PUBLIC_ASSET_REGISTRY_PATH;
+    else process.env.PUBLIC_ASSET_REGISTRY_PATH = previousRegistryPath;
+
+    await rm(registryDirPath, { recursive: true, force: true });
     db.close();
     vi.clearAllMocks();
   });
@@ -112,16 +128,121 @@ describe("publish_service tool", () => {
     expect(addRecord).not.toHaveBeenCalled();
     expect(conway.execCalls).toHaveLength(0);
   });
+
+  it("records successful publication in the public asset registry", async () => {
+    const publishTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "publish_service");
+
+    await publishTool!.execute(
+      {
+        subdomain: "alpha",
+        port: 9090,
+        healthcheck_path: "/health",
+      },
+      ctx,
+    );
+
+    const registryContent = await readFile(registryPath, "utf8");
+    const registry = JSON.parse(registryContent) as {
+      assets: Array<{
+        id: string;
+        title: string;
+        url: string;
+        subdomain: string;
+        status: string;
+        healthcheckPath: string;
+        port: number;
+      }>;
+    };
+
+    expect(registry.assets).toHaveLength(1);
+    expect(registry.assets[0]).toMatchObject({
+      id: "alpha",
+      title: "alpha.compintel.co",
+      url: "https://alpha.compintel.co",
+      subdomain: "alpha",
+      status: "published",
+      healthcheckPath: "/health",
+      port: 9090,
+    });
+  });
+
+  it("returns publication success with a warning when registry sync fails", async () => {
+    vi.spyOn(publicAssetRegistry, "upsertPublicAssetRecord").mockRejectedValueOnce(new Error("disk full"));
+    const publishTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "publish_service");
+
+    const result = await publishTool!.execute(
+      {
+        subdomain: "alpha",
+        port: 9090,
+        healthcheck_path: "/health",
+      },
+      ctx,
+    );
+
+    expect(result).toContain("Service published: https://alpha.compintel.co");
+    expect(result).toContain("Warning:");
+    expect(result).toContain("public asset registry sync failed");
+    expect(result).toContain("disk full");
+  });
+
+  it("waits through transient registry lock contention and still records the publish without warning", async () => {
+    const publishTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "publish_service");
+    const lockPath = `${registryPath}.lock`;
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+      "utf8",
+    );
+
+    const releaseTimer = setTimeout(() => {
+      void rm(lockPath, { force: true });
+    }, 2_200);
+
+    try {
+      const result = await publishTool!.execute(
+        {
+          subdomain: "alpha",
+          port: 9090,
+          healthcheck_path: "/health",
+        },
+        ctx,
+      );
+
+      const registryContent = await readFile(registryPath, "utf8");
+      const registry = JSON.parse(registryContent) as {
+        assets: Array<{ subdomain: string; url: string }>;
+      };
+
+      expect(result).toContain("Service published: https://alpha.compintel.co");
+      expect(result).not.toContain("Warning:");
+      expect(registry.assets).toHaveLength(1);
+      expect(registry.assets[0]).toMatchObject({
+        subdomain: "alpha",
+        url: "https://alpha.compintel.co",
+      });
+    } finally {
+      clearTimeout(releaseTimer);
+      await rm(lockPath, { force: true });
+    }
+  });
 });
 
 describe("expose_port tool with auto-publish", () => {
   let db: AutomatonDatabase;
   let conway: MockConwayClient;
   let ctx: ToolContext;
+  let registryPath: string;
+  let registryDirPath: string;
+  let previousRegistryPath: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     conway = new MockConwayClient();
+    registryDirPath = await mkdtemp(join(tmpdir(), "expose-port-registry-"));
+    registryPath = join(registryDirPath, "public-assets.json");
+    await writeFile(registryPath, '{"assets":[]}\n', "utf8");
+    previousRegistryPath = process.env.PUBLIC_ASSET_REGISTRY_PATH;
+    process.env.PUBLIC_ASSET_REGISTRY_PATH = registryPath;
     ctx = {
       identity: createTestIdentity(),
       config: createTestConfig({
@@ -155,7 +276,11 @@ describe("expose_port tool with auto-publish", () => {
     deleteRecord.mockResolvedValue(undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    if (previousRegistryPath === undefined) delete process.env.PUBLIC_ASSET_REGISTRY_PATH;
+    else process.env.PUBLIC_ASSET_REGISTRY_PATH = previousRegistryPath;
+
+    await rm(registryDirPath, { recursive: true, force: true });
     db.close();
     vi.clearAllMocks();
   });
@@ -176,6 +301,59 @@ describe("expose_port tool with auto-publish", () => {
 
     expect(result).toContain("http://localhost:3000");
     expect(addRecord).not.toHaveBeenCalled();
+  });
+
+  it("blocks non-compintel public URLs in sovereign mode when cloudflare credentials are missing", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://beautifully-epinions-featured-serious.trycloudflare.com",
+      sandboxId: "test-sandbox-id",
+    }));
+    const ctxWithoutCloudflareCredentials = {
+      ...ctx,
+      config: createTestConfig({
+        useSovereignProviders: true,
+        cloudflareApiToken: undefined,
+        cloudflareApiKey: undefined,
+      }),
+    };
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctxWithoutCloudflareCredentials);
+
+    expect(result).toContain("Blocked:");
+    expect(result).toContain("Cloudflare publication credentials are missing");
+    expect(result).not.toContain("trycloudflare.com");
+  });
+
+  it.each([
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://[::1]:3000",
+  ])("preserves loopback URL %s in sovereign mode when cloudflare credentials are missing", async (loopbackUrl) => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: loopbackUrl,
+      sandboxId: "test-sandbox-id",
+    }));
+    const ctxWithoutCloudflareCredentials = {
+      ...ctx,
+      config: createTestConfig({
+        useSovereignProviders: true,
+        cloudflareApiToken: undefined,
+        cloudflareApiKey: undefined,
+      }),
+    };
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctxWithoutCloudflareCredentials);
+
+    expect(result).toContain(loopbackUrl);
+    expect(result).not.toContain("Blocked:");
   });
 
   it("auto-publishes to compintel.co when in BYOK mode with cloudflare", async () => {
@@ -208,6 +386,180 @@ describe("expose_port tool with auto-publish", () => {
     expect(result).not.toContain("localhost");
   });
 
+  it("records successful managed publication in the public asset registry", async () => {
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+    const registryContent = await readFile(registryPath, "utf8");
+    const registry = JSON.parse(registryContent) as {
+      assets: Array<{
+        id: string;
+        title: string;
+        url: string;
+        subdomain: string;
+        status: string;
+        port: number;
+      }>;
+    };
+
+    expect(result).toContain("https://api-3000-");
+    expect(registry.assets).toHaveLength(1);
+    expect(registry.assets[0]).toMatchObject({
+      id: expect.stringMatching(/^api-3000-[a-z0-9]{6}$/),
+      title: expect.stringMatching(/^api-3000-[a-z0-9]{6}\.compintel\.co$/),
+      url: expect.stringMatching(/^https:\/\/api-3000-[a-z0-9]{6}\.compintel\.co$/),
+      subdomain: expect.stringMatching(/^api-3000-[a-z0-9]{6}$/),
+      status: "published",
+      port: 3000,
+    });
+  });
+
+  it("syncs the public asset registry for already-managed approved compintel exposures", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://api.compintel.co",
+      sandboxId: "test-sandbox-id",
+    }));
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+    const registryContent = await readFile(registryPath, "utf8");
+    const registry = JSON.parse(registryContent) as {
+      assets: Array<{
+        id: string;
+        title: string;
+        url: string;
+        subdomain: string;
+        status: string;
+        healthcheckPath: string;
+        port: number;
+      }>;
+    };
+
+    expect(result).toContain("https://api.compintel.co");
+    expect(addRecord).not.toHaveBeenCalled();
+    expect(conway.execCalls).toHaveLength(0);
+    expect(registry.assets).toHaveLength(1);
+    expect(registry.assets[0]).toMatchObject({
+      id: "api",
+      title: "api.compintel.co",
+      url: "https://api.compintel.co",
+      subdomain: "api",
+      status: "published",
+      healthcheckPath: "/health",
+      port: 3000,
+    });
+  });
+
+  it("promotes non-compintel public URLs to compintel.co publication", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://beautifully-epinions-featured-serious.trycloudflare.com",
+      sandboxId: "test-sandbox-id",
+    }));
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+
+    expect(result).toContain(".compintel.co");
+    expect(result).not.toContain("trycloudflare.com");
+  });
+
+  it("does not treat the compintel apex host as an approved final publication URL", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://compintel.co",
+      sandboxId: "test-sandbox-id",
+    }));
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+
+    expect(result).toContain("https://api-3000-");
+    expect(result).toContain(".compintel.co");
+    expect(result).not.toContain("Port 3000 exposed at: https://compintel.co");
+    expect(addRecord).toHaveBeenCalledWith(
+      "zone-test",
+      "A",
+      expect.stringMatching(/^api-3000-[a-z0-9]{6}\.compintel\.co$/),
+      "66.135.29.159",
+      1,
+      true,
+    );
+  });
+
+  it("does not treat trycloudflare URLs as valid final publication targets", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://beautifully-epinions-featured-serious.trycloudflare.com",
+      sandboxId: "test-sandbox-id",
+    }));
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+
+    expect(result).not.toContain("trycloudflare.com");
+  });
+
+  it("blocks temporary tunnel URLs when managed publication fails", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://beautifully-epinions-featured-serious.trycloudflare.com",
+      sandboxId: "test-sandbox-id",
+    }));
+    vi.spyOn(conway, "exec").mockResolvedValueOnce({
+      stdout: "",
+      stderr: "Caddy error",
+      exitCode: 1,
+    });
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+
+    expect(result).toContain("Blocked:");
+    expect(result).toContain("not a valid public asset URL");
+    expect(result).not.toContain("trycloudflare.com");
+  });
+
+  it("blocks managed publication earlier when only cloudflareApiKey is set without cloudflareEmail", async () => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: "https://beautifully-epinions-featured-serious.trycloudflare.com",
+      sandboxId: "test-sandbox-id",
+    }));
+    const ctxWithIncompleteCloudflareCredentials = {
+      ...ctx,
+      config: createTestConfig({
+        useSovereignProviders: true,
+        cloudflareApiToken: undefined,
+        cloudflareApiKey: "cf-test-key",
+        cloudflareEmail: undefined,
+        cloudflareZoneId: "zone-test",
+      }),
+    };
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctxWithIncompleteCloudflareCredentials);
+
+    expect(result).toContain("Blocked:");
+    expect(result).toContain("Cloudflare publication credentials are missing");
+    expect(addRecord).not.toHaveBeenCalled();
+    expect(conway.execCalls).toHaveLength(0);
+  });
+
   it("falls back to localhost if auto-publish fails", async () => {
     // Mock Caddy publish script to fail
     vi.spyOn(conway, "exec").mockResolvedValueOnce({
@@ -223,6 +575,31 @@ describe("expose_port tool with auto-publish", () => {
     // Should mention the failure but also show localhost fallback
     expect(result).toContain("localhost");
     expect(result).toMatch(/public publishing failed|auto-publish failed/);
+  });
+
+  it.each([
+    "http://127.0.0.1:3000",
+    "http://[::1]:3000",
+  ])("preserves loopback URL %s when managed publication fails", async (loopbackUrl) => {
+    conway.exposePort = vi.fn(async (port: number) => ({
+      port,
+      publicUrl: loopbackUrl,
+      sandboxId: "test-sandbox-id",
+    }));
+    vi.spyOn(conway, "exec").mockResolvedValueOnce({
+      stdout: "",
+      stderr: "Caddy error",
+      exitCode: 1,
+    });
+
+    const exposeTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "expose_port");
+    expect(exposeTool).toBeDefined();
+
+    const result = await exposeTool!.execute({ port: 3000 }, ctx);
+
+    expect(result).toContain(loopbackUrl);
+    expect(result).toMatch(/public publishing failed|auto-publish failed/);
+    expect(result).not.toContain("Blocked:");
   });
 });
 

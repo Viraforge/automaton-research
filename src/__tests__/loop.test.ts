@@ -1427,6 +1427,636 @@ describe("Agent Loop", () => {
     expect(taskRow.status).toBe("pending");
   });
 
+  it("rejects temporary tunnel URLs as public completion evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-temp", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-temp",
+      "goal-public-proof-temp",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-temp",
+        output: "Verified https://beautifully-epinions-featured-serious.trycloudflare.com/health",
+        artifacts: "https://beautifully-epinions-featured-serious.trycloudflare.com/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-temp",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("rejects query-string route fragments as public completion evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-query-fragment", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-query-fragment",
+      "goal-public-proof-query-fragment",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-query-fragment",
+        output: "Verified https://api.compintel.co/?next=/health",
+        artifacts: "https://api.compintel.co/?next=/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-query-fragment",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("rejects bare compintel apex URLs as public completion evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-apex", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-apex",
+      "goal-public-proof-apex",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-apex",
+        output: "Verified https://compintel.co/health",
+        artifacts: "https://compintel.co/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-apex",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("rejects non-https public URLs as public completion evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-http", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-http",
+      "goal-public-proof-http",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-http",
+        output: "Verified http://api.compintel.co/health",
+        artifacts: "http://api.compintel.co/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-http",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("accepts approved https URLs wrapped in common formatting", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-formatted", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-formatted",
+      "goal-public-proof-formatted",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-formatted",
+        output: "Verified <https://api.compintel.co/health> and `https://api.compintel.co/health`",
+        artifacts: "<https://api.compintel.co/health>,`https://api.compintel.co/health`",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-formatted",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("accepts approved public host plus separate business-route evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-split", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-split",
+      "goal-public-proof-split",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-split",
+        output: "Public hostname: https://api.compintel.co",
+        artifacts: "Verified business route /health responds with 200",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-split",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("accepts approved public host plus separate backtick-wrapped route evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-split-backticks", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-split-backticks",
+      "goal-public-proof-split-backticks",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-split-backticks",
+        output: "Public host: https://api.compintel.co",
+        artifacts: "Verified business route `/health` responds with 200",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-split-backticks",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("accepts approved public host plus separate angle-bracket-wrapped route evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-split-angle", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-split-angle",
+      "goal-public-proof-split-angle",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-split-angle",
+        output: "Public host: https://api.compintel.co",
+        artifacts: "Verified business route </health> responds with 200",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-split-angle",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("accepts wrapped approved https URLs followed by prose punctuation", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-punctuated", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-punctuated",
+      "goal-public-proof-punctuated",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-punctuated",
+        output: "Primary endpoint is <https://api.compintel.co/health>: use it for smoke tests.",
+        artifacts: "Health check passed at <https://api.compintel.co/health>: verified.",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-punctuated",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("rejects hash-fragment routes as public completion evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-hash-fragment", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-hash-fragment",
+      "goal-public-proof-hash-fragment",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-hash-fragment",
+        output: "Verified https://api.compintel.co/#/health",
+        artifacts: "https://api.compintel.co/#/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-hash-fragment",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("rejects split evidence when route proof only appears in query or fragment prose", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-prose-spoof", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-prose-spoof",
+      "goal-public-proof-prose-spoof",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-prose-spoof",
+        output: "Public hostname: https://api.compintel.co",
+        artifacts: "callback ?next=/health and fragment #/health should not count as proof",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-prose-spoof",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
+  it("accepts approved public evidence with uppercase https scheme", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-uppercase-scheme", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-uppercase-scheme",
+      "goal-public-proof-uppercase-scheme",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-uppercase-scheme",
+        output: "Verified HTTPS://api.compintel.co/health",
+        artifacts: "HTTPS://api.compintel.co/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-uppercase-scheme",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("accepts approved public evidence wrapped in emphasized markdown", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-emphasis", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-emphasis",
+      "goal-public-proof-emphasis",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-emphasis",
+        output: "Verified **https://api.compintel.co/health**",
+        artifacts: "**https://api.compintel.co/health**",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("marked as completed");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-emphasis",
+    ) as { status: string };
+    expect(taskRow.status).toBe("completed");
+  });
+
+  it("rejects malformed embedded-scheme text as public completion evidence", async () => {
+    const now = new Date().toISOString();
+    db.raw.prepare(
+      "INSERT INTO goals (id, title, description, status, created_at) VALUES (?, ?, ?, 'active', ?)",
+    ).run("goal-public-proof-embedded-scheme", "Ship public API", "Revenue API", now);
+    db.raw.prepare(
+      `INSERT INTO task_graph
+       (id, goal_id, title, description, status, task_class, agent_role, priority, dependencies, created_at)
+       VALUES (?, ?, ?, ?, 'pending', 'monetization', 'generalist', 50, '[]', ?)`,
+    ).run(
+      "task-public-proof-embedded-scheme",
+      "goal-public-proof-embedded-scheme",
+      "Publish revenue API",
+      "Expose paid API publicly",
+      now,
+    );
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("complete_task", {
+        task_id: "task-public-proof-embedded-scheme",
+        output: "Verified nothttps://api.compintel.co/health",
+        artifacts: "nothttps://api.compintel.co/health",
+      }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const completionCall = turns.flatMap((turn) => turn.toolCalls).find((call) => call.name === "complete_task");
+    expect(completionCall?.result).toContain("requires public completion evidence");
+
+    const taskRow = db.raw.prepare("SELECT status FROM task_graph WHERE id = ?").get(
+      "task-public-proof-embedded-scheme",
+    ) as { status: string };
+    expect(taskRow.status).toBe("pending");
+  });
+
   it("allows complete_task for public revenue work with public route evidence", async () => {
     const now = new Date().toISOString();
     db.raw.prepare(
