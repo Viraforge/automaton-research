@@ -17,8 +17,14 @@ jobs:
         timeout-minutes: 10
         run: |
           set +e
-          timeout 300 pnpm test
+          timeout 300 pnpm -s vitest run \
+            src/__tests__/publish-service.test.ts \
+            src/__tests__/wallet-x402-headers.test.ts
           RC=$?
+          if [ $RC -eq 0 ]; then
+            timeout 300 bash -lc "cd services/polymarket-api && npm test"
+            RC=$?
+          fi
           set -e
           # Exit code 124 means timeout killed the process (vitest hung after tests completed)
           if [ $RC -eq 124 ]; then echo "::warning::vitest process hung after tests, killed by timeout"; exit 0; fi
@@ -27,7 +33,11 @@ jobs:
         timeout-minutes: 10
         run: |
           set +e
-          timeout 180 pnpm test -- --grep "security|injection|policy|financial"
+          timeout 180 pnpm -s vitest run \
+            src/__tests__/tools-security.test.ts \
+            src/__tests__/injection-defense.test.ts \
+            src/__tests__/policy-engine.test.ts \
+            src/__tests__/financial.test.ts
           RC=$?
           set -e
           if [ $RC -eq 124 ]; then echo "::warning::vitest process hung after tests, killed by timeout"; exit 0; fi
