@@ -295,7 +295,6 @@ export const promoteProductToPublished = async (
       tags: existing?.tags,
       createdAt: existing?.createdAt,
       publishedAt: existing?.publishedAt,
-      updatedAt: existing?.updatedAt,
     },
     resolvedRegistryPath,
   );
