@@ -1170,6 +1170,29 @@ describe("Agent Loop", () => {
     expect(blockedInstances?.error).toContain("tool temporarily blocked during no-progress stall");
   });
 
+  it("flags mixed mutating no-progress loops when tool patterns vary", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("write_file", { path: "/tmp/alpha.txt", content: "alpha" }),
+      uniqueToolResponse("exec", { command: "echo restart" }),
+      uniqueToolResponse("write_file", { path: "/tmp/beta.txt", content: "beta" }),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const interventionTurn = turns.find((turn) =>
+      turn.input?.includes("MIXED MUTATING LOOP DETECTED"));
+    expect(interventionTurn).toBeDefined();
+  });
+
   it.skip("flags repeated write_file turns without verification (requires: write_without_verification intervention)", async () => {
     const inference = new MockInferenceClient([
       uniqueToolResponse("write_file", { path: "/tmp/one.txt", content: "one" }),
@@ -1258,6 +1281,91 @@ describe("Agent Loop", () => {
     });
 
     expect(turns.some((turn) => turn.input?.includes("STALE CAPABILITY CLAIM"))).toBe(false);
+  });
+
+  it("flags stale Cloudflare blocker claims when sovereign publishing is available via apiKey plus email", async () => {
+    const sovereignConfig = createTestConfig({
+      useSovereignProviders: true,
+      cloudflareApiKey: "cf-key",
+      cloudflareEmail: "ops@compintel.co",
+      vultrApiKey: "vultr-key",
+      maxTurnsPerCycle: 3,
+      portfolio: {
+        noProgressCycleLimit: 1,
+      },
+    });
+    const inference = new MockInferenceClient([
+      noToolResponse("Cloudflare API token is missing, so I still cannot publish to compintel.co subdomains."),
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config: sovereignConfig,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const correctionTurn = turns.find((turn) =>
+      turn.input?.includes("STALE CAPABILITY CLAIM"));
+    expect(correctionTurn).toBeDefined();
+  });
+
+  it("still flags stale Cloudflare claims when the same turn only has successful Cloudflare output", async () => {
+    const sovereignConfig = createTestConfig({
+      useSovereignProviders: true,
+      cloudflareApiKey: "cf-key",
+      cloudflareEmail: "ops@compintel.co",
+      vultrApiKey: "vultr-key",
+      maxTurnsPerCycle: 3,
+      portfolio: {
+        noProgressCycleLimit: 1,
+      },
+    });
+    conway.exec = async (command: string, timeout?: number) => {
+      conway.execCalls.push({ command, timeout });
+      return { stdout: "cloudflare publish succeeded", stderr: "", exitCode: 0 };
+    };
+    const inference = new MockInferenceClient([
+      {
+        id: "resp_stale_cloudflare_success_output",
+        model: "mock-model",
+        message: {
+          role: "assistant",
+          content: "Cloudflare API token is missing, so I still cannot publish to compintel.co subdomains.",
+          tool_calls: [{
+            id: "call_stale_cloudflare_success_output",
+            type: "function" as const,
+            function: { name: "exec", arguments: JSON.stringify({ command: "echo cloudflare status" }) },
+          }],
+        },
+        toolCalls: [{
+          id: "call_stale_cloudflare_success_output",
+          type: "function" as const,
+          function: { name: "exec", arguments: JSON.stringify({ command: "echo cloudflare status" }) },
+        }],
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        finishReason: "tool_calls",
+      },
+      noToolResponse("ack"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config: sovereignConfig,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const correctionTurn = turns.find((turn) =>
+      turn.input?.includes("STALE CAPABILITY CLAIM"));
+    expect(correctionTurn).toBeDefined();
   });
 
   it.skip("redirects forbidden background exec toward publish_service or verification (requires: background_exec redirection)", async () => {

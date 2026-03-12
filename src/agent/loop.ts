@@ -99,6 +99,12 @@ const DISCOVERY_FOLLOW_THROUGH_KEY = "distribution.discovery_follow_through";
 const EXEC_NO_PROGRESS_BACKOFF_KEY = "loop.exec_no_progress_backoff_ms";
 const EXEC_NO_PROGRESS_MIN_BACKOFF_MS = 3 * 60_000;
 const EXEC_NO_PROGRESS_MAX_BACKOFF_MS = 30 * 60_000;
+const MIXED_MUTATING_LOOP_TOOLS = new Set([
+  "write_file",
+  "edit_own_file",
+  "exec",
+  "sleep",
+]);
 const STALL_BLOCKED_TOOLS = new Set([
   "review_memory",
   "recall_facts",
@@ -120,6 +126,38 @@ function detectInferenceProviderFromBaseUrl(baseUrl?: string): "zai" | "minimax"
   if (normalized.includes("z.ai") || normalized.includes("bigmodel.cn")) return "zai";
   if (normalized.includes("minimax")) return "minimax";
   return "unknown";
+}
+
+function hasCloudflarePublishingCredentials(config: AutomatonConfig): boolean {
+  if (config.cloudflareApiToken) return true;
+  return Boolean(config.cloudflareApiKey && config.cloudflareEmail);
+}
+
+function isStaleCloudflareCapabilityClaim(
+  thinking: string | undefined,
+  config: AutomatonConfig,
+  toolCalls: ToolCallResult[],
+): boolean {
+  if (!config.useSovereignProviders) return false;
+  if (!hasCloudflarePublishingCredentials(config)) return false;
+  if (toolCalls.some((call) => {
+    const toolOutput = `${call.error || ""} ${call.result || ""}`;
+    return /cloudflare/i.test(toolOutput)
+      && (
+        Boolean(call.error)
+        || /\b(error|failed|failure|forbidden|unauthorized|denied|missing|invalid|unable|cannot|can't)\b/i.test(toolOutput)
+      );
+  })) return false;
+
+  const normalizedThinking = (thinking || "").toLowerCase();
+  if (!normalizedThinking.includes("cloudflare")) return false;
+
+  const claimsMissingToken = normalizedThinking.includes("api token")
+    && /(missing|need|required|cannot|can't|still not working|not working)/i.test(normalizedThinking);
+  const claimsPublishingBlocked = /(cannot|can't|unable|blocked)/i.test(normalizedThinking)
+    && /(publish|subdomain)/i.test(normalizedThinking);
+
+  return claimsMissingToken || claimsPublishingBlocked;
 }
 
 export interface AgentLoopOptions {
@@ -1064,6 +1102,32 @@ export async function runAgentLoop(
       const execDominantNoProgressLoop = recentPatternWindow.length === MAX_REPETITIVE_TURNS
         && recentPatternWindow.every((pattern) => pattern.split(",").includes("exec"));
       const portfolioPolicy = resolvePortfolioPolicy(config);
+      const mixedMutatingNoProgressLoop = recentPatternWindow.length === MAX_REPETITIVE_TURNS
+        && new Set(recentPatternWindow).size > 1
+        && recentPatternWindow.every((pattern) =>
+          pattern.split(",").some((tool) => MIXED_MUTATING_LOOP_TOOLS.has(tool)))
+        && new Set(recentPatternWindow.flatMap((pattern) =>
+          pattern
+            .split(",")
+            .filter((tool) => MIXED_MUTATING_LOOP_TOOLS.has(tool)))).size > 1;
+      if (
+        !pendingInput
+        && !progress.progressed
+        && mixedMutatingNoProgressLoop
+      ) {
+        const recentTools = [...new Set(recentPatternWindow.flatMap((pattern) =>
+          pattern
+            .split(",")
+            .filter((tool) => MIXED_MUTATING_LOOP_TOOLS.has(tool))))];
+        pendingInput = {
+          content:
+            `MIXED MUTATING LOOP DETECTED: your last ${recentPatternWindow.length} turns used varying mutating tools ` +
+            `(${recentTools.join(", ")}) without verified progress. ` +
+            `Stop alternating edits/restarts/sleeps. Verify a concrete artifact or pivot to a different task.`,
+          source: "system",
+        };
+        lastToolPatterns = [];
+      }
       if (!progress.progressed && noProgressCycles >= portfolioPolicy.noProgressCycleLimit && execDominantNoProgressLoop) {
         const previousBackoff = Number.parseInt(db.getKV(EXEC_NO_PROGRESS_BACKOFF_KEY) || "0", 10);
         const backoffMs = Math.min(
@@ -1125,6 +1189,19 @@ export async function runAgentLoop(
       if (followThroughDecision.injectMessage && !pendingInput) {
         pendingInput = {
           content: followThroughDecision.injectMessage,
+          source: "system",
+        };
+      }
+
+      if (
+        !pendingInput
+        && isStaleCloudflareCapabilityClaim(turn.thinking, config, turn.toolCalls)
+      ) {
+        pendingInput = {
+          content:
+            "STALE CAPABILITY CLAIM: sovereign publication is configured with Cloudflare credentials already available. " +
+            "Do not claim a missing Cloudflare API token unless a fresh publish/DNS tool call just failed with evidence. " +
+            "Use the available Cloudflare auth mode or run a concrete verification step.",
           source: "system",
         };
       }
@@ -1286,6 +1363,7 @@ export async function runAgentLoop(
       // ── If no tool calls and just text, the agent might be done thinking ──
       if (
         running &&
+        !pendingInput &&
         (!response.toolCalls || response.toolCalls.length === 0) &&
         response.finishReason === "stop"
       ) {
