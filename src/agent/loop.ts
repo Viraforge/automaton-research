@@ -43,6 +43,8 @@ import {
   markInboxFailed,
   resetInboxToReceived,
   consumeNextWakeEvent,
+  getActiveGoals,
+  listActiveProjects,
 } from "../state/database.js";
 import type { InboxMessageRow } from "../state/database.js";
 import { ulid } from "ulid";
@@ -75,7 +77,12 @@ import {
   recordChannelOutcome,
 } from "../distribution/channels.js";
 import { loadOperatorTargets } from "../distribution/targets.js";
-import { enforceProjectBudgetStates, resolvePortfolioPolicy } from "../portfolio/policy.js";
+import {
+  enforceProjectBudgetStates,
+  findSingleEligibleProject,
+  resolvePortfolioPolicy,
+} from "../portfolio/policy.js";
+import { createGoal } from "../orchestration/task-graph.js";
 import {
   evaluateDiscoveryFollowThrough,
   type DiscoveryFollowThroughState,
@@ -97,6 +104,8 @@ const INFERENCE_429_RESET_CAP_MS = 14 * 24 * 60 * 60_000;
 const PROJECT_NO_PROGRESS_CYCLES_KEY = "portfolio.no_progress_cycles";
 const DISCOVERY_FOLLOW_THROUGH_KEY = "distribution.discovery_follow_through";
 const EXEC_NO_PROGRESS_BACKOFF_KEY = "loop.exec_no_progress_backoff_ms";
+const POST_WARNING_PIVOT_KEY = "loop.post_warning_pivot_required";
+const CF_MIGRATION_SEEDED_KEY = "legacy.cf_migration.seeded";
 const EXEC_NO_PROGRESS_MIN_BACKOFF_MS = 3 * 60_000;
 const EXEC_NO_PROGRESS_MAX_BACKOFF_MS = 30 * 60_000;
 const MIXED_MUTATING_LOOP_TOOLS = new Set([
@@ -158,6 +167,39 @@ function isStaleCloudflareCapabilityClaim(
     && /(publish|subdomain)/i.test(normalizedThinking);
 
   return claimsMissingToken || claimsPublishingBlocked;
+}
+
+function shouldRequirePostWarningPivot(message: string): boolean {
+  return /LOOP DETECTED|LOOP ENFORCEMENT|DISCOVERY LOOP DETECTED|MAINTENANCE LOOP DETECTED|REPETITIVE ACTION DETECTED|MIXED MUTATING LOOP DETECTED|STALE CAPABILITY CLAIM/i.test(message);
+}
+
+function getStringArg(
+  args: Record<string, unknown> | undefined,
+  key: string,
+): string {
+  const value = args?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function isWorklogRewriteCall(result: ToolCallResult): boolean {
+  if (result.name !== "write_file" || !!result.error) return false;
+  const targetPath = getStringArg(result.arguments, "path");
+  if (!targetPath) return false;
+  const normalizedPath = targetPath.replace(/\\/g, "/").toLowerCase();
+  return normalizedPath.endsWith("/worklog.md") || normalizedPath.endsWith("worklog.md");
+}
+
+function isLowSignalLocalhostExec(result: ToolCallResult): boolean {
+  if (result.name !== "exec" || !!result.error) return false;
+  const command = getStringArg(result.arguments, "command").toLowerCase();
+  if (!command) return false;
+  if (!/(localhost|127\.0\.0\.1)/.test(command)) return false;
+  if (!/\b(curl|wget|http|nc|ss|lsof)\b/.test(command)) return false;
+
+  const output = (result.result || "").trim().toLowerCase();
+  if (!output) return true;
+  if (/stdout:\s*[\r\n]+stderr:\s*$/i.test(result.result || "")) return true;
+  return output.length < 16 && !/(http\/|status|listening|open|json|\{|\[)/.test(output);
 }
 
 export interface AgentLoopOptions {
@@ -450,6 +492,30 @@ export async function runAgentLoop(
     log(config, `[DISTRIBUTION] operator targets: ${loadedTargets.warning} (${loadedTargets.path})`);
   } else if (loadedTargets.inserted > 0) {
     log(config, `[DISTRIBUTION] loaded operator targets: inserted=${loadedTargets.inserted} from ${loadedTargets.path}`);
+  }
+  if (!db.getKV(CF_MIGRATION_SEEDED_KEY)) {
+    const existingMigrationGoal = getActiveGoals(db.raw).some((goal) =>
+      /migrate.*legacy|cloudflare.*compintel|legacy.*migration/i.test(goal.title));
+    if (existingMigrationGoal) {
+      db.setKV(CF_MIGRATION_SEEDED_KEY, new Date().toISOString());
+    } else {
+      const project = findSingleEligibleProject(listActiveProjects(db.raw));
+      if (!project) {
+        log(config, "[MIGRATION] Skipping one-time legacy Cloudflare migration goal: no single eligible active project.");
+      } else {
+        createGoal(
+          db.raw,
+          "Migrate legacy public products from Cloudflare URLs to compintel.co",
+          "One-time cleanup: inventory public products still on temporary Cloudflare tunnel URLs or non-compintel hostnames. " +
+            "For each product, migrate it to a stable *.compintel.co route, retire it with evidence, or mark it exempt with reason. " +
+            "Verify each migrated public route before completion. This is finite cleanup and should not recur.",
+          "build",
+          project.id,
+        );
+        db.setKV(CF_MIGRATION_SEEDED_KEY, new Date().toISOString());
+        log(config, "[MIGRATION] Seeded one-time legacy Cloudflare migration goal.");
+      }
+    }
   }
 
   let consecutiveErrors = 0;
@@ -744,6 +810,7 @@ export async function runAgentLoop(
 
       // Capture input before clearing
       const currentInput = pendingInput;
+      const postWarningGuardWasActiveAtTurnStart = db.getKV(POST_WARNING_PIVOT_KEY) === "1";
 
       // Clear pending input after use
       pendingInput = undefined;
@@ -1205,16 +1272,31 @@ export async function runAgentLoop(
           source: "system",
         };
       }
+      if (pendingInput?.source === "system" && shouldRequirePostWarningPivot(pendingInput.content)) {
+        db.setKV(POST_WARNING_PIVOT_KEY, "1");
+      }
 
       // ── Check for sleep command ──
       const sleepTool = turn.toolCalls.find((tc) => tc.name === "sleep");
       if (sleepTool && !sleepTool.error) {
+        const denySleepAndContinue = (content: string): void => {
+          // The sleep tool may already have set sleep_until; clear it when denying.
+          db.deleteKV("sleep_until");
+          db.setAgentState("running");
+          onStateChange?.("running");
+          pendingInput = { content, source: "system" };
+        };
+        if (db.getKV(POST_WARNING_PIVOT_KEY) === "1") {
+          denySleepAndContinue(
+            "PIVOT REQUIRED: you received a loop/capability warning and must take a meaningful action before sleeping. " +
+            "Create or ship something concrete, verify a public artifact, or pivot goals. Do not call sleep yet.",
+          );
+          continue;
+        }
         if (hasReadyDistributionWork) {
-          pendingInput = {
-            content:
-              "SLEEP DENIED: pending distribution target is executable right now. Run a distribution action before sleeping.",
-            source: "system",
-          };
+          denySleepAndContinue(
+            "SLEEP DENIED: pending distribution target is executable right now. Run a distribution action before sleeping.",
+          );
           continue;
         }
 
@@ -1225,17 +1307,15 @@ export async function runAgentLoop(
 
         if (consecutiveSleeps >= MAX_CONSECUTIVE_SLEEPS) {
           log(config, `[SLEEP BLOCKER] Agent attempted ${consecutiveSleeps + 1} consecutive sleeps. Forcing new goal instead.`);
-          pendingInput = {
-            content:
-              `You've called sleep ${consecutiveSleeps + 1} times in a row. This indicates you're stuck in a loop.\n\n` +
-              `REQUIRED ACTION: You must either:\n` +
-              `1. Create a new goal via create_goal (change direction)\n` +
-              `2. Build something via write_file + start_service\n` +
-              `3. Analyze metrics via check_balance\n` +
-              `4. Execute a meaningful action (not status checks or sleep)\n\n` +
-              `Do NOT call sleep again until you've made tangible progress on one of these actions.`,
-            source: "system",
-          };
+          denySleepAndContinue(
+            `You've called sleep ${consecutiveSleeps + 1} times in a row. This indicates you're stuck in a loop.\n\n` +
+            `REQUIRED ACTION: You must either:\n` +
+            `1. Create a new goal via create_goal (change direction)\n` +
+            `2. Build something via write_file + start_service\n` +
+            `3. Analyze metrics via check_balance\n` +
+            `4. Execute a meaningful action (not status checks or sleep)\n\n` +
+            `Do NOT call sleep again until you've made tangible progress on one of these actions.`,
+          );
           db.deleteKV("consecutive_sleeps");
           continue;
         }
@@ -1249,6 +1329,43 @@ export async function runAgentLoop(
         running = false;
         break;
       } else if (turn.toolCalls.length > 0 && turn.toolCalls.some((tc) => !tc.error)) {
+        if (postWarningGuardWasActiveAtTurnStart) {
+          const wroteWorklog = turn.toolCalls.some(isWorklogRewriteCall);
+          if (wroteWorklog) {
+            pendingInput = {
+              content:
+                "PIVOT REQUIRED: post-warning fallback detected (WORKLOG.md rewrite). " +
+                "Do a meaningful action with external evidence instead of another bookkeeping update.",
+              source: "system",
+            };
+            continue;
+          }
+
+          const lowSignalLocalhostCheck = turn.toolCalls.some(isLowSignalLocalhostExec);
+          if (lowSignalLocalhostCheck) {
+            pendingInput = {
+              content:
+                "PIVOT REQUIRED: repeated localhost verification produced low-signal output. " +
+                "Either gather concrete evidence (non-empty endpoint response/logs) or pivot to a different action.",
+              source: "system",
+            };
+            continue;
+          }
+
+          const hasMeaningfulMutation = turn.toolCalls.some((tc) =>
+            !tc.error
+            && tc.name !== "sleep"
+            && tc.name !== "write_file"
+            && tc.name !== "exec");
+          const hasHighSignalWork = turn.toolCalls.some((tc) =>
+            !tc.error && (tc.name === "write_file" || tc.name === "exec")
+            && !isWorklogRewriteCall(tc)
+            && !isLowSignalLocalhostExec(tc));
+          if (hasMeaningfulMutation || hasHighSignalWork) {
+            db.deleteKV(POST_WARNING_PIVOT_KEY);
+          }
+        }
+
         // Reset sleep counter when agent does any non-sleep work
         db.deleteKV("consecutive_sleeps");
       }

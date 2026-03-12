@@ -19,6 +19,7 @@ import {
   noToolResponse,
 } from "./mocks.js";
 import type { AutomatonDatabase, AgentTurn, AgentState } from "../types.js";
+import { insertGoal, insertProject } from "../state/database.js";
 
 // Mock Conway registry discovery to prevent real network calls to dead endpoint
 vi.mock("../registry/discovery.js", () => ({
@@ -30,6 +31,9 @@ function getLoopDetectionState(db: AutomatonDatabase): Record<string, unknown> {
   const raw = db.getKV("loop_detection_state");
   return raw ? JSON.parse(raw) : {};
 }
+
+const POST_WARNING_PIVOT_KEY = "loop.post_warning_pivot_required";
+const CF_MIGRATION_SEEDED_KEY = "legacy.cf_migration.seeded";
 
 let uniqueResponseCounter = 0;
 
@@ -899,6 +903,136 @@ describe("Agent Loop", () => {
       (t) => t.input?.includes("LOOP ENFORCEMENT"),
     );
     expect(enforcementTurn).toBeUndefined();
+  });
+
+  it("sets post-warning guard when loop warning is injected", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("exec", { command: "echo loop-a" }),
+      uniqueToolResponse("exec", { command: "echo loop-b" }),
+      uniqueToolResponse("exec", { command: "echo loop-c" }),
+      noToolResponse("done"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const warningTurn = turns.find((turn) => turn.input?.includes("LOOP DETECTED"));
+    expect(warningTurn).toBeDefined();
+    expect(db.getKV(POST_WARNING_PIVOT_KEY)).toBe("1");
+  });
+
+  it("blocks sleep when post-warning guard is active", async () => {
+    db.setKV(POST_WARNING_PIVOT_KEY, "1");
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("sleep", { duration_seconds: 30, reason: "fallback" }),
+      noToolResponse("done"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.some((turn) => turn.input?.includes("PIVOT REQUIRED"))).toBe(true);
+  });
+
+  it("allows a meaningful tool call on the turn immediately after a system loop warning", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("exec", { command: "echo loop-1" }),
+      uniqueToolResponse("exec", { command: "echo loop-2" }),
+      uniqueToolResponse("exec", { command: "echo loop-3" }),
+      uniqueToolResponse("write_file", { path: "/tmp/real-artifact.txt", content: "artifact" }),
+      uniqueToolResponse("sleep", { duration_seconds: 15, reason: "after work" }),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    const pivotRequiredTurns = turns.filter((turn) => turn.input?.includes("PIVOT REQUIRED"));
+    expect(pivotRequiredTurns.length).toBe(0);
+    expect(db.getKV(POST_WARNING_PIVOT_KEY)).toBeUndefined();
+    expect(db.getAgentState()).toBe("sleeping");
+  });
+
+  it("does not block sleep when no prior system warning was issued", async () => {
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("sleep", { duration_seconds: 10, reason: "idle" }),
+    ]);
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+    });
+
+    expect(db.getAgentState()).toBe("sleeping");
+    expect(db.getKV(POST_WARNING_PIVOT_KEY)).toBeUndefined();
+  });
+
+  it("blocks WORKLOG rewrite after a post-warning guard is active", async () => {
+    db.setKV(POST_WARNING_PIVOT_KEY, "1");
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("write_file", { path: "/tmp/WORKLOG.md", content: "updated notes" }),
+      noToolResponse("done"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.some((turn) => turn.input?.includes("WORKLOG.md rewrite"))).toBe(true);
+  });
+
+  it("blocks low-signal localhost checks after a post-warning guard is active", async () => {
+    db.setKV(POST_WARNING_PIVOT_KEY, "1");
+    conway.exec = async (command: string, timeout?: number) => {
+      conway.execCalls.push({ command, timeout });
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+
+    const inference = new MockInferenceClient([
+      uniqueToolResponse("exec", { command: "curl http://localhost:3000/health" }),
+      noToolResponse("done"),
+    ]);
+
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+      onTurnComplete: (turn) => turns.push(turn),
+    });
+
+    expect(turns.some((turn) => turn.input?.includes("localhost verification produced low-signal output"))).toBe(true);
   });
 
   it("discover_agents loop triggers discovery cooldown and blocked retry", { timeout: 180_000 }, async () => {
@@ -2204,5 +2338,89 @@ describe("Agent Loop", () => {
     const recallCall = agentInputTurn?.toolCalls.find((call) => call.name === "recall_facts");
     expect(recallCall).toBeDefined();
     expect(recallCall?.error ?? "").not.toContain("tool temporarily blocked during no-progress stall");
+  });
+
+  it("seeds the legacy migration goal on first startup when no equivalent goal exists", async () => {
+    insertProject(db.raw, {
+      id: "proj-legacy-seed",
+      name: "legacy migration",
+      status: "incubating",
+      lane: "build",
+    });
+    const inference = new MockInferenceClient([
+      noToolResponse("no work"),
+    ]);
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+    });
+
+    const seeded = db.raw.prepare(
+      "SELECT id FROM goals WHERE title = ?",
+    ).get("Migrate legacy public products from Cloudflare URLs to compintel.co") as { id: string } | undefined;
+    expect(seeded).toBeDefined();
+    expect(db.getKV(CF_MIGRATION_SEEDED_KEY)).toBeDefined();
+  });
+
+  it("does not reseed the migration goal if the KV marker is already present", async () => {
+    insertProject(db.raw, {
+      id: "proj-legacy-kv",
+      name: "legacy migration kv",
+      status: "incubating",
+      lane: "build",
+    });
+    db.setKV(CF_MIGRATION_SEEDED_KEY, new Date().toISOString());
+    const inference = new MockInferenceClient([
+      noToolResponse("no work"),
+    ]);
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+    });
+
+    const goals = db.raw.prepare(
+      "SELECT COUNT(*) AS c FROM goals WHERE title = ?",
+    ).get("Migrate legacy public products from Cloudflare URLs to compintel.co") as { c: number };
+    expect(goals.c).toBe(0);
+  });
+
+  it("does not reseed the migration goal if an equivalent active goal already exists", async () => {
+    insertProject(db.raw, {
+      id: "proj-legacy-existing",
+      name: "legacy migration existing",
+      status: "incubating",
+      lane: "build",
+    });
+    insertGoal(db.raw, {
+      title: "Migrate legacy Cloudflare routes to compintel",
+      description: "existing cleanup work",
+      status: "active",
+      projectId: "proj-legacy-existing",
+    });
+    const inference = new MockInferenceClient([
+      noToolResponse("no work"),
+    ]);
+
+    await runAgentLoop({
+      identity,
+      config,
+      db,
+      conway,
+      inference,
+    });
+
+    const goals = db.raw.prepare(
+      "SELECT COUNT(*) AS c FROM goals WHERE title = ?",
+    ).get("Migrate legacy public products from Cloudflare URLs to compintel.co") as { c: number };
+    expect(goals.c).toBe(0);
+    expect(db.getKV(CF_MIGRATION_SEEDED_KEY)).toBeDefined();
   });
 });
