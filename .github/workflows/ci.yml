@@ -146,8 +146,10 @@ jobs:
             HEALTH_CODE=000
             MARKETS_CODE=000
             for attempt in $(seq 1 15); do
-              HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/health")
-              MARKETS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/v1/markets")
+              HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/health" || true)
+              MARKETS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/v1/markets" || true)
+              HEALTH_CODE=${HEALTH_CODE:-000}
+              MARKETS_CODE=${MARKETS_CODE:-000}
               if [ "$HEALTH_CODE" = "200" ] && [ "$MARKETS_CODE" = "402" ]; then
                 break
               fi
