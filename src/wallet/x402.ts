@@ -341,6 +341,7 @@ export async function x402Fetch(
       headers: {
         ...headers,
         "Content-Type": "application/json",
+        "PAYMENT-SIGNATURE": paymentHeader,
         "X-Payment": paymentHeader,
       },
       body,
@@ -357,7 +358,8 @@ export async function x402Fetch(
 async function parsePaymentRequired(
   resp: Response,
 ): Promise<ParsedPaymentRequirement | null> {
-  const header = resp.headers.get("X-Payment-Required");
+  const header = resp.headers.get("PAYMENT-REQUIRED")
+    || resp.headers.get("X-Payment-Required");
   if (header) {
     const rawHeader = safeJsonParse(header);
     const normalizedRaw = normalizePaymentRequired(rawHeader);

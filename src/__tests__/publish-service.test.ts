@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinTools } from "../agent/tools.js";
+import { createCloudflareProvider } from "../providers/cloudflare.js";
 import {
   MockConwayClient,
   MockInferenceClient,
@@ -88,7 +89,11 @@ describe("publish_service tool", () => {
     expect(conway.execCalls).toHaveLength(1);
     expect(conway.execCalls[0]?.command).toContain("alpha.compintel.co");
     expect(conway.execCalls[0]?.command).toContain("reverse_proxy http://127.0.0.1:9090");
-    expect(conway.execCalls[0]?.command).toContain("BEGIN AUTOMATON SITES IMPORT");
+    expect(conway.execCalls[0]?.command).toContain("http://alpha.compintel.co {");
+    expect(conway.execCalls[0]?.command).toContain("https://alpha.compintel.co {");
+    expect(vi.mocked(createCloudflareProvider)).toHaveBeenCalledWith({
+      apiToken: "cf-test-token",
+    });
     expect(result).toContain("Service published: https://alpha.compintel.co");
   });
 
@@ -178,6 +183,9 @@ describe("expose_port tool with auto-publish", () => {
     expect(exposeTool).toBeDefined();
 
     const result = await exposeTool!.execute({ port: 3000 }, ctx);
+    expect(vi.mocked(createCloudflareProvider)).toHaveBeenCalledWith({
+      apiToken: "cf-test-token",
+    });
 
     // Should call Cloudflare to create DNS record
     expect(addRecord).toHaveBeenCalledWith(
@@ -215,5 +223,54 @@ describe("expose_port tool with auto-publish", () => {
     // Should mention the failure but also show localhost fallback
     expect(result).toContain("localhost");
     expect(result).toMatch(/public publishing failed|auto-publish failed/);
+  });
+});
+
+describe("manage_dns tool with cloudflare auth modes", () => {
+  let db: AutomatonDatabase;
+  let conway: MockConwayClient;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    db = createTestDb();
+    conway = new MockConwayClient();
+    ctx = {
+      identity: createTestIdentity(),
+      config: createTestConfig({
+        useSovereignProviders: true,
+        cloudflareApiToken: "cf-test-token",
+        cloudflareZoneId: "zone-test",
+      }),
+      db,
+      conway,
+      inference: new MockInferenceClient(),
+    };
+
+    listRecords.mockResolvedValue([
+      { id: "rec-api", type: "A", host: "api.compintel.co", value: "66.135.29.159", ttl: 1 },
+    ]);
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.clearAllMocks();
+  });
+
+  it("uses API token auth for manage_dns list", async () => {
+    const dnsTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "manage_dns");
+    expect(dnsTool).toBeDefined();
+
+    const result = await dnsTool!.execute(
+      {
+        action: "list",
+        domain: "compintel.co",
+      },
+      ctx,
+    );
+
+    expect(result).toContain("api.compintel.co");
+    expect(vi.mocked(createCloudflareProvider)).toHaveBeenCalledWith({
+      apiToken: "cf-test-token",
+    });
   });
 });

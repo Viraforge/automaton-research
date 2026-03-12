@@ -122,6 +122,9 @@ jobs:
               if command -v fuser >/dev/null 2>&1; then
                 fuser -k 8081/tcp 2>/dev/null || true
               fi
+              if [ -n "${INTERNAL_API_TOKEN:-}" ]; then
+                export INTERNAL_API_TOKEN
+              fi
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 delete polymarket-api 2>/dev/null || true
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 start server.js --name polymarket-api --cwd "$POLYMARKET_DIR" --update-env
               PM2_HOME="$CONNIE_HOME/.pm2" pm2 save || true
@@ -129,9 +132,21 @@ jobs:
               echo "pm2 not found; polymarket-api restart skipped"
             fi
 
-            sleep 2
-            HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/health")
-            MARKETS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/v1/markets")
+            HEALTH_CODE=000
+            MARKETS_CODE=000
+            for attempt in $(seq 1 15); do
+              HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/health")
+              MARKETS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8081/v1/markets")
+              if [ "$HEALTH_CODE" = "200" ] && [ "$MARKETS_CODE" = "402" ]; then
+                break
+              fi
+              echo "polymarket-api probe attempt ${attempt}/15 => /health=${HEALTH_CODE}, /v1/markets=${MARKETS_CODE}"
+              sleep 2
+            done
             echo "polymarket-api /health HTTP $HEALTH_CODE"
             echo "polymarket-api /v1/markets HTTP $MARKETS_CODE"
+            if [ "$HEALTH_CODE" != "200" ] || [ "$MARKETS_CODE" != "402" ]; then
+              echo "polymarket-api failed readiness gates"
+              exit 1
+            fi
             echo "Deploy complete: $REPO_HEAD"

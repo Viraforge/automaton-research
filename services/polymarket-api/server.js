@@ -14,6 +14,7 @@ const DEFAULT_PRICE_CENTS = parseInt(process.env.PRICE_CENTS || "1", 10);
 const PRICE_STATE_PATH = process.env.PRICE_STATE_PATH || path.join(__dirname, "price-state.json");
 const PORT = parseInt(process.env.PORT || "8081", 10);
 const MAX_PRICE_CENTS = 100_000;
+const INTERNAL_API_TOKEN = process.env.INTERNAL_API_TOKEN || "";
 
 function toValidPriceCents(value) {
   const parsed = Number(value);
@@ -83,11 +84,11 @@ function canMutatePricing(req) {
 }
 
 // Payment requirement response (x402 spec)
-function paymentRequiredResponse(res) {
+function buildPaymentRequiredPayload(error = "Payment required") {
   const priceCents = getPriceCents();
-  return res.status(402).json({
+  return {
     x402Version: 2,
-    error: "Payment required",
+    error,
     accepts: [
       {
         scheme: "exact",
@@ -98,7 +99,17 @@ function paymentRequiredResponse(res) {
         usdcAddress: USDC_ADDRESS,
       },
     ],
-  });
+  };
+}
+
+function paymentRequiredResponse(res, error = "Payment required") {
+  const payload = buildPaymentRequiredPayload(error);
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64");
+  return res
+    .status(402)
+    .set("PAYMENT-REQUIRED", encoded)
+    .set("X-Payment-Required", encoded)
+    .json(payload);
 }
 
 // x402 payment middleware
@@ -107,14 +118,14 @@ async function requirePayment(req, res, next) {
 
   // Allow internal requests with valid token (skip payment for agent's own services)
   const internalToken = req.headers["x-internal-token"];
-  const expectedToken = "5bfe960f681175324c8b27bacf20a225ba1cbf93f2e63c57b3af99c8ec8d6a1b";
+  const expectedToken = INTERNAL_API_TOKEN;
 
-  if (internalToken === expectedToken) {
+  if (expectedToken && internalToken === expectedToken) {
     req.payer = "internal";
     return next();
   }
 
-  const paymentHeader = req.headers["x-payment"];
+  const paymentHeader = req.headers["payment-signature"] || req.headers["x-payment"];
   if (!paymentHeader) {
     return paymentRequiredResponse(res);
   }
@@ -126,20 +137,7 @@ async function requirePayment(req, res, next) {
   });
 
   if (!result.valid) {
-    return res.status(402).json({
-      x402Version: 2,
-      error: result.error,
-      accepts: [
-        {
-          scheme: "exact",
-          network: "eip155:8453",
-          maxAmountRequired: String(priceCents * 10000),
-          payToAddress: PAY_TO_ADDRESS,
-          requiredDeadlineSeconds: 300,
-          usdcAddress: USDC_ADDRESS,
-        },
-      ],
-    });
+    return paymentRequiredResponse(res, result.error || "Payment failed");
   }
 
   req.payer = result.from;

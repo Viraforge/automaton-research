@@ -35,6 +35,7 @@ describe("server dynamic pricing", () => {
     }
     delete process.env.PRICE_STATE_PATH;
     delete process.env.PRICE_CENTS;
+    delete process.env.INTERNAL_API_TOKEN;
     if (tmpDir) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -91,5 +92,34 @@ describe("server dynamic pricing", () => {
     });
 
     expect(res.status).toBe(403);
+  });
+
+  it("allows internal bypass only with matching INTERNAL_API_TOKEN", async () => {
+    process.env.INTERNAL_API_TOKEN = "test-internal-token";
+    app = await loadApp();
+    if (server?.listening) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    baseUrl = `http://127.0.0.1:${port}`;
+
+    const blocked = await fetch(`${baseUrl}/v1/markets`, {
+      headers: { "x-internal-token": "wrong-token" },
+    });
+    expect(blocked.status).toBe(402);
+
+    const allowed = await fetch(`${baseUrl}/v1/markets`, {
+      headers: { "x-internal-token": "test-internal-token" },
+    });
+    expect(allowed.status).toBe(200);
+  });
+
+  it("returns standard and legacy payment-required headers on 402", async () => {
+    const gated = await fetch(`${baseUrl}/v1/markets`);
+    expect(gated.status).toBe(402);
+    expect(gated.headers.get("payment-required")).toBeTruthy();
+    expect(gated.headers.get("x-payment-required")).toBeTruthy();
   });
 });

@@ -489,7 +489,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
             const cfKey = ctx.config.cloudflareApiKey;
             const cfEmail = ctx.config.cloudflareEmail;
             const cf = createCloudflareProvider(
-              (cfToken && cfEmail) ? { apiKey: cfToken, email: cfEmail } : { apiToken: cfKey },
+              cfToken ? { apiToken: cfToken } : { apiKey: cfKey!, email: cfEmail! },
             );
             const domain = "compintel.co";
             const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
@@ -597,8 +597,10 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const cfToken = ctx.config.cloudflareApiToken;
-        if (!cfToken) {
-          return "Error: cloudflareApiToken must be set in config for service publishing.";
+        const cfKey = ctx.config.cloudflareApiKey;
+        const cfEmail = ctx.config.cloudflareEmail;
+        if (!cfToken && !(cfKey && cfEmail)) {
+          return "Error: set cloudflareApiToken or cloudflareApiKey + cloudflareEmail for service publishing.";
         }
 
         const domain = String(args.domain || "compintel.co").trim().toLowerCase();
@@ -622,10 +624,8 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         }
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
-        const cfKey = ctx.config.cloudflareApiKey;
-        const cfEmail = ctx.config.cloudflareEmail;
         const cf = createCloudflareProvider(
-          (cfToken && cfEmail) ? { apiKey: cfToken, email: cfEmail } : { apiToken: cfKey },
+          cfToken ? { apiToken: cfToken } : { apiKey: cfKey!, email: cfEmail! },
         );
         const zoneId = await resolveCloudflareZoneId(cf, ctx.config.cloudflareZoneId, domain);
         const existingRecords = await cf.listRecords(zoneId);
@@ -3014,13 +3014,13 @@ Model: ${ctx.inference.getDefaultModel()}
           const cfToken = ctx.config.cloudflareApiToken;
           const cfKey = ctx.config.cloudflareApiKey;
           const cfEmail = ctx.config.cloudflareEmail;
-          if (!(cfToken && cfEmail) && !(cfKey)) {
-            return "Error: Cloudflare credentials must be set in config for DNS management (cloudflareApiToken + cloudflareEmail or cloudflareApiKey).";
+          if (!cfToken && !(cfKey && cfEmail)) {
+            return "Error: Cloudflare credentials must be set in config for DNS management (cloudflareApiToken or cloudflareApiKey + cloudflareEmail).";
           }
 
           const { createCloudflareProvider } = await import("../providers/cloudflare.js");
           const cf = createCloudflareProvider(
-            (cfToken && cfEmail) ? { apiKey: cfToken, email: cfEmail } : { apiToken: cfKey },
+            cfToken ? { apiToken: cfToken } : { apiKey: cfKey!, email: cfEmail! },
           );
 
           // Resolve zone ID: explicit arg > config > auto-lookup by domain
