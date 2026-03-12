@@ -400,7 +400,6 @@ export async function runAgentLoop(
       const workerPool = new LocalWorkerPool({
         db: db.raw,
         inference: workerInference,
-        conway,
         workerId: `pool-${identity.name}`,
       });
 

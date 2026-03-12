@@ -20,7 +20,6 @@ import { UnifiedInferenceClient } from "../inference/inference-client.js";
 import { completeTask, failTask } from "./task-graph.js";
 import type { TaskNode, TaskResult } from "./task-graph.js";
 import type { Database } from "better-sqlite3";
-import type { ConwayClient } from "../types.js";
 import { classifyExecTimeout, isTimeoutLikeText } from "./exec-timeout.js";
 
 function truncateOutput(text: string, maxLen: number): string {
@@ -28,29 +27,40 @@ function truncateOutput(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + `\n[TRUNCATED: ${text.length - maxLen} chars omitted]`;
 }
 
-function localExec(command: string, timeoutMs: number): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return new Promise((resolve, reject) => {
-    const proc = execCb(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && !stdout && !stderr) {
-        reject(error);
-        return;
-      }
+function localExec(command: string, timeoutMs: number): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  signal?: string;
+  timedOut?: boolean;
+}> {
+  const cwd = process.env.HOME || "/root";
+  return new Promise((resolve) => {
+    execCb(command, { timeout: timeoutMs, maxBuffer: 1024 * 1024, cwd }, (error, stdout, stderr) => {
       resolve({
         stdout: stdout ?? "",
-        stderr: stderr ?? "",
+        stderr: stderr || (error ? String(error.message || "") : ""),
         exitCode: error && typeof (error as any).code === "number" ? (error as any).code : 0,
+        signal: error && typeof (error as any).signal === "string" ? (error as any).signal : undefined,
+        timedOut: Boolean(error && (error as any).killed && (error as any).signal),
       });
     });
   });
 }
 
+function resolveLocalPath(filePath: string): string {
+  if (!filePath.startsWith("~")) return filePath;
+  return path.join(process.env.HOME || "/root", filePath.slice(1));
+}
+
 async function localWriteFile(filePath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, content, "utf8");
+  const resolvedPath = resolveLocalPath(filePath);
+  await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+  await fs.writeFile(resolvedPath, content, "utf8");
 }
 
 async function localReadFile(filePath: string): Promise<string> {
-  return fs.readFile(filePath, "utf8");
+  return fs.readFile(resolveLocalPath(filePath), "utf8");
 }
 
 const logger = createLogger("orchestration.local-worker");
@@ -77,7 +87,6 @@ interface WorkerInferenceClient {
 interface LocalWorkerConfig {
   db: Database;
   inference: WorkerInferenceClient;
-  conway: ConwayClient;
   workerId: string;
   maxTurns?: number;
 }
@@ -419,6 +428,13 @@ RULES:
   }
 
   private buildWorkerTools(workerId: string, taskId: string): WorkerTool[] {
+    /**
+     * Local worker tool contract:
+     * - Tool execution is local-only and never routed through Conway APIs.
+     * - `exec` runs from HOME (or /root fallback), matching noop client semantics.
+     * - `write_file` and `read_file` apply `~` expansion and 10k read truncation.
+     * - Timeout classification and output truncation remain enforced here.
+     */
     return [
       {
         name: "exec",
@@ -435,9 +451,8 @@ RULES:
           const command = args.command as string;
           const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 60_000;
 
-          // Try Conway API first, fall back to local shell
           try {
-            const result = await this.config.conway.exec(command, timeoutMs);
+            const result = await localExec(command, timeoutMs);
             const timeout = classifyExecTimeout({ result });
             if (timeout.isTimeout && timeout.summary) {
               this.persistWorkerIssue({
@@ -466,39 +481,7 @@ RULES:
               });
               return `exec timeout: ${timeout.summary}`;
             }
-            try {
-              const result = await localExec(command, timeoutMs);
-              const timeout = classifyExecTimeout({ result });
-              if (timeout.isTimeout && timeout.summary) {
-                this.persistWorkerIssue({
-                  type: "exec_timeout",
-                  workerId,
-                  taskId,
-                  summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
-                  command,
-                  isPermanent: false,
-                });
-                return `exec timeout: ${timeout.summary}`;
-              }
-              const stdout = truncateOutput(result.stdout, 16_000);
-              const stderr = truncateOutput(result.stderr, 4000);
-              return stderr ? `stdout:\n${stdout}\nstderr:\n${stderr}` : stdout || "(no output)";
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              const timeout = classifyExecTimeout({ error });
-              if (timeout.isTimeout && timeout.summary) {
-                this.persistWorkerIssue({
-                  type: "exec_timeout",
-                  workerId,
-                  taskId,
-                  summary: `exec timeout (${timeoutMs}ms): ${timeout.summary}`,
-                  command,
-                  isPermanent: false,
-                });
-                return `exec timeout: ${timeout.summary}`;
-              }
-              return `exec error: ${message}`;
-            }
+            return `exec error: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       },
@@ -518,15 +501,10 @@ RULES:
           const content = args.content as string;
 
           try {
-            await this.config.conway.writeFile(filePath, content);
+            await localWriteFile(filePath, content);
             return `Wrote ${content.length} bytes to ${filePath}`;
-          } catch {
-            try {
-              await localWriteFile(filePath, content);
-              return `Wrote ${content.length} bytes to ${filePath} (local)`;
-            } catch (error) {
-              return `write error: ${error instanceof Error ? error.message : String(error)}`;
-            }
+          } catch (error) {
+            return `write error: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       },
@@ -542,15 +520,10 @@ RULES:
         },
         execute: async (args) => {
           try {
-            const content = await this.config.conway.readFile(args.path as string);
+            const content = await localReadFile(args.path as string);
             return content.slice(0, 10_000) || "(empty file)";
-          } catch {
-            try {
-              const content = await localReadFile(args.path as string);
-              return content.slice(0, 10_000) || "(empty file)";
-            } catch (error) {
-              return `read error: ${error instanceof Error ? error.message : String(error)}`;
-            }
+          } catch (error) {
+            return `read error: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       },
