@@ -199,6 +199,174 @@ function normalizePublishedHostname(
   return fqdn;
 }
 
+function isApprovedPublishedUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname.endsWith(".compintel.co");
+  } catch {
+    return false;
+  }
+}
+
+function isTemporaryPublicationUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.endsWith(".trycloudflare.com");
+  } catch {
+    return false;
+  }
+}
+
+function isApprovedPublishedSubdomainUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.endsWith(".compintel.co");
+  } catch {
+    return false;
+  }
+}
+
+function hasApprovedPublicRevenuePath(pathname: string): boolean {
+  return /^\/(?:health(?:\/|$)|v1(?:\/|$)|pricing(?:\/|$)|markets(?:\/|$)|x402(?:\/|$)|messages(?:\/|$)|poll(?:\/|$)|count(?:\/|$))/i.test(pathname);
+}
+
+function normalizeCompletionEvidenceUrl(url: string): string {
+  return url
+    .replace(/^[<`("'[*_~]+/, "")
+    .replace(/[>`)"'\].,;!?:*_~]+$/, "");
+}
+
+function extractCompletionEvidenceUrls(text: string): string[] {
+  const matches = text.matchAll(/(?:^|[^A-Za-z0-9+.-])(?<url>https?:\/\/[^\s<>"'`)\],]+)/gi);
+  const urls: string[] = [];
+  for (const match of matches) {
+    const url = match.groups?.url;
+    if (url) urls.push(normalizeCompletionEvidenceUrl(url));
+  }
+  return urls;
+}
+
+function hasStandalonePublicRevenuePathEvidence(text: string): boolean {
+  const standaloneMatches = text.matchAll(
+    /(?:^|[\s(<\[{`"'*_~])(?<path>\/[A-Za-z0-9/_-]+)(?=$|[\s>)\]}`"'*_~.,:;!?])/gi,
+  );
+  for (const match of standaloneMatches) {
+    const pathname = match.groups?.path;
+    if (pathname && hasApprovedPublicRevenuePath(pathname)) return true;
+  }
+  return false;
+}
+
+function derivePublishedAssetRecordFromUrl(
+  url: string,
+  port: number,
+): {
+  fqdn: string;
+  subdomain: string;
+  port: number;
+  healthcheckPath: string;
+} | null {
+  try {
+    const parsed = new URL(url);
+    if (!isApprovedPublishedUrl(url)) return null;
+
+    const fqdn = parsed.hostname.toLowerCase();
+    const subdomain = fqdn.replace(/\.compintel\.co$/i, "");
+    if (!subdomain || subdomain === fqdn) return null;
+
+    const healthcheckPath = parsed.pathname && parsed.pathname !== "/" && isValidHealthPath(parsed.pathname)
+      ? parsed.pathname
+      : "/health";
+
+    return {
+      fqdn,
+      subdomain,
+      port,
+      healthcheckPath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "localhost"
+      || parsed.hostname === "127.0.0.1"
+      || parsed.hostname === "[::1]"
+      || parsed.hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function buildManagedPublicationFailureMessage(
+  port: number,
+  originalUrl: string,
+  reason: string,
+): string {
+  if (isLoopbackUrl(originalUrl)) {
+    return `Port ${port} exposed at: ${originalUrl} (auto-publish failed: ${reason})`;
+  }
+
+  return [
+    "Blocked: managed publication to compintel.co failed.",
+    `Reason: ${reason}`,
+    `Local service is still available on port ${port}, but the returned non-compintel URL is not a valid public asset URL.`,
+    "Retry once Cloudflare publication is working or publish the service to a compintel.co hostname.",
+  ].join("\n");
+}
+
+function buildMissingManagedPublicationCredentialsMessage(port: number): string {
+  return [
+    "Blocked: Cloudflare publication credentials are missing for sovereign public publication.",
+    `Local service is still available on port ${port}, but no approved compintel.co public asset URL can be produced yet.`,
+    "Add Cloudflare publication credentials or publish the service to a compintel.co hostname.",
+  ].join("\n");
+}
+
+function hasManagedPublicationCredentials(config: {
+  cloudflareApiToken?: string;
+  cloudflareApiKey?: string;
+  cloudflareEmail?: string;
+}): boolean {
+  if (config.cloudflareApiToken) return true;
+  return Boolean(config.cloudflareApiKey && config.cloudflareEmail);
+}
+
+async function syncPublishedAssetRecord(
+  record: {
+    fqdn: string;
+    subdomain: string;
+    port: number;
+    healthcheckPath: string;
+  },
+): Promise<string | null> {
+  const { upsertPublicAssetRecord } = await import("../publication/public-asset-registry.js");
+
+  try {
+    await upsertPublicAssetRecord({
+      id: record.subdomain,
+      title: record.fqdn,
+      url: `https://${record.fqdn}`,
+      subdomain: record.subdomain,
+      status: "published",
+      healthcheckPath: record.healthcheckPath,
+      port: record.port,
+    });
+    return null;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn("publication: public asset registry sync failed", {
+      error: errorMessage,
+      fqdn: record.fqdn,
+      port: record.port,
+    });
+    return `Warning: public asset registry sync failed: ${errorMessage}`;
+  }
+}
+
 function isValidHealthPath(pathValue: string): boolean {
   return /^\/[A-Za-z0-9._~!$&'()*+,;=:@/%/-]*$/.test(pathValue);
 }
@@ -252,9 +420,24 @@ function hasPublicRevenueCompletionEvidence(
     return false;
   }
 
-  const hasHttps = /https:\/\//i.test(combined);
-  const hasBusinessRoute = /(\/health|\/v1\/|pricing|markets|x402|messages|poll|count)/i.test(combined);
-  return hasHttps && hasBusinessRoute;
+  const extractedUrls = extractCompletionEvidenceUrls(combined);
+  const approvedPublicUrls = extractedUrls.filter((url) =>
+    /^https:\/\//i.test(url) && isApprovedPublishedSubdomainUrl(url)
+  );
+  if (approvedPublicUrls.length === 0) return false;
+
+  const hasApprovedRouteUrl = approvedPublicUrls.some((url) => {
+    try {
+      const parsed = new URL(url);
+      return hasApprovedPublicRevenuePath(parsed.pathname);
+    } catch {
+      return false;
+    }
+  });
+  if (hasApprovedRouteUrl) return true;
+
+  const nonUrlEvidence = combined.replace(/https?:\/\/[^\s<>"'`)\],]+/gi, " ");
+  return hasStandalonePublicRevenuePathEvidence(nonUrlEvidence);
 }
 
 async function resolveCloudflareZoneId(
@@ -473,12 +656,20 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
       execute: async (args, ctx) => {
         const port = args.port as number;
         const info = await ctx.conway.exposePort(port);
+        const hasApprovedPublishedUrl = isApprovedPublishedUrl(info.publicUrl);
+        const hasCloudflarePublishingCredentials = hasManagedPublicationCredentials(ctx.config);
+        if (ctx.config.useSovereignProviders
+          && !hasApprovedPublishedUrl
+          && !isLoopbackUrl(info.publicUrl)
+          && !hasCloudflarePublishingCredentials) {
+          return buildMissingManagedPublicationCredentialsMessage(port);
+        }
+        const requiresManagedPublication = ctx.config.useSovereignProviders
+          && hasCloudflarePublishingCredentials
+          && (!hasApprovedPublishedUrl || isTemporaryPublicationUrl(info.publicUrl));
 
-        // If running in BYOK mode (localhost result) AND have Cloudflare credentials,
-        // auto-publish to public domain instead of returning localhost
-        if (info.publicUrl.startsWith("http://localhost") &&
-            ctx.config.useSovereignProviders &&
-            (ctx.config.cloudflareApiToken || ctx.config.cloudflareApiKey)) {
+        // If sovereign mode returned a non-approved URL, auto-publish to compintel.co.
+        if (requiresManagedPublication) {
           try {
             // Auto-generate subdomain based on port number and timestamp
             const timestamp = Date.now().toString(36).slice(-6);
@@ -512,27 +703,44 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
             const publishResult = await ctx.conway.exec(publishScript, 120_000);
 
             if (publishResult.exitCode !== 0) {
-              // Fall back to localhost if publish fails
+              const failureMessage = publishResult.stderr || `exit code ${publishResult.exitCode}`;
               logger.warn("expose_port: publish_service fallback failed, returning localhost", {
                 exitCode: publishResult.exitCode,
                 stderr: publishResult.stderr,
               });
-              return `Port ${port} exposed at: ${info.publicUrl} (public publishing failed, localhost fallback)`;
+              return buildManagedPublicationFailureMessage(port, info.publicUrl, failureMessage);
             }
 
-            return [
+            const registryWarning = await syncPublishedAssetRecord({
+              fqdn,
+              subdomain: autoSubdomain,
+              port,
+              healthcheckPath: "/health",
+            });
+            const lines = [
               `Port ${port} published: https://${fqdn}`,
               `DNS: A ${record.host} -> ${record.value} (proxied via Cloudflare)`,
               `Reverse proxy: 127.0.0.1:${port}`,
-            ].join("\n");
+            ];
+            if (registryWarning) lines.push(registryWarning);
+
+            return lines.join("\n");
           } catch (err: any) {
-            // Fall back to localhost if auto-publish fails
+            const failureMessage = err instanceof Error ? err.message : String(err);
             logger.warn("expose_port: auto-publish failed, returning localhost", {
-              error: err.message,
+              error: failureMessage,
               port,
             });
-            return `Port ${port} exposed at: ${info.publicUrl} (auto-publish failed: ${err.message})`;
+            return buildManagedPublicationFailureMessage(port, info.publicUrl, failureMessage);
           }
+        }
+
+        const publishedAssetRecord = derivePublishedAssetRecordFromUrl(info.publicUrl, port);
+        if (publishedAssetRecord) {
+          const registryWarning = await syncPublishedAssetRecord(publishedAssetRecord);
+          const lines = [`Port ${info.port} exposed at: ${info.publicUrl}`];
+          if (registryWarning) lines.push(registryWarning);
+          return lines.join("\n");
         }
 
         return `Port ${info.port} exposed at: ${info.publicUrl}`;
@@ -647,12 +855,23 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           return `publish_service failed: ${publishResult.stderr || publishResult.stdout || "unknown error"}`;
         }
 
-        return [
+        const subdomain = fqdn.replace(/\.compintel\.co$/i, "");
+        const registryWarning = await syncPublishedAssetRecord({
+          fqdn,
+          subdomain,
+          port,
+          healthcheckPath,
+        });
+
+        const lines = [
           `Service published: https://${fqdn}`,
           `DNS: [${record.id}] A ${record.host} -> ${record.value}${proxied ? " (proxied)" : " (dns-only)"}`,
           `Origin: ${originIp}:${port}`,
           `Health check: ${healthcheckPath}`,
-        ].join("\n");
+        ];
+        if (registryWarning) lines.push(registryWarning);
+
+        return lines.join("\n");
       },
     },
 
