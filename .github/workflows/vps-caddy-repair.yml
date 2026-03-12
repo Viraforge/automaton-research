@@ -1,0 +1,76 @@
+name: VPS Caddy Repair
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair-caddy:
+    name: Repair malformed Caddyfile on VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repair Caddyfile via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            CADDYFILE=/etc/caddy/Caddyfile
+            BACKUP=/etc/caddy/Caddyfile.bak.$(date +%s)
+            TMP=/tmp/caddyfile.repaired.$$
+
+            echo "=== Backing up Caddyfile ==="
+            sudo cp "$CADDYFILE" "$BACKUP"
+            echo "Backup: $BACKUP"
+
+            echo "=== Attempting structural repair ==="
+            # Remove top-level orphan reverse_proxy lines and unmatched top-level braces.
+            # These are introduced by line-based deletions that strip site headers but leave directives.
+            sudo awk '
+              BEGIN { depth = 0; orphan_count = 0; brace_count = 0 }
+              {
+                line = $0
+                open_count = gsub(/\{/, "{", line)
+                close_count = gsub(/\}/, "}", line)
+                line = $0
+
+                if (depth == 0 && line ~ /^[[:space:]]*reverse_proxy[[:space:]]+http:\/\/127\.0\.0\.1:[0-9]+[[:space:]]*$/) {
+                  orphan_count++
+                  next
+                }
+                if (depth == 0 && line ~ /^[[:space:]]*\}[[:space:]]*$/) {
+                  brace_count++
+                  next
+                }
+
+                print $0
+                depth += open_count - close_count
+                if (depth < 0) depth = 0
+              }
+              END {
+                print "Removed orphan reverse_proxy lines: " orphan_count > "/dev/stderr"
+                print "Removed orphan top-level braces: " brace_count > "/dev/stderr"
+              }
+            ' "$CADDYFILE" | sudo tee "$TMP" >/dev/null
+
+            echo "=== Validating repaired file ==="
+            if ! sudo caddy validate --config "$TMP"; then
+              echo "Repair validation failed; restoring original Caddyfile"
+              sudo cp "$BACKUP" "$CADDYFILE"
+              sudo caddy validate --config "$CADDYFILE" || true
+              exit 1
+            fi
+
+            echo "=== Applying repaired Caddyfile ==="
+            sudo cp "$TMP" "$CADDYFILE"
+            sudo caddy validate --config "$CADDYFILE"
+            sudo systemctl reload caddy
+
+            echo "=== Post-repair smoke ==="
+            curl -I https://compintel.co || true
+            curl -I https://www.compintel.co || true
+            curl -I https://api.compintel.co || true
+            curl -I https://relay.compintel.co || true
+
