@@ -39,6 +39,24 @@ Connie is not authorized to:
 - replace or repoint critical production domains without verifying the target service first
 - claim completion based only on local `localhost` availability
 
+## Public asset registry
+
+The list of published compintel.co services is stored in a **persistent** registry so it survives deployments.
+
+- **Production path:** `$CONNIE_HOME/.automaton/public-assets.json` (set via `PUBLIC_ASSET_REGISTRY_PATH` in the Connie systemd unit).
+- Deploy seeds this file from `docs/public-assets.json` only when the file does not exist; it **never overwrites** an existing registry so Connie’s record of what it has built is preserved.
+- Each successful `publish_service` call upserts a record into this file. The compintel.co UI or other consumers should read from this path (or from a synced copy).
+
+## Products registry and catalog site
+
+Compintel's homepage catalog is generated from a separate persistent products registry.
+
+- **Products registry path:** `$CONNIE_HOME/.automaton/products.json` (set via `PRODUCTS_REGISTRY_PATH`).
+- **Site root path:** `$CONNIE_HOME/.automaton/site` (set via `COMPINTEL_SITE_ROOT`).
+- `create_product` creates or updates `draft` product records and regenerates `index.html`.
+- Successful `publish_service` calls promote matching products to `published` and regenerate `index.html`.
+- Draft and published records are both visible in the generated catalog, but only published records should be treated as externally reachable services.
+
 ## Required Publication Path
 
 When a service must be made public:

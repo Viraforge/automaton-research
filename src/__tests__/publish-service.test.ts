@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinTools } from "../agent/tools.js";
 import { createCloudflareProvider } from "../providers/cloudflare.js";
 import * as publicAssetRegistry from "../publication/public-asset-registry.js";
+import * as productsRegistry from "../publication/products-registry.js";
+import * as compintelSiteGenerator from "../publication/generate-compintel-site.js";
 import {
   MockConwayClient,
   MockInferenceClient,
@@ -35,15 +37,26 @@ describe("publish_service tool", () => {
   let registryPath: string;
   let registryDirPath: string;
   let previousRegistryPath: string | undefined;
+  let previousProductsRegistryPath: string | undefined;
+  let previousSiteRoot: string | undefined;
+  let siteRoot: string;
+  let productsRegistryPath: string;
 
   beforeEach(async () => {
     db = createTestDb();
     conway = new MockConwayClient();
     registryDirPath = await mkdtemp(join(tmpdir(), "publish-service-registry-"));
     registryPath = join(registryDirPath, "public-assets.json");
+    productsRegistryPath = join(registryDirPath, "products.json");
+    siteRoot = join(registryDirPath, "site");
     await writeFile(registryPath, '{"assets":[]}\n', "utf8");
+    await writeFile(productsRegistryPath, '{"products":[]}\n', "utf8");
     previousRegistryPath = process.env.PUBLIC_ASSET_REGISTRY_PATH;
+    previousProductsRegistryPath = process.env.PRODUCTS_REGISTRY_PATH;
+    previousSiteRoot = process.env.COMPINTEL_SITE_ROOT;
     process.env.PUBLIC_ASSET_REGISTRY_PATH = registryPath;
+    process.env.PRODUCTS_REGISTRY_PATH = productsRegistryPath;
+    process.env.COMPINTEL_SITE_ROOT = siteRoot;
     ctx = {
       identity: createTestIdentity(),
       config: createTestConfig({
@@ -74,6 +87,10 @@ describe("publish_service tool", () => {
   afterEach(async () => {
     if (previousRegistryPath === undefined) delete process.env.PUBLIC_ASSET_REGISTRY_PATH;
     else process.env.PUBLIC_ASSET_REGISTRY_PATH = previousRegistryPath;
+    if (previousProductsRegistryPath === undefined) delete process.env.PRODUCTS_REGISTRY_PATH;
+    else process.env.PRODUCTS_REGISTRY_PATH = previousProductsRegistryPath;
+    if (previousSiteRoot === undefined) delete process.env.COMPINTEL_SITE_ROOT;
+    else process.env.COMPINTEL_SITE_ROOT = previousSiteRoot;
 
     await rm(registryDirPath, { recursive: true, force: true });
     db.close();
@@ -166,6 +183,35 @@ describe("publish_service tool", () => {
     });
   });
 
+  it("promotes products registry and regenerates compintel site on successful publish", async () => {
+    const promoteSpy = vi.spyOn(productsRegistry, "promoteProductToPublished");
+    const generateSpy = vi.spyOn(compintelSiteGenerator, "generateCompintelSite");
+    const publishTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "publish_service");
+    expect(publishTool).toBeDefined();
+
+    const result = await publishTool!.execute(
+      {
+        subdomain: "alpha",
+        port: 9090,
+        healthcheck_path: "/health",
+      },
+      ctx,
+    );
+
+    expect(result).toContain("Service published: https://alpha.compintel.co");
+    expect(promoteSpy).toHaveBeenCalledWith({
+      slug: "alpha",
+      publicUrl: "https://alpha.compintel.co",
+      healthcheckPath: "/health",
+      internalPort: 9090,
+      name: "alpha",
+      summary: "Published service at https://alpha.compintel.co",
+      category: "service",
+      serviceName: "alpha",
+    });
+    expect(generateSpy).toHaveBeenCalled();
+  });
+
   it("returns publication success with a warning when registry sync fails", async () => {
     vi.spyOn(publicAssetRegistry, "upsertPublicAssetRecord").mockRejectedValueOnce(new Error("disk full"));
     const publishTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "publish_service");
@@ -225,6 +271,39 @@ describe("publish_service tool", () => {
       await rm(lockPath, { force: true });
     }
   });
+
+  it("creates draft products and regenerates site via create_product tool", async () => {
+    const createProductTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "create_product");
+    expect(createProductTool).toBeDefined();
+
+    const result = await createProductTool!.execute(
+      {
+        name: "Alpha Product",
+        slug: "alpha-product",
+        summary: "Alpha summary",
+        category: "automation",
+        internal_port: 9100,
+        service_name: "alpha-service",
+      },
+      ctx,
+    );
+
+    expect(result).toContain("Draft product saved: Alpha Product");
+    const productsPath = process.env.PRODUCTS_REGISTRY_PATH;
+    expect(productsPath).toBeDefined();
+    const registryContent = await readFile(productsPath!, "utf8");
+    const registry = JSON.parse(registryContent) as {
+      products: Array<{ slug: string; status: string; name: string; internalPort?: number; serviceName?: string }>;
+    };
+    expect(registry.products).toHaveLength(1);
+    expect(registry.products[0]).toMatchObject({
+      slug: "alpha-product",
+      status: "draft",
+      name: "Alpha Product",
+      internalPort: 9100,
+      serviceName: "alpha-service",
+    });
+  });
 });
 
 describe("expose_port tool with auto-publish", () => {
@@ -234,15 +313,26 @@ describe("expose_port tool with auto-publish", () => {
   let registryPath: string;
   let registryDirPath: string;
   let previousRegistryPath: string | undefined;
+  let previousProductsRegistryPath: string | undefined;
+  let previousSiteRoot: string | undefined;
+  let siteRoot: string;
+  let productsRegistryPath: string;
 
   beforeEach(async () => {
     db = createTestDb();
     conway = new MockConwayClient();
     registryDirPath = await mkdtemp(join(tmpdir(), "expose-port-registry-"));
     registryPath = join(registryDirPath, "public-assets.json");
+    productsRegistryPath = join(registryDirPath, "products.json");
+    siteRoot = join(registryDirPath, "site");
     await writeFile(registryPath, '{"assets":[]}\n', "utf8");
+    await writeFile(productsRegistryPath, '{"products":[]}\n', "utf8");
     previousRegistryPath = process.env.PUBLIC_ASSET_REGISTRY_PATH;
+    previousProductsRegistryPath = process.env.PRODUCTS_REGISTRY_PATH;
+    previousSiteRoot = process.env.COMPINTEL_SITE_ROOT;
     process.env.PUBLIC_ASSET_REGISTRY_PATH = registryPath;
+    process.env.PRODUCTS_REGISTRY_PATH = productsRegistryPath;
+    process.env.COMPINTEL_SITE_ROOT = siteRoot;
     ctx = {
       identity: createTestIdentity(),
       config: createTestConfig({
@@ -279,6 +369,10 @@ describe("expose_port tool with auto-publish", () => {
   afterEach(async () => {
     if (previousRegistryPath === undefined) delete process.env.PUBLIC_ASSET_REGISTRY_PATH;
     else process.env.PUBLIC_ASSET_REGISTRY_PATH = previousRegistryPath;
+    if (previousProductsRegistryPath === undefined) delete process.env.PRODUCTS_REGISTRY_PATH;
+    else process.env.PRODUCTS_REGISTRY_PATH = previousProductsRegistryPath;
+    if (previousSiteRoot === undefined) delete process.env.COMPINTEL_SITE_ROOT;
+    else process.env.COMPINTEL_SITE_ROOT = previousSiteRoot;
 
     await rm(registryDirPath, { recursive: true, force: true });
     db.close();

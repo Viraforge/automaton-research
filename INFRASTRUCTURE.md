@@ -25,3 +25,7 @@ Primary deployment and operations stack for Connie.
 - Validate health endpoints before/after each deployment.
 - Avoid fallback plans that switch to unrelated hosting providers unless explicitly directed.
 - `compintel.co` subdomain publication does not require Porkbun for normal operation; DNS changes should remain inside the existing `Cloudflare` zone.
+- Runtime publication registries and catalog output are persisted under `$CONNIE_HOME/.automaton/`:
+  - `PUBLIC_ASSET_REGISTRY_PATH` -> `$CONNIE_HOME/.automaton/public-assets.json`
+  - `PRODUCTS_REGISTRY_PATH` -> `$CONNIE_HOME/.automaton/products.json`
+  - `COMPINTEL_SITE_ROOT` -> `$CONNIE_HOME/.automaton/site`
