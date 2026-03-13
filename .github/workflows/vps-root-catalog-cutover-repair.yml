@@ -59,72 +59,141 @@ jobs:
             HTML
             fi
 
-            sudo python3 - <<'PY'
-            import glob
+            echo "Removing conflicting apex/www blocks from all Caddy files..."
+            
+            # First, aggressively remove from automaton-sites directory
+            for f in /etc/caddy/automaton-sites/*.caddy 2>/dev/null; do
+              [ -f "$f" ] || continue
+              if grep -q "^compintel.co {" "$f" 2>/dev/null || grep -q "^www.compintel.co {" "$f" 2>/dev/null; then
+                echo "Found apex/www block in $f - removing..."
+                sudo python3 <<PY
             import pathlib
             import re
-
-            root_file = pathlib.Path("/etc/caddy/Caddyfile")
-            targets = [root_file, *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))]]
-            host_expr = re.compile(
-              r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*[^,{ \t]+)*)\s*\{\s*$",
-              re.IGNORECASE,
-            )
-            remove_hosts = {"compintel.co", "www.compintel.co"}
-
-            def parse_hosts(hosts_raw: str) -> list[str]:
-              return [h.strip().lower() for h in hosts_raw.split(",") if h.strip()]
-
-            total_removed = 0
-            for file_path in targets:
-              if not file_path.exists():
-                continue
-              original = file_path.read_text(encoding="utf-8", errors="replace")
-              lines = original.splitlines()
-              out = []
-              i = 0
-              removed = 0
-              while i < len(lines):
+            
+            path = pathlib.Path("$f")
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+            
+            out = []
+            i = 0
+            removed = 0
+            
+            host_expr = re.compile(r'^\s*(?:https?://)?(compintel\.co|www\.compintel\.co)\s*\{\s*$', re.IGNORECASE)
+            
+            while i < len(lines):
                 line = lines[i]
                 match = host_expr.match(line)
                 if match:
-                  hosts = parse_hosts(match.group(1))
-                  normalized_hosts = {h.replace("http://", "").replace("https://", "") for h in hosts}
-                  if normalized_hosts & remove_hosts:
                     removed += 1
                     depth = line.count("{") - line.count("}")
                     i += 1
                     while i < len(lines):
-                      removed += 1
-                      next_line = lines[i]
-                      depth += next_line.count("{") - next_line.count("}")
-                      i += 1
-                      if depth <= 0:
-                        break
+                        depth += lines[i].count("{") - lines[i].count("}")
+                        i += 1
+                        if depth <= 0:
+                            break
                     continue
                 out.append(line)
                 i += 1
-
-              if removed > 0:
-                file_path.write_text("\n".join(out) + ("\n" if original.endswith("\n") else ""), encoding="utf-8")
-                print(f"Removed {removed} root/www lines from {file_path}")
-                total_removed += removed
-
-            print(f"Total removed root/www lines: {total_removed}")
+            
+            path.write_text("\n".join(out) + "\n", encoding="utf-8")
+            print(f"  Removed {removed} blocks from $f")
             PY
+              fi
+            done
+            
+            # Then remove from all Caddyfile.* files
+            for f in /etc/caddy/Caddyfile.* 2>/dev/null; do
+              [ -f "$f" ] || continue
+              if grep -q "^compintel.co {" "$f" 2>/dev/null || grep -q "^www.compintel.co {" "$f" 2>/dev/null; then
+                echo "Found apex/www block in $f - removing..."
+                sudo python3 <<PY
+            import pathlib
+            import re
+            
+            path = pathlib.Path("$f")
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+            
+            out = []
+            i = 0
+            
+            host_expr = re.compile(r'^\s*(?:https?://)?(compintel\.co|www\.compintel\.co)\s*\{\s*$', re.IGNORECASE)
+            
+            while i < len(lines):
+                line = lines[i]
+                match = host_expr.match(line)
+                if match:
+                    depth = line.count("{") - line.count("}")
+                    i += 1
+                    while i < len(lines):
+                        depth += lines[i].count("{") - lines[i].count("}")
+                        i += 1
+                        if depth <= 0:
+                            break
+                    continue
+                out.append(line)
+                i += 1
+            
+            path.write_text("\n".join(out) + "\n", encoding="utf-8")
+            print(f"  Removed from $f")
+            PY
+              fi
+            done
+            
+            # Finally, remove from main Caddyfile
+            echo "Processing main Caddyfile..."
+            sudo python3 <<'PY'
+            import pathlib
+            import re
+            
+            root_path = pathlib.Path("/etc/caddy/Caddyfile")
+            text = root_path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+            
+            out = []
+            i = 0
+            removed = 0
+            
+            # Match compintel.co or www.compintel.co blocks (with optional http:// or https://)
+            host_expr = re.compile(r'^\s*(?:https?://)?(compintel\.co|www\.compintel\.co)\s*\{\s*$', re.IGNORECASE)
+            
+            while i < len(lines):
+                line = lines[i]
+                match = host_expr.match(line)
+                if match:
+                    removed += 1
+                    depth = line.count("{") - line.count("}")
+                    i += 1
+                    while i < len(lines):
+                        depth += lines[i].count("{") - lines[i].count("}")
+                        i += 1
+                        if depth <= 0:
+                            break
+                    continue
+                out.append(line)
+                i += 1
+            
+            root_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+            print(f"Removed {removed} apex/www blocks from main Caddyfile")
+            PY
+            
+            echo "Apex/www block removal complete"
 
-            cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
-            compintel.co {
-                root * $SITE_ROOT
-                file_server
-            }
-            CADDY_ROOT
+            # Write Caddyfile.root without indentation
+            sudo tee /etc/caddy/Caddyfile.root >/dev/null <<CADDY_ROOT
+compintel.co {
+    root * $SITE_ROOT
+    file_server
+}
+CADDY_ROOT
 
-            cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
-            www.compintel.co {
-                redir https://compintel.co{uri} permanent
-            }
-            CADDY_WWW
+            # Write Caddyfile.www without indentation
+            sudo tee /etc/caddy/Caddyfile.www >/dev/null <<'CADDY_WWW'
+www.compintel.co {
+    redir https://compintel.co{uri} permanent
+}
+CADDY_WWW
 
             sudo sed -i '/import \/etc\/caddy\/Caddyfile\.root/d' /etc/caddy/Caddyfile
             sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' /etc/caddy/Caddyfile
