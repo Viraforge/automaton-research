@@ -1,0 +1,99 @@
+name: VPS Signal API Route Repair
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair-route:
+    name: Detect healthy signal upstream and repoint Caddy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repair signal-api route via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            if ! command -v caddy >/dev/null 2>&1; then
+              echo "Caddy is required for this workflow"
+              exit 1
+            fi
+
+            TMP_PORTS=/tmp/signal-api-port-candidates.txt
+            : > "$TMP_PORTS"
+
+            # Candidate ports from existing Caddy configs.
+            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.*; do
+              [ -f "$f" ] || continue
+              awk '
+                /signal-api\.compintel\.co[[:space:]]*\{/ { in_block=1; next }
+                in_block && /reverse_proxy[[:space:]]+http:\/\/127\.0\.0\.1:[0-9]+/ {
+                  match($0, /127\.0\.0\.1:([0-9]+)/, m)
+                  if (m[1] != "") print m[1]
+                  in_block=0
+                }
+                in_block && /^\}/ { in_block=0 }
+              ' "$f" >> "$TMP_PORTS" || true
+            done
+
+            # Common fallback candidates observed historically.
+            printf "%s\n" 9004 9000 8094 8081 9010 >> "$TMP_PORTS"
+
+            # Deduplicate and keep numeric ports only.
+            mapfile -t CANDIDATE_PORTS < <(sort -u "$TMP_PORTS" | awk '/^[0-9]+$/')
+
+            echo "Candidate ports: ${CANDIDATE_PORTS[*]:-none}"
+
+            HEALTHY_PORT=""
+            for port in "${CANDIDATE_PORTS[@]}"; do
+              if curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+                HEALTHY_PORT="$port"
+                break
+              fi
+            done
+
+            if [ -z "$HEALTHY_PORT" ]; then
+              echo "No healthy signal-api upstream found on candidate ports."
+              echo "--- Listening ports (node) ---"
+              sudo ss -tulpn | awk '/LISTEN/ && /node/ {print}' || true
+              echo "--- local-connie recent logs ---"
+              sudo journalctl -u local-connie --no-pager -n 120 || true
+              echo "--- systemd units containing signal ---"
+              sudo systemctl list-units --type=service --all --no-pager | grep -i signal || true
+              exit 1
+            fi
+
+            echo "Using healthy upstream port: $HEALTHY_PORT"
+
+            cat <<CADDY_SIGNAL | sudo tee /etc/caddy/Caddyfile.signal-api >/dev/null
+            signal-api.compintel.co {
+                tls {
+                    issuer acme {
+                        dir https://acme-v02.api.letsencrypt.org/directory
+                        email ops@compintel.co
+                    }
+                }
+                reverse_proxy http://127.0.0.1:${HEALTHY_PORT}
+            }
+            CADDY_SIGNAL
+
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.signal-api/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON SIGNAL API IMPORT/,/END AUTOMATON SIGNAL API IMPORT/d' /etc/caddy/Caddyfile
+            {
+              echo ""
+              echo "# BEGIN AUTOMATON SIGNAL API IMPORT"
+              echo "import /etc/caddy/Caddyfile.signal-api"
+              echo "# END AUTOMATON SIGNAL API IMPORT"
+            } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            sleep 2
+
+            curl -fsS "http://127.0.0.1:${HEALTHY_PORT}/health" >/dev/null && echo "✅ Local /health OK on :${HEALTHY_PORT}"
+            curl -fsS https://signal-api.compintel.co/health && echo "✅ Public signal-api health OK" || echo "⚠️ Public signal-api still failing"
+
