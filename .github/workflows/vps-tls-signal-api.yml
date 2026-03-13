@@ -1,0 +1,63 @@
+name: VPS TLS Signal API Setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tls-setup:
+    name: Configure signal-api TLS (Caddy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure signal-api TLS via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            SIGNAL_UPSTREAM_PORT=9004
+
+            if command -v ufw &>/dev/null && sudo ufw status | grep -q "Status: active"; then
+              sudo ufw allow 80/tcp
+              sudo ufw allow 443/tcp
+            fi
+
+            if ! command -v caddy &>/dev/null; then
+              echo "Caddy is required for this workflow"
+              exit 1
+            fi
+
+            cat <<CADDY_SIGNAL | sudo tee /etc/caddy/Caddyfile.signal-api >/dev/null
+            signal-api.compintel.co {
+                tls {
+                    issuer acme {
+                        dir https://acme-v02.api.letsencrypt.org/directory
+                        email ops@compintel.co
+                    }
+                }
+                reverse_proxy http://127.0.0.1:${SIGNAL_UPSTREAM_PORT}
+            }
+            CADDY_SIGNAL
+
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.signal-api/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON SIGNAL API IMPORT/,/END AUTOMATON SIGNAL API IMPORT/d' /etc/caddy/Caddyfile
+            {
+              echo ""
+              echo "# BEGIN AUTOMATON SIGNAL API IMPORT"
+              echo "import /etc/caddy/Caddyfile.signal-api"
+              echo "# END AUTOMATON SIGNAL API IMPORT"
+            } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            sleep 3
+
+            echo "=== Local upstream health ==="
+            curl -fsS "http://127.0.0.1:${SIGNAL_UPSTREAM_PORT}/health" || echo "WARNING: local signal-api upstream is not healthy on :${SIGNAL_UPSTREAM_PORT}"
+
+            echo "=== Public signal-api health ==="
+            curl -fsS https://signal-api.compintel.co/health && echo "✅ Public signal-api health OK" || echo "⚠️ Public signal-api health check failed"
+
