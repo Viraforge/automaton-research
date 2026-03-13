@@ -32,24 +32,20 @@ jobs:
               fi
             done
 
-            line=$(grep -n '^connie.compintel.co {' /etc/caddy/Caddyfile | head -1 | cut -d: -f1)
-            if [ -z "$line" ]; then
-              echo "Could not find connie.compintel.co block"
-              exit 1
-            fi
-
-            sudo head -n "$((line - 1))" /etc/caddy/Caddyfile > /tmp/fix-apex-caddy.txt
             printf '%s\n' \
-              '' \
-              '# BEGIN AUTOMATON APEX' \
               'compintel.co {' \
               "    root * $SITE_ROOT" \
               '    file_server' \
-              '}' \
-              '# END AUTOMATON APEX' \
-              '' | sudo tee -a /tmp/fix-apex-caddy.txt >/dev/null
-            sudo tail -n "+$line" /etc/caddy/Caddyfile >> /tmp/fix-apex-caddy.txt
-            sudo mv /tmp/fix-apex-caddy.txt /etc/caddy/Caddyfile
+              '}' | sudo tee /etc/caddy/Caddyfile.root >/dev/null
+
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.root/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON ROOT IMPORT/,/END AUTOMATON ROOT IMPORT/d' /etc/caddy/Caddyfile
+
+            printf '%s\n' \
+              '' \
+              '# BEGIN AUTOMATON ROOT IMPORT' \
+              'import /etc/caddy/Caddyfile.root' \
+              '# END AUTOMATON ROOT IMPORT' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
 
             sudo caddy validate --config /etc/caddy/Caddyfile
             sudo systemctl reload caddy
