@@ -103,16 +103,17 @@ jobs:
             # Build new Caddyfile with catalog block before connie
             sudo head -n $((CONNIE_LINE - 1)) /etc/caddy/Caddyfile > /tmp/caddy_new.txt
             
-            cat >> /tmp/caddy_new.txt <<EOF
+            cat >> /tmp/caddy_new.txt <<'BLOCK'
 
 # BEGIN AUTOMATON APEX
 compintel.co {
-    root * $SITE_ROOT
+    root * SITE_ROOT_PLACEHOLDER
     file_server
 }
 # END AUTOMATON APEX
 
-EOF
+BLOCK
+            sed -i "s|SITE_ROOT_PLACEHOLDER|$SITE_ROOT|g" /tmp/caddy_new.txt
             
             sudo tail -n +$CONNIE_LINE /etc/caddy/Caddyfile >> /tmp/caddy_new.txt
             sudo mv /tmp/caddy_new.txt /etc/caddy/Caddyfile
@@ -120,12 +121,13 @@ EOF
             echo "Inserted apex block at line $CONNIE_LINE"
 
             # Also write import files for consistency
-            sudo tee /etc/caddy/Caddyfile.root >/dev/null <<EOF
+            sudo tee /etc/caddy/Caddyfile.root >/dev/null <<'ROOTBLOCK'
 compintel.co {
-    root * $SITE_ROOT
+    root * SITE_ROOT_PLACEHOLDER
     file_server
 }
-EOF
+ROOTBLOCK
+            sed -i "s|SITE_ROOT_PLACEHOLDER|$SITE_ROOT|g" /etc/caddy/Caddyfile.root
 
             sudo tee /etc/caddy/Caddyfile.www >/dev/null <<'EOF'
 www.compintel.co {
