@@ -25,7 +25,7 @@ jobs:
             import pathlib
             import re
 
-            host_pattern = re.compile(r"^\s*www\.compintel\.co\s*\{\s*$", re.IGNORECASE)
+            host_pattern = re.compile(r"^\s*(?:https?://)?www\.compintel\.co\s*\{\s*$", re.IGNORECASE)
 
             def strip_host_blocks(path: str) -> int:
               file_path = pathlib.Path(path)
