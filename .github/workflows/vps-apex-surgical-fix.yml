@@ -148,16 +148,17 @@ jobs:
             # Insert catalog block before connie
             sudo head -n $((CONNIE_LINE - 1)) /etc/caddy/Caddyfile > /tmp/caddy_new.txt
             
-            cat >> /tmp/caddy_new.txt <<APEX_BLOCK
+            cat >> /tmp/caddy_new.txt <<'APEX_BLOCK'
 
 # BEGIN AUTOMATON APEX CATALOG
 compintel.co {
-    root * $SITE_ROOT
+    root * SITE_ROOT_PLACEHOLDER
     file_server
 }
 # END AUTOMATON APEX CATALOG
 
 APEX_BLOCK
+            sed -i "s|SITE_ROOT_PLACEHOLDER|$SITE_ROOT|g" /tmp/caddy_new.txt
             
             sudo tail -n +$CONNIE_LINE /etc/caddy/Caddyfile >> /tmp/caddy_new.txt
             sudo mv /tmp/caddy_new.txt /etc/caddy/Caddyfile

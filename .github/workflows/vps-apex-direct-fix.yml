@@ -62,16 +62,17 @@ print('Removed')
             
             sudo head -n $((CONNIE_LINE - 1)) /etc/caddy/Caddyfile > /tmp/new_caddy.txt
             
-            cat >> /tmp/new_caddy.txt <<EOF
+            cat >> /tmp/new_caddy.txt <<'FIXBLOCK'
 
 # BEGIN AUTOMATON APEX
 compintel.co {
-    root * $CONNIE_HOME/.automaton/site
+    root * SITE_ROOT_PLACEHOLDER
     file_server
 }
 # END AUTOMATON APEX
 
-EOF
+FIXBLOCK
+            sed -i "s|SITE_ROOT_PLACEHOLDER|$CONNIE_HOME/.automaton/site|g" /tmp/new_caddy.txt
             
             sudo tail -n +$CONNIE_LINE /etc/caddy/Caddyfile >> /tmp/new_caddy.txt
             sudo mv /tmp/new_caddy.txt /etc/caddy/Caddyfile

@@ -26,12 +26,13 @@ jobs:
             sudo mkdir -p "$SITE_ROOT"
 
             # Ensure Caddyfile.root exists with correct content
-            cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
+            cat <<'CADDY_ROOT' | sudo tee /etc/caddy/Caddyfile.root >/dev/null
 compintel.co {
-    root * $SITE_ROOT
+    root * SITE_ROOT_PLACEHOLDER
     file_server
 }
 CADDY_ROOT
+            sed -i "s|SITE_ROOT_PLACEHOLDER|$SITE_ROOT|g" /etc/caddy/Caddyfile.root
 
             # Ensure Caddyfile.www exists with correct content
             cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
