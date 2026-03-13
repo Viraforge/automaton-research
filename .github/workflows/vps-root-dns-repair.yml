@@ -72,6 +72,12 @@ jobs:
               return parsed
 
             def upsert_a_record(name: str, proxied: bool) -> None:
+              cname_lookup = request_json("GET", f"/dns_records?type=CNAME&name={name}")
+              cname_records = cname_lookup.get("result") or []
+              for cname_record in cname_records:
+                request_json("DELETE", f"/dns_records/{cname_record['id']}")
+                print(f"Deleted conflicting CNAME for {name}: {cname_record.get('content')}")
+
               lookup = request_json("GET", f"/dns_records?type=A&name={name}")
               payload = {
                 "type": "A",
