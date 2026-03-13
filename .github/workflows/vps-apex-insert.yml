@@ -27,147 +27,179 @@ jobs:
 
             # Ensure Caddyfile.root exists with correct content
             cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
-            compintel.co {
-                root * $SITE_ROOT
-                file_server
-            }
-            CADDY_ROOT
+compintel.co {
+    root * $SITE_ROOT
+    file_server
+}
+CADDY_ROOT
 
             # Ensure Caddyfile.www exists with correct content
             cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
-            www.compintel.co {
-                redir https://compintel.co{uri} permanent
-            }
-            CADDY_WWW
+www.compintel.co {
+    redir https://compintel.co{uri} permanent
+}
+CADDY_WWW
 
             # Backup current Caddyfile
             sudo cp "$ROOT_FILE" "$BACKUP_FILE"
             echo "Backed up Caddyfile -> $BACKUP_FILE"
 
-            # Find the line number of connie.compintel.co block start
+            # STEP 1: Remove ALL existing compintel.co blocks from main Caddyfile and imported files
+            # This prevents "ambiguous site definition" errors
+            echo "STEP 1: Removing any existing compintel.co blocks..."
+            
+            # Remove from main Caddyfile
+            if grep -q "^compintel.co {" "$ROOT_FILE" 2>/dev/null; then
+              echo "Found compintel.co block in main Caddyfile - removing..."
+              sudo python3 <<'PY'
+import pathlib
+
+root_path = pathlib.Path("/etc/caddy/Caddyfile")
+text = root_path.read_text(encoding="utf-8", errors="replace")
+lines = text.splitlines()
+
+out = []
+i = 0
+removed = 0
+while i < len(lines):
+    if lines[i].strip() == "compintel.co {":
+        removed += 1
+        depth = 1
+        i += 1
+        while i < len(lines) and depth > 0:
+            depth += lines[i].count("{") - lines[i].count("}")
+            i += 1
+        continue
+    out.append(lines[i])
+    i += 1
+
+root_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+print(f"Removed {removed} compintel.co block(s) from main Caddyfile")
+PY
+            fi
+
+            # Remove from imported files
+            for f in /etc/caddy/automaton-sites/*.caddy /etc/caddy/Caddyfile.*; do
+              [ -f "$f" ] || continue
+              if grep -q "^compintel.co {" "$f" 2>/dev/null; then
+                echo "Found compintel.co block in $f - removing..."
+                sudo python3 <<PY
+import pathlib
+
+path = pathlib.Path("$f")
+text = path.read_text(encoding="utf-8", errors="replace")
+lines = text.splitlines()
+
+out = []
+i = 0
+removed = 0
+while i < len(lines):
+    if lines[i].strip() == "compintel.co {":
+        removed += 1
+        depth = 1
+        i += 1
+        while i < len(lines) and depth > 0:
+            depth += lines[i].count("{") - lines[i].count("}")
+            i += 1
+        continue
+    out.append(lines[i])
+    i += 1
+
+path.write_text("\n".join(out) + "\n", encoding="utf-8")
+print(f"Removed {removed} compintel.co block(s) from $f")
+PY
+              fi
+            done
+
+            # Remove any existing Caddyfile.root import lines and markers from main file
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.root/d' "$ROOT_FILE"
+            sudo sed -i '/# BEGIN AUTOMATON ROOT IMPORT/,/# END AUTOMATON ROOT IMPORT/d' "$ROOT_FILE"
+
+            echo "STEP 1 complete - all existing compintel.co blocks removed"
+            echo ""
+
+            # STEP 2: Add new apex block before connie.compintel.co block
+            echo "STEP 2: Inserting new apex catalog block..."
+            
             CONNIE_LINE=$(grep -n "^connie.compintel.co {" "$ROOT_FILE" | head -1 | cut -d: -f1)
             echo "Found connie.compintel.co at line $CONNIE_LINE"
 
             # Create temp file with apex block inserted before connie block
             sudo head -n $((CONNIE_LINE - 1)) "$ROOT_FILE" > /tmp/caddy_part1.txt
 
-            # Add apex block
-            cat >> /tmp/caddy_part1.txt <<APEX_BLOCK
+            # Add apex block (using proper indentation without extra spaces)
+            cat >> /tmp/caddy_part1.txt <<'APEX_BLOCK'
 
-            # BEGIN AUTOMATON APEX CATALOG
-            compintel.co {
-                root * $SITE_ROOT
-                file_server
-            }
-            # END AUTOMATON APEX CATALOG
+# BEGIN AUTOMATON APEX CATALOG
+compintel.co {
+    root * SITE_ROOT_PLACEHOLDER
+    file_server
+}
+# END AUTOMATON APEX CATALOG
 
-            APEX_BLOCK
+APEX_BLOCK
+
+            # Replace placeholder with actual site root
+            sed -i "s|SITE_ROOT_PLACEHOLDER|$SITE_ROOT|g" /tmp/caddy_part1.txt
 
             # Add the rest of the original file
             sudo tail -n +$CONNIE_LINE "$ROOT_FILE" >> /tmp/caddy_part1.txt
 
             # Move into place
             sudo mv /tmp/caddy_part1.txt "$ROOT_FILE"
+            echo "STEP 2 complete - apex catalog block inserted at line $((CONNIE_LINE))"
+            echo ""
 
-            # Remove any duplicate apex blocks or imports that might conflict
-            # Keep only the first compintel.co block we just added
-            sudo python3 <<'PY'
-            import pathlib
-            import re
-
-            root_path = pathlib.Path("/etc/caddy/Caddyfile")
-            text = root_path.read_text(encoding="utf-8", errors="replace")
-            lines = text.splitlines()
-
-            # Find all compintel.co block positions (but skip the first one we just added)
-            host_pattern = re.compile(r"^\s*compintel\.co\s*\{\s*$")
-            blocks_to_remove = []
-            found_first = False
-
-            i = 0
-            while i < len(lines):
-                if host_pattern.match(lines[i]):
-                    if not found_first:
-                        # Skip the first one (our new block)
-                        found_first = True
-                        # Find the end of this block
-                        depth = 1
-                        i += 1
-                        while i < len(lines) and depth > 0:
-                            depth += lines[i].count("{") - lines[i].count("}")
-                            i += 1
-                        continue
-                    else:
-                        # Mark this block for removal
-                        start = i
-                        depth = 1
-                        i += 1
-                        while i < len(lines) and depth > 0:
-                            depth += lines[i].count("{") - lines[i].count("}")
-                            i += 1
-                        end = i
-                        blocks_to_remove.append((start, end))
-                        continue
-                i += 1
-
-            # Remove blocks from end to start to preserve line numbers
-            for start, end in reversed(blocks_to_remove):
-                del lines[start:end]
-                print(f"Removed duplicate compintel.co block at lines {start+1}-{end}")
-
-            # Also remove duplicate Caddyfile.root imports
-            import_pattern = re.compile(r"^\s*import\s+/etc/caddy/Caddyfile\.root\s*$")
-            found_import = False
-            lines_to_keep = []
-            for line in lines:
-                if import_pattern.match(line):
-                    if not found_import:
-                        found_import = True
-                        lines_to_keep.append(line)
-                    else:
-                        print(f"Removing duplicate import: {line.strip()}")
-                else:
-                    lines_to_keep.append(line)
-
-            root_path.write_text("\n".join(lines_to_keep) + "\n", encoding="utf-8")
-            print(f"Processed Caddyfile, removed {len(blocks_to_remove)} duplicate apex blocks")
-            PY
-
-            # Validate
+            # STEP 3: Validate the configuration
+            echo "STEP 3: Validating Caddy configuration..."
             sudo caddy adapt --config "$ROOT_FILE" >/tmp/caddy-adapted.json 2>&1 || {
               echo "ERROR: caddy adapt failed"
               cat /tmp/caddy-adapted.json
+              echo "Rolling back..."
+              sudo cp "$BACKUP_FILE" "$ROOT_FILE"
+              sudo caddy validate --config "$ROOT_FILE" && sudo systemctl reload caddy || true
               exit 1
             }
             sudo caddy validate --config "$ROOT_FILE" || {
               echo "ERROR: caddy validate failed"
+              echo "Rolling back..."
+              sudo cp "$BACKUP_FILE" "$ROOT_FILE"
+              sudo systemctl reload caddy || true
               exit 1
             }
+            echo "STEP 3 complete - configuration is valid"
+            echo ""
 
-            # Reload
+            # STEP 4: Reload Caddy
+            echo "STEP 4: Reloading Caddy..."
             sudo systemctl reload caddy
             sleep 2
+            echo "STEP 4 complete - Caddy reloaded"
+            echo ""
 
-            echo "=== Post-insertion checks ==="
+            # STEP 5: Verify the fix
+            echo "STEP 5: Running verification checks..."
+            echo ""
+            
             echo "--- compintel.co (expecting HTML) ---"
             curl -sSI https://compintel.co | head -6
             curl -sS https://compintel.co | head -5
-
             echo ""
+
             echo "--- www.compintel.co (expecting 301) ---"
             curl -sSI https://www.compintel.co | head -4
-
             echo ""
+
             echo "--- api.compintel.co/health (expecting 200) ---"
-            curl -sS -o /dev/null -w "%{http_code}" https://api.compintel.co/health
+            curl -sS -o /dev/null -w "%{http_code}\n" https://api.compintel.co/health
             echo ""
 
             echo "--- relay.compintel.co/health (expecting 200) ---"
-            curl -sS -o /dev/null -w "%{http_code}" https://relay.compintel.co/health
+            curl -sS -o /dev/null -w "%{http_code}\n" https://relay.compintel.co/health
             echo ""
 
             echo "--- signal-api.compintel.co/health (expecting 200) ---"
-            curl -sS -o /dev/null -w "%{http_code}" https://signal-api.compintel.co/health
+            curl -sS -o /dev/null -w "%{http_code}\n" https://signal-api.compintel.co/health
             echo ""
 
             # Verify apex returns HTML not JSON
@@ -194,5 +226,5 @@ jobs:
             fi
 
             echo ""
-            echo "✅ Apex catalog route insertion complete"
+            echo "✅ Apex catalog route insertion complete!"
             echo "Backup file: $BACKUP_FILE"
