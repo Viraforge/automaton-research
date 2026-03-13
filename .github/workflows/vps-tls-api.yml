@@ -53,8 +53,7 @@ jobs:
             }
             CADDY_CONF
 
-              sudo sed -i '/api\.compintel\.co/d' /etc/caddy/Caddyfile
-              sudo sed -i '/Caddyfile\.api/d' /etc/caddy/Caddyfile
+              sudo sed -i '/import \/etc\/caddy\/Caddyfile\.api/d' /etc/caddy/Caddyfile
               sudo sed -i '/BEGIN AUTOMATON API IMPORT/,/END AUTOMATON API IMPORT/d' /etc/caddy/Caddyfile
               {
                 echo ""

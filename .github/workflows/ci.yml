@@ -113,6 +113,14 @@ jobs:
             if [ ! -f "$SITE_ROOT/index.html" ]; then
               printf '<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Compintel Catalog</title></head>\n<body><main><h1>Compintel Product Catalog</h1><p>No products yet.</p></main></body>\n</html>\n' > "$SITE_ROOT/index.html"
             fi
+            PRODUCTS_PERSISTENT="$PRODUCTS_PERSISTENT" SITE_ROOT="$SITE_ROOT" node --input-type=module -e "
+            import { generateCompintelSite } from './dist/publication/generate-compintel-site.js';
+            const result = await generateCompintelSite({
+              registryPath: process.env.PRODUCTS_PERSISTENT,
+              siteRoot: process.env.SITE_ROOT,
+            });
+            console.log('Regenerated Compintel catalog:', JSON.stringify(result));
+            " || echo "Warning: catalog regeneration failed during deploy"
 
             mkdir -p /etc/systemd/system/local-connie.service.d
             printf "[Service]\nEnvironment=PUBLIC_ASSET_REGISTRY_PATH=%s\n" "$REGISTRY_PERSISTENT" > /etc/systemd/system/local-connie.service.d/registry.conf

@@ -24,68 +24,85 @@ jobs:
             import glob
             import os
             import re
+            import subprocess
 
-            stale_hosts = [
+            stale_hosts = {
               "simple-paid-api.compintel.co",
               "webhook-paid.compintel.co",
               "lead-api.compintel.co",
               "paid-data-api.compintel.co",
-            ]
-
+            }
             root_file = "/etc/caddy/Caddyfile"
-            candidate_files = [root_file] + sorted(glob.glob("/etc/caddy/Caddyfile.*"))
-            candidate_files = [p for p in candidate_files if os.path.isfile(p)]
 
-            host_patterns = [re.compile(rf"^\s*{re.escape(host)}\s*\{{\s*$") for host in stale_hosts]
-            import_patterns = [re.compile(rf"^\s*import\s+/etc/caddy/Caddyfile\.{re.escape(host.split('.')[0])}\s*$") for host in stale_hosts]
+            host_line = re.compile(r"^\s*([a-z0-9.-]+\.compintel\.co)\s*\{\s*$", re.I)
+            upstream_line = re.compile(r"reverse_proxy\s+http://127\.0\.0\.1:(\d+)")
 
-            def prune_content(text: str) -> tuple[str, int]:
-              lines = text.splitlines()
-              out = []
-              removed = 0
-              i = 0
-              while i < len(lines):
-                line = lines[i]
-                stripped = line.strip()
+            def local_health_ok(port: str) -> bool:
+              try:
+                result = subprocess.run(
+                  ["curl", "-fsS", "--max-time", "2", f"http://127.0.0.1:{port}/health"],
+                  check=False,
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+                )
+                return result.returncode == 0
+              except Exception:
+                return False
 
-                if any(p.match(stripped) for p in import_patterns):
-                  removed += 1
-                  i += 1
-                  continue
-
-                if any(p.match(stripped) for p in host_patterns):
-                  removed += 1
-                  depth = line.count("{") - line.count("}")
-                  i += 1
-                  while i < len(lines):
-                    removed += 1
-                    next_line = lines[i]
-                    depth += next_line.count("{") - next_line.count("}")
-                    i += 1
-                    if depth <= 0:
-                      break
-                  continue
-
-                out.append(line)
-                i += 1
-
-              return ("\n".join(out) + ("\n" if text.endswith("\n") else "")), removed
-
-            total_removed = 0
-            touched = []
-            for path in candidate_files:
+            removable_import_files = set()
+            for path in sorted(glob.glob("/etc/caddy/Caddyfile.published-*")):
+              if not os.path.isfile(path):
+                continue
+              host = ""
+              port = ""
               with open(path, "r", encoding="utf-8", errors="replace") as f:
-                original = f.read()
-              updated, removed = prune_content(original)
-              if removed > 0:
-                with open(path, "w", encoding="utf-8") as f:
-                  f.write(updated)
-                touched.append((path, removed))
-                total_removed += removed
+                for line in f:
+                  host_match = host_line.match(line.strip())
+                  if host_match and not host:
+                    host = host_match.group(1).lower()
+                  port_match = upstream_line.search(line)
+                  if port_match and not port:
+                    port = port_match.group(1)
 
-            print(f"Pruned total lines: {total_removed}")
-            for path, removed in touched:
-              print(f"Updated {path} (removed {removed} lines)")
+              if not host or not port:
+                removable_import_files.add(path)
+                continue
+
+              if host in stale_hosts:
+                removable_import_files.add(path)
+                continue
+
+              if not local_health_ok(port):
+                removable_import_files.add(path)
+
+            root_changed = False
+            root_lines = []
+            removed_import_lines = 0
+            if os.path.isfile(root_file):
+              with open(root_file, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                  stripped = line.strip()
+                  import_match = re.match(r"^import\s+(/etc/caddy/Caddyfile\.published-[A-Za-z0-9.-]+)\s*$", stripped)
+                  if import_match and import_match.group(1) in removable_import_files:
+                    removed_import_lines += 1
+                    root_changed = True
+                    continue
+                  root_lines.append(line)
+
+            if root_changed:
+              with open(root_file, "w", encoding="utf-8") as f:
+                f.writelines(root_lines)
+
+            removed_files = 0
+            for path in sorted(removable_import_files):
+              if os.path.isfile(path):
+                os.remove(path)
+                removed_files += 1
+
+            print(f"Removed stale import lines: {removed_import_lines}")
+            print(f"Removed stale published files: {removed_files}")
+            for path in sorted(removable_import_files):
+              print(f"Pruned: {path}")
             PY
 
             sudo caddy validate --config /etc/caddy/Caddyfile

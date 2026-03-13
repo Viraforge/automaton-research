@@ -59,9 +59,8 @@ jobs:
             CADDY_CONF
 
               echo "2) Updating Caddyfile (managed import, no duplicates)..."
-              # Remove direct relay site lines and old relay imports, then add one managed import.
-              sudo sed -i '/relay\.compintel\.co/d' /etc/caddy/Caddyfile
-              sudo sed -i '/Caddyfile\.relay/d' /etc/caddy/Caddyfile
+              # Remove old relay import lines and marker, then add one managed import.
+              sudo sed -i '/import \/etc\/caddy\/Caddyfile\.relay/d' /etc/caddy/Caddyfile
               sudo sed -i '/BEGIN AUTOMATON RELAY IMPORT/,/END AUTOMATON RELAY IMPORT/d' /etc/caddy/Caddyfile
               {
                 echo ""

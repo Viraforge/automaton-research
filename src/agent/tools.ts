@@ -459,25 +459,30 @@ function isValidHealthPath(pathValue: string): boolean {
   return /^\/[A-Za-z0-9._~!$&'()*+,;=:@/%/-]*$/.test(pathValue);
 }
 
+function buildPublishedCaddyFilename(fqdn: string): string {
+  const normalized = fqdn.toLowerCase().replace(/[^a-z0-9.-]/g, "-");
+  return `Caddyfile.published-${normalized}`;
+}
+
 function buildPublishedServiceScript(
   fqdn: string,
   port: number,
   healthcheckPath: string,
 ): string {
+  const caddyFilename = buildPublishedCaddyFilename(fqdn);
+  const caddyImportPath = `/etc/caddy/${caddyFilename}`;
+
   return [
     "set -e",
     "SUDO=\"\"",
     "if command -v sudo >/dev/null 2>&1; then SUDO=\"sudo\"; fi",
-    // Directly append site blocks to Caddyfile instead of using import (which doesn't support site blocks in Caddy)
-    `if ! grep -q '${escapeShellArg(`http://${fqdn}`)}' /etc/caddy/Caddyfile 2>/dev/null; then`,
-    `  cat <<'CADDY_SITE' | $SUDO tee -a /etc/caddy/Caddyfile >/dev/null`,
-    `http://${fqdn} {`,
-    `    reverse_proxy http://127.0.0.1:${port}`,
-    "}",
-    `https://${fqdn} {`,
+    `cat <<'CADDY_SITE' | $SUDO tee ${escapeShellArg(caddyImportPath)} >/dev/null`,
+    `${fqdn} {`,
     `    reverse_proxy http://127.0.0.1:${port}`,
     "}",
     "CADDY_SITE",
+    `if ! grep -q ${escapeShellArg(`import ${caddyImportPath}`)} /etc/caddy/Caddyfile 2>/dev/null; then`,
+    `  printf '\\n# BEGIN AUTOMATON PUBLISH IMPORT ${fqdn}\\nimport ${caddyImportPath}\\n# END AUTOMATON PUBLISH IMPORT ${fqdn}\\n' | $SUDO tee -a /etc/caddy/Caddyfile >/dev/null`,
     "fi",
     "$SUDO caddy validate --config /etc/caddy/Caddyfile",
     "$SUDO systemctl reload caddy",
@@ -996,6 +1001,14 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
         const healthcheckPath = String(args.healthcheck_path || "/health");
         if (!isValidHealthPath(healthcheckPath)) {
           return `Blocked: invalid healthcheck_path "${healthcheckPath}".`;
+        }
+
+        const localHealthcheckResult = await ctx.conway.exec(
+          `sh -lc "curl -fsS ${escapeShellArg(`http://127.0.0.1:${port}${healthcheckPath}`)} >/dev/null"`,
+          15_000,
+        );
+        if (localHealthcheckResult.exitCode !== 0) {
+          return `Blocked: local service health check failed on port ${port}${healthcheckPath}. Start/fix the service before publish_service.`;
         }
 
         const { createCloudflareProvider } = await import("../providers/cloudflare.js");
