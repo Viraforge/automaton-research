@@ -1,0 +1,154 @@
+name: VPS Root Catalog Cutover Repair
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair-cutover:
+    name: Repair root catalog cutover on Connie VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Force root cutover via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 12m
+          script: |
+            set -euo pipefail
+
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            PRODUCTS_PATH="$CONNIE_HOME/.automaton/products.json"
+
+            if [ -z "$CONNIE_HOME" ] || [ -z "$REPO" ]; then
+              echo "Could not resolve CONNIE_HOME or repo path from local-connie.service"
+              exit 1
+            fi
+
+            sudo mkdir -p "$SITE_ROOT"
+            sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%s)
+
+            if [ -f "$REPO/dist/publication/generate-compintel-site.js" ] && [ -f "$PRODUCTS_PATH" ]; then
+              cd "$REPO"
+              PRODUCTS_PATH="$PRODUCTS_PATH" SITE_ROOT="$SITE_ROOT" node --input-type=module -e "
+              import { generateCompintelSite } from './dist/publication/generate-compintel-site.js';
+              const result = await generateCompintelSite({
+                registryPath: process.env.PRODUCTS_PATH,
+                siteRoot: process.env.SITE_ROOT,
+              });
+              console.log('Generated catalog:', JSON.stringify(result));
+              "
+            else
+              echo "Generator or products registry missing; writing fallback catalog page"
+              cat <<'HTML' | sudo tee "$SITE_ROOT/index.html" >/dev/null
+            <!doctype html>
+            <html lang="en">
+            <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Compintel Catalog</title></head>
+            <body>
+              <main>
+                <h1>Compintel Product Catalog</h1>
+                <p>Auto-generated from Connie's product registry.</p>
+                <section><h2>Published</h2><p>No products yet.</p></section>
+                <section><h2>Draft</h2><p>No products yet.</p></section>
+              </main>
+            </body>
+            </html>
+            HTML
+            fi
+
+            sudo python3 - <<'PY'
+            import glob
+            import pathlib
+            import re
+
+            root_file = pathlib.Path("/etc/caddy/Caddyfile")
+            targets = [root_file, *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))]]
+            host_expr = re.compile(
+              r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*[^,{ \t]+)*)\s*\{\s*$",
+              re.IGNORECASE,
+            )
+            remove_hosts = {"compintel.co", "www.compintel.co"}
+
+            def parse_hosts(hosts_raw: str) -> list[str]:
+              return [h.strip().lower() for h in hosts_raw.split(",") if h.strip()]
+
+            total_removed = 0
+            for file_path in targets:
+              if not file_path.exists():
+                continue
+              original = file_path.read_text(encoding="utf-8", errors="replace")
+              lines = original.splitlines()
+              out = []
+              i = 0
+              removed = 0
+              while i < len(lines):
+                line = lines[i]
+                match = host_expr.match(line)
+                if match:
+                  hosts = parse_hosts(match.group(1))
+                  normalized_hosts = {h.replace("http://", "").replace("https://", "") for h in hosts}
+                  if normalized_hosts & remove_hosts:
+                    removed += 1
+                    depth = line.count("{") - line.count("}")
+                    i += 1
+                    while i < len(lines):
+                      removed += 1
+                      next_line = lines[i]
+                      depth += next_line.count("{") - next_line.count("}")
+                      i += 1
+                      if depth <= 0:
+                        break
+                    continue
+                out.append(line)
+                i += 1
+
+              if removed > 0:
+                file_path.write_text("\n".join(out) + ("\n" if original.endswith("\n") else ""), encoding="utf-8")
+                print(f"Removed {removed} root/www lines from {file_path}")
+                total_removed += removed
+
+            print(f"Total removed root/www lines: {total_removed}")
+            PY
+
+            cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
+            compintel.co {
+                root * $SITE_ROOT
+                file_server
+            }
+            CADDY_ROOT
+
+            cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
+            www.compintel.co {
+                redir https://compintel.co{uri} permanent
+            }
+            CADDY_WWW
+
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.root/d' /etc/caddy/Caddyfile
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON ROOT IMPORT/,/END AUTOMATON ROOT IMPORT/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON WWW IMPORT/,/END AUTOMATON WWW IMPORT/d' /etc/caddy/Caddyfile
+
+            {
+              echo ""
+              echo "# BEGIN AUTOMATON ROOT IMPORT"
+              echo "import /etc/caddy/Caddyfile.root"
+              echo "# END AUTOMATON ROOT IMPORT"
+              echo "# BEGIN AUTOMATON WWW IMPORT"
+              echo "import /etc/caddy/Caddyfile.www"
+              echo "# END AUTOMATON WWW IMPORT"
+            } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            sleep 2
+
+            echo "=== Site root preview ==="
+            sudo sed -n '1,80p' "$SITE_ROOT/index.html" || true
+
+            echo "=== Public checks ==="
+            curl -sSI https://www.compintel.co | head -6 || true
+            curl -sS https://compintel.co | rg -n "Compintel Product Catalog|Auto-generated from Connie's product registry|Published|Draft" || true
+
