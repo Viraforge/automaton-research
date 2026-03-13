@@ -1,0 +1,43 @@
+name: VPS Caddy Rollback Cutover
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_file:
+        description: "Absolute backup file path (e.g. /etc/caddy/Caddyfile.bak.1773420656)"
+        required: true
+        default: "/etc/caddy/Caddyfile.bak.1773420656"
+
+jobs:
+  rollback:
+    name: Roll back Caddyfile from backup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore Caddy config via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            BACKUP_FILE="${{ github.event.inputs.backup_file }}"
+            if [ ! -f "$BACKUP_FILE" ]; then
+              echo "Backup file not found: $BACKUP_FILE"
+              ls -1 /etc/caddy/Caddyfile.bak.* 2>/dev/null || true
+              exit 1
+            fi
+
+            sudo cp "$BACKUP_FILE" /etc/caddy/Caddyfile
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            sleep 2
+
+            echo "=== Post-rollback checks ==="
+            curl -sSI https://compintel.co | sed -n '1,8p' || true
+            curl -sSI https://www.compintel.co | sed -n '1,8p' || true
+            curl -sS -o /dev/null -w "api %{http_code}\n" https://api.compintel.co/health || true
+            curl -sS -o /dev/null -w "relay %{http_code}\n" https://relay.compintel.co/health || true
+            curl -sS -o /dev/null -w "signal-api %{http_code}\n" https://signal-api.compintel.co/health || true
+
