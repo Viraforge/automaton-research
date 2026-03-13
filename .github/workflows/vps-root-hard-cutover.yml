@@ -54,6 +54,7 @@ jobs:
 
             host_matcher = re.compile(r"^\s*(?:https?://)?([^{}]+?)\s*\{", re.I)
             target_hosts = {"compintel.co", "www.compintel.co"}
+            target_addresses = {":80", ":443"}
             marker_patterns = (
               re.compile(r"^\s*#\s*BEGIN AUTOMATON ROOT IMPORT"),
               re.compile(r"^\s*#\s*END AUTOMATON ROOT IMPORT"),
@@ -99,7 +100,7 @@ jobs:
               matched = host_matcher.match(line)
               if matched:
                 hosts = parse_hosts(matched.group(1))
-                if hosts & target_hosts:
+                if hosts & target_hosts or hosts & target_addresses:
                   skipped_blocks += 1
                   depth = line.count("{") - line.count("}")
                   i += 1
