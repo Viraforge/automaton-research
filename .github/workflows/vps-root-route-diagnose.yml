@@ -19,6 +19,8 @@ jobs:
             set -euo pipefail
 
             echo "=== compintel route lines across Caddy files ==="
+            echo "--- /etc/caddy/Caddyfile (first 180 lines) ---"
+            nl -ba /etc/caddy/Caddyfile | sed -n '1,180p' || true
             for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.*; do
               [ -f "$f" ] || continue
               echo "--- $f ---"
