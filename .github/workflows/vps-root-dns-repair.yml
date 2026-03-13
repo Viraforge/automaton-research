@@ -1,0 +1,104 @@
+name: VPS Root DNS Repair
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair-root-dns:
+    name: Repair compintel root DNS to Connie origin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce root/www DNS via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            CONFIG="$CONNIE_HOME/.automaton/automaton.json"
+            if [ ! -f "$CONFIG" ]; then
+              echo "Config missing: $CONFIG"
+              exit 1
+            fi
+
+            ORIGIN_IP=$(curl -4fsS https://api.ipify.org || curl -4fsS https://ifconfig.me)
+            if ! [[ "$ORIGIN_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Unable to determine origin IPv4 address"
+              exit 1
+            fi
+            echo "Detected origin IP: $ORIGIN_IP"
+
+            CONFIG="$CONFIG" ORIGIN_IP="$ORIGIN_IP" python3 - <<'PY'
+            import json
+            import os
+            import urllib.request
+
+            config = json.load(open(os.environ["CONFIG"]))
+            api_key = config.get("cloudflareApiKey")
+            email = config.get("cloudflareEmail")
+            zone_id = config.get("cloudflareZoneId")
+            if not api_key or not email or not zone_id:
+              raise SystemExit("Missing Cloudflare API key/email/zoneId in automaton config")
+
+            origin_ip = os.environ["ORIGIN_IP"]
+            api_base = f"https://api.cloudflare.com/client/v4/zones/{zone_id}"
+            headers = {
+              "X-Auth-Key": api_key,
+              "X-Auth-Email": email,
+              "Content-Type": "application/json",
+            }
+
+            def request_json(method: str, path: str, payload: dict | None = None) -> dict:
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(
+                f"{api_base}{path}",
+                data=data,
+                method=method,
+                headers=headers,
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                parsed = json.loads(response.read().decode("utf-8"))
+              if not parsed.get("success"):
+                raise RuntimeError(f"Cloudflare API error on {method} {path}: {parsed}")
+              return parsed
+
+            def upsert_a_record(name: str, proxied: bool) -> None:
+              lookup = request_json("GET", f"/dns_records?type=A&name={name}")
+              payload = {
+                "type": "A",
+                "name": name,
+                "content": origin_ip,
+                "ttl": 1,
+                "proxied": proxied,
+              }
+              records = lookup.get("result") or []
+              if records:
+                record_id = records[0]["id"]
+                request_json("PUT", f"/dns_records/{record_id}", payload)
+                print(f"Updated {name} -> {origin_ip} proxied={proxied}")
+              else:
+                request_json("POST", "/dns_records", payload)
+                print(f"Created {name} -> {origin_ip} proxied={proxied}")
+
+            upsert_a_record("compintel.co", False)
+            upsert_a_record("www.compintel.co", False)
+
+            request_json("POST", "/purge_cache", {"hosts": ["compintel.co", "www.compintel.co"]})
+            print("Purged Cloudflare cache for compintel.co and www.compintel.co")
+
+            for name in ("compintel.co", "www.compintel.co"):
+              records = request_json("GET", f"/dns_records?type=A&name={name}")["result"]
+              for record in records:
+                print(
+                  f"{name}: content={record.get('content')} proxied={record.get('proxied')} ttl={record.get('ttl')}",
+                )
+            PY
+
+            echo "=== DNS checks ==="
+            dig +short compintel.co A || true
+            dig +short www.compintel.co A || true
+
