@@ -1,0 +1,240 @@
+name: VPS Apex Surgical Fix
+
+on:
+  workflow_dispatch:
+
+jobs:
+  surgical-fix:
+    name: Direct SSH fix for compintel.co apex route
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute surgical fix via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            echo "=== SURGICAL APEX FIX ==="
+            echo ""
+
+            # Backup
+            sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%s)
+            BACKUP=$(ls -1 /etc/caddy/Caddyfile.bak.* | tail -1)
+            echo "Backup created: $BACKUP"
+            echo ""
+
+            # Find ALL compintel.co blocks (bare apex only, not subdomains)
+            echo "STEP 1: Searching for bare compintel.co blocks..."
+            FOUND=0
+            
+            # Check main Caddyfile
+            if grep -n "^compintel.co {" /etc/caddy/Caddyfile 2>/dev/null; then
+              echo "  Found in main Caddyfile"
+              FOUND=1
+            fi
+            
+            # Check all imported files
+            for f in /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy 2>/dev/null; do
+              [ -f "$f" ] || continue
+              if grep -n "^compintel.co {" "$f" 2>/dev/null; then
+                echo "  Found in: $f"
+                FOUND=1
+              fi
+            done
+            
+            if [ $FOUND -eq 0 ]; then
+              echo "  No bare compintel.co blocks found - this is unexpected"
+            fi
+            echo ""
+
+            # STEP 2: Remove bare compintel.co blocks from all files
+            echo "STEP 2: Removing all bare compintel.co blocks..."
+            
+            # Remove from main Caddyfile
+            while grep -q "^compintel.co {" /etc/caddy/Caddyfile 2>/dev/null; do
+              LINE=$(grep -n "^compintel.co {" /etc/caddy/Caddyfile | head -1 | cut -d: -f1)
+              echo "  Removing block from main Caddyfile at line $LINE..."
+              
+              # Find end of block by brace counting
+              sudo awk -v start="$LINE" '
+                NR == start { depth = 1; next }
+                depth > 0 {
+                  depth += gsub(/{/, "{") - gsub(/}/, "}")
+                  if (depth <= 0) { end_line = NR; exit }
+                }
+                END { print end_line + 0 }
+              ' /etc/caddy/Caddyfile > /tmp/end_line.txt
+              
+              END_LINE=$(cat /tmp/end_line.txt)
+              [ -z "$END_LINE" ] && END_LINE=$((LINE + 5))
+              
+              echo "    Block spans lines $LINE to $END_LINE"
+              sudo sed -i "${LINE},${END_LINE}d" /etc/caddy/Caddyfile
+            done
+            
+            # Remove from all imported files
+            for f in /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy 2>/dev/null; do
+              [ -f "$f" ] || continue
+              while grep -q "^compintel.co {" "$f" 2>/dev/null; do
+                LINE=$(grep -n "^compintel.co {" "$f" | head -1 | cut -d: -f1)
+                echo "  Removing block from $f at line $LINE..."
+                
+                sudo awk -v start="$LINE" '
+                  NR == start { depth = 1; next }
+                  depth > 0 {
+                    depth += gsub(/{/, "{") - gsub(/}/, "}")
+                    if (depth <= 0) { end_line = NR; exit }
+                  }
+                  END { print end_line + 0 }
+                ' "$f" > /tmp/end_line.txt
+                
+                END_LINE=$(cat /tmp/end_line.txt)
+                [ -z "$END_LINE" ] && END_LINE=$((LINE + 5))
+                
+                echo "    Block spans lines $LINE to $END_LINE"
+                sudo sed -i "${LINE},${END_LINE}d" "$f"
+              done
+            done
+            echo "STEP 2 complete"
+            echo ""
+
+            # STEP 3: Ensure site root exists with proper content
+            echo "STEP 3: Ensuring catalog site exists..."
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            sudo mkdir -p "$SITE_ROOT"
+            
+            # Generate catalog if possible
+            REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
+            PRODUCTS_PATH="$CONNIE_HOME/.automaton/products.json"
+            
+            if [ -f "$REPO/dist/publication/generate-compintel-site.js" ] && [ -f "$PRODUCTS_PATH" ]; then
+              echo "  Generating catalog from products registry..."
+              cd "$REPO"
+              PRODUCTS_PATH="$PRODUCTS_PATH" SITE_ROOT="$SITE_ROOT" node --input-type=module -e "
+                import { generateCompintelSite } from './dist/publication/generate-compintel-site.js';
+                const result = await generateCompintelSite({
+                  registryPath: process.env.PRODUCTS_PATH,
+                  siteRoot: process.env.SITE_ROOT,
+                });
+                console.log('Generated catalog:', JSON.stringify(result));
+              " 2>/dev/null || echo "  Generator failed, will check for existing index.html"
+            fi
+            
+            # Verify index.html exists
+            if [ -f "$SITE_ROOT/index.html" ]; then
+              echo "  ✓ Site root has index.html"
+            else
+              echo "  ✗ No index.html found in $SITE_ROOT"
+              exit 1
+            fi
+            echo ""
+
+            # STEP 4: Add catalog route BEFORE connie block
+            echo "STEP 4: Adding catalog route to Caddyfile..."
+            
+            # Find connie block
+            CONNIE_LINE=$(grep -n "^connie.compintel.co {" /etc/caddy/Caddyfile | head -1 | cut -d: -f1)
+            if [ -z "$CONNIE_LINE" ]; then
+              echo "  ERROR: Could not find connie.compintel.co block"
+              exit 1
+            fi
+            echo "  Found connie.compintel.co at line $CONNIE_LINE"
+            
+            # Insert catalog block before connie
+            sudo head -n $((CONNIE_LINE - 1)) /etc/caddy/Caddyfile > /tmp/caddy_new.txt
+            
+            cat >> /tmp/caddy_new.txt <<APEX_BLOCK
+
+# BEGIN AUTOMATON APEX CATALOG
+compintel.co {
+    root * $SITE_ROOT
+    file_server
+}
+# END AUTOMATON APEX CATALOG
+
+APEX_BLOCK
+            
+            sudo tail -n +$CONNIE_LINE /etc/caddy/Caddyfile >> /tmp/caddy_new.txt
+            sudo mv /tmp/caddy_new.txt /etc/caddy/Caddyfile
+            
+            echo "  ✓ Catalog block inserted at line $CONNIE_LINE"
+            echo ""
+
+            # STEP 5: Clean up duplicate www blocks and imports
+            echo "STEP 5: Cleaning up www imports..."
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' /etc/caddy/Caddyfile
+            sudo sed -i '/# BEGIN AUTOMATON WWW IMPORT/,/# END AUTOMATON WWW IMPORT/d' /etc/caddy/Caddyfile
+            
+            # Add single www import at end
+            cat <<'WWW_BLOCK' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+# BEGIN AUTOMATON WWW IMPORT
+www.compintel.co {
+    redir https://compintel.co{uri} permanent
+}
+# END AUTOMATON WWW IMPORT
+WWW_BLOCK
+            
+            echo "  ✓ www redirect configured"
+            echo ""
+
+            # STEP 6: Validate
+            echo "STEP 6: Validating configuration..."
+            if sudo caddy validate --config /etc/caddy/Caddyfile; then
+              echo "  ✓ Configuration is valid"
+            else
+              echo "  ✗ Validation failed - restoring backup"
+              sudo cp "$BACKUP" /etc/caddy/Caddyfile
+              sudo systemctl reload caddy
+              exit 1
+            fi
+            echo ""
+
+            # STEP 7: Reload
+            echo "STEP 7: Reloading Caddy..."
+            sudo systemctl reload caddy
+            sleep 3
+            echo "  ✓ Caddy reloaded"
+            echo ""
+
+            # STEP 8: Verify
+            echo "STEP 8: Verification..."
+            echo ""
+            echo "--- compintel.co ---"
+            curl -sSI https://compintel.co | head -5
+            BODY=$(curl -sS https://compintel.co | head -3)
+            echo "$BODY"
+            echo ""
+            
+            echo "--- www.compintel.co ---"
+            curl -sSI https://www.compintel.co | head -4
+            echo ""
+            
+            echo "--- Subdomains ---"
+            printf "api: "
+            curl -sS -o /dev/null -w "%{http_code}\n" https://api.compintel.co/health
+            printf "relay: "
+            curl -sS -o /dev/null -w "%{http_code}\n" https://relay.compintel.co/health
+            printf "signal-api: "
+            curl -sS -o /dev/null -w "%{http_code}\n" https://signal-api.compintel.co/health
+            echo ""
+
+            # Final checks
+            if curl -sS https://compintel.co | grep -q "Compintel Product Catalog"; then
+              echo "✅ SUCCESS: compintel.co serves catalog HTML"
+            else
+              echo "❌ FAIL: compintel.co does not serve catalog"
+              echo "Restoring backup..."
+              sudo cp "$BACKUP" /etc/caddy/Caddyfile
+              sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+              exit 1
+            fi
+            
+            echo ""
+            echo "=== FIX COMPLETE ==="
+            echo "Backup: $BACKUP"
