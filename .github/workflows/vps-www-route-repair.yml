@@ -1,0 +1,87 @@
+name: VPS WWW Route Repair
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repair-www:
+    name: Repair www.compintel.co redirect route
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repair www route via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%s)
+
+            sudo python3 - <<'PY'
+            import glob
+            import pathlib
+            import re
+
+            host_pattern = re.compile(r"^\s*www\.compintel\.co\s*\{\s*$", re.IGNORECASE)
+
+            def strip_host_blocks(path: str) -> int:
+              file_path = pathlib.Path(path)
+              if not file_path.exists():
+                return 0
+              text = file_path.read_text(encoding="utf-8", errors="replace")
+              lines = text.splitlines()
+              out = []
+              i = 0
+              removed = 0
+              while i < len(lines):
+                line = lines[i]
+                if host_pattern.match(line):
+                  removed += 1
+                  depth = line.count("{") - line.count("}")
+                  i += 1
+                  while i < len(lines):
+                    removed += 1
+                    next_line = lines[i]
+                    depth += next_line.count("{") - next_line.count("}")
+                    i += 1
+                    if depth <= 0:
+                      break
+                  continue
+                out.append(line)
+                i += 1
+
+              if removed > 0:
+                file_path.write_text("\n".join(out) + ("\n" if text.endswith("\n") else ""), encoding="utf-8")
+              return removed
+
+            removed_total = 0
+            for target in ["/etc/caddy/Caddyfile", *sorted(glob.glob("/etc/caddy/Caddyfile.*"))]:
+              removed_total += strip_host_blocks(target)
+
+            print(f"Removed www blocks: {removed_total}")
+            PY
+
+            cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
+            www.compintel.co {
+                redir https://compintel.co{uri} permanent
+            }
+            CADDY_WWW
+
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON WWW IMPORT/,/END AUTOMATON WWW IMPORT/d' /etc/caddy/Caddyfile
+            {
+              echo ""
+              echo "# BEGIN AUTOMATON WWW IMPORT"
+              echo "import /etc/caddy/Caddyfile.www"
+              echo "# END AUTOMATON WWW IMPORT"
+            } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            sleep 2
+
+            curl -sSI https://www.compintel.co | head -5
+
