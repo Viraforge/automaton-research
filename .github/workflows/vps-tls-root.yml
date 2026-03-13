@@ -86,7 +86,9 @@ jobs:
             PY
 
             sudo sed -i '/Caddyfile\.root/d' /etc/caddy/Caddyfile
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' /etc/caddy/Caddyfile
             sudo sed -i '/BEGIN AUTOMATON ROOT IMPORT/,/END AUTOMATON ROOT IMPORT/d' /etc/caddy/Caddyfile
+            sudo sed -i '/BEGIN AUTOMATON WWW IMPORT/,/END AUTOMATON WWW IMPORT/d' /etc/caddy/Caddyfile
             {
               echo ""
               echo "# BEGIN AUTOMATON ROOT IMPORT"
