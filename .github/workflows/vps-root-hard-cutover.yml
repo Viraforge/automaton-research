@@ -62,6 +62,7 @@ jobs:
               re.compile(r"^\s*#\s*END AUTOMATON WWW IMPORT"),
               re.compile(r"^\s*import\s+/etc/caddy/Caddyfile\.root\s*$"),
               re.compile(r"^\s*import\s+/etc/caddy/Caddyfile\.www\s*$"),
+              re.compile(r"^\s*import\s+/etc/caddy/Caddyfile\.legacy-nonapex\s*$"),
             )
 
             def parse_hosts(raw: str) -> set[str]:
