@@ -1,0 +1,165 @@
+name: VPS Root Hard Cutover
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hard-cutover:
+    name: Hard cutover compintel apex to catalog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rebuild Caddyfile via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 12m
+          script: |
+            set -euo pipefail
+
+            ROOT_FILE="/etc/caddy/Caddyfile"
+            BACKUP_FILE="/etc/caddy/Caddyfile.bak.$(date +%s)"
+            LEGACY_FILE="/etc/caddy/Caddyfile.legacy-nonapex"
+            TMP_FILE="/tmp/Caddyfile.next"
+
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            sudo mkdir -p "$SITE_ROOT"
+
+            sudo cp "$ROOT_FILE" "$BACKUP_FILE"
+            echo "Backed up Caddyfile -> $BACKUP_FILE"
+
+            cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
+            compintel.co {
+                root * $SITE_ROOT
+                file_server
+            }
+            CADDY_ROOT
+
+            cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
+            www.compintel.co {
+                redir https://compintel.co{uri} permanent
+            }
+            CADDY_WWW
+
+            sudo python3 - <<'PY'
+            import pathlib
+            import re
+
+            root_path = pathlib.Path("/etc/caddy/Caddyfile")
+            legacy_path = pathlib.Path("/etc/caddy/Caddyfile.legacy-nonapex")
+            text = root_path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+
+            host_matcher = re.compile(r"^\s*(?:https?://)?([^{}]+?)\s*\{", re.I)
+            target_hosts = {"compintel.co", "www.compintel.co"}
+            marker_patterns = (
+              re.compile(r"^\s*#\s*BEGIN AUTOMATON ROOT IMPORT"),
+              re.compile(r"^\s*#\s*END AUTOMATON ROOT IMPORT"),
+              re.compile(r"^\s*#\s*BEGIN AUTOMATON WWW IMPORT"),
+              re.compile(r"^\s*#\s*END AUTOMATON WWW IMPORT"),
+              re.compile(r"^\s*import\s+/etc/caddy/Caddyfile\.root\s*$"),
+              re.compile(r"^\s*import\s+/etc/caddy/Caddyfile\.www\s*$"),
+            )
+
+            def parse_hosts(raw: str) -> set[str]:
+              parsed: set[str] = set()
+              for part in raw.split(","):
+                host = part.strip().lower()
+                host = host.removeprefix("http://").removeprefix("https://")
+                if host:
+                  parsed.add(host)
+              return parsed
+
+            output: list[str] = []
+            i = 0
+            skipped_blocks = 0
+            skipped_lines = 0
+
+            # Drop initial global options block; rebuilt explicitly.
+            if lines and lines[0].strip().startswith("{"):
+              depth = 0
+              while i < len(lines):
+                line = lines[i]
+                depth += line.count("{") - line.count("}")
+                i += 1
+                if depth <= 0:
+                  break
+
+            while i < len(lines):
+              line = lines[i]
+              stripped = line.strip()
+
+              if any(pattern.match(stripped) for pattern in marker_patterns):
+                skipped_lines += 1
+                i += 1
+                continue
+
+              matched = host_matcher.match(line)
+              if matched:
+                hosts = parse_hosts(matched.group(1))
+                if hosts & target_hosts:
+                  skipped_blocks += 1
+                  depth = line.count("{") - line.count("}")
+                  i += 1
+                  while i < len(lines):
+                    skipped_lines += 1
+                    nxt = lines[i]
+                    depth += nxt.count("{") - nxt.count("}")
+                    i += 1
+                    if depth <= 0:
+                      break
+                  skipped_lines += 1
+                  continue
+
+              output.append(line)
+              i += 1
+
+            legacy_text = "\n".join(output).strip()
+            if legacy_text:
+              legacy_path.write_text(f"{legacy_text}\n", encoding="utf-8")
+            else:
+              legacy_path.write_text("", encoding="utf-8")
+
+            print(f"Generated legacy file: {legacy_path}")
+            print(f"Skipped apex/www blocks: {skipped_blocks}")
+            print(f"Skipped lines: {skipped_lines}")
+            PY
+
+            cat > "$TMP_FILE" <<'CADDY_MAIN'
+            {
+                email admin@compintel.co
+                log {
+                    output stderr
+                    level warn
+                }
+            }
+
+            :80, :443 {
+                log {
+                    output file /dev/null
+                    level error
+                }
+                redir https://{host}{uri}
+            }
+
+            import /etc/caddy/Caddyfile.legacy-nonapex
+            # BEGIN AUTOMATON ROOT IMPORT
+            import /etc/caddy/Caddyfile.root
+            # END AUTOMATON ROOT IMPORT
+            # BEGIN AUTOMATON WWW IMPORT
+            import /etc/caddy/Caddyfile.www
+            # END AUTOMATON WWW IMPORT
+            CADDY_MAIN
+
+            sudo mv "$TMP_FILE" "$ROOT_FILE"
+            sudo caddy validate --config "$ROOT_FILE"
+            sudo systemctl reload caddy
+            sleep 2
+
+            echo "=== Live checks ==="
+            curl -sSI https://compintel.co | sed -n '1,8p' || true
+            curl -sS https://compintel.co | sed -n '1,30p' || true
+            curl -sSI https://www.compintel.co | sed -n '1,8p' || true
+
