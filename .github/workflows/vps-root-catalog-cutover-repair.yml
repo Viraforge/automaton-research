@@ -24,13 +24,15 @@ jobs:
             PRODUCTS_PATH="$CONNIE_HOME/.automaton/products.json"
 
             if [ -z "$CONNIE_HOME" ] || [ -z "$REPO" ]; then
-              echo "Could not resolve CONNIE_HOME or repo path from local-connie.service"
+              echo "Could not resolve CONNIE_HOME or repo path"
               exit 1
             fi
 
             sudo mkdir -p "$SITE_ROOT"
             sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%s)
+            BACKUP=$(ls -1t /etc/caddy/Caddyfile.bak.* | head -1)
 
+            # Generate catalog
             if [ -f "$REPO/dist/publication/generate-compintel-site.js" ] && [ -f "$PRODUCTS_PATH" ]; then
               cd "$REPO"
               PRODUCTS_PATH="$PRODUCTS_PATH" SITE_ROOT="$SITE_ROOT" node --input-type=module -e "
@@ -41,183 +43,134 @@ jobs:
               });
               console.log('Generated catalog:', JSON.stringify(result));
               "
-            else
-              echo "Generator or products registry missing; writing fallback catalog page"
-              cat <<'HTML' | sudo tee "$SITE_ROOT/index.html" >/dev/null
-            <!doctype html>
-            <html lang="en">
-            <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Compintel Catalog</title></head>
-            <body>
-              <main>
-                <h1>Compintel Product Catalog</h1>
-                <p>Auto-generated from Connie's product registry.</p>
-                <section><h2>Published</h2><p>No products yet.</p></section>
-                <section><h2>Draft</h2><p>No products yet.</p></section>
-              </main>
-            </body>
-            </html>
-            HTML
             fi
 
-            echo "Removing conflicting apex/www blocks from all Caddy files..."
+            echo ""
+            echo "=== FINDING compintel.co blocks ==="
             
-            # First, aggressively remove from automaton-sites directory
-            for f in /etc/caddy/automaton-sites/*.caddy 2>/dev/null; do
+            # Find all files with bare compintel.co block
+            FOUND_FILES=""
+            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy 2>/dev/null; do
               [ -f "$f" ] || continue
-              if grep -q "^compintel.co {" "$f" 2>/dev/null || grep -q "^www.compintel.co {" "$f" 2>/dev/null; then
-                echo "Found apex/www block in $f - removing..."
-                sudo python3 <<PY
-            import pathlib
-            import re
-            
-            path = pathlib.Path("$f")
-            text = path.read_text(encoding="utf-8", errors="replace")
-            lines = text.splitlines()
-            
-            out = []
-            i = 0
-            removed = 0
-            
-            host_expr = re.compile(r'^\s*(?:https?://)?(compintel\.co|www\.compintel\.co)\s*\{\s*$', re.IGNORECASE)
-            
-            while i < len(lines):
-                line = lines[i]
-                match = host_expr.match(line)
-                if match:
-                    removed += 1
-                    depth = line.count("{") - line.count("}")
-                    i += 1
-                    while i < len(lines):
-                        depth += lines[i].count("{") - lines[i].count("}")
-                        i += 1
-                        if depth <= 0:
-                            break
-                    continue
-                out.append(line)
-                i += 1
-            
-            path.write_text("\n".join(out) + "\n", encoding="utf-8")
-            print(f"  Removed {removed} blocks from $f")
-            PY
+              if grep -q "^compintel.co {" "$f" 2>/dev/null; then
+                echo "FOUND: $f"
+                FOUND_FILES="$FOUND_FILES $f"
               fi
             done
-            
-            # Then remove from all Caddyfile.* files
-            for f in /etc/caddy/Caddyfile.* 2>/dev/null; do
-              [ -f "$f" ] || continue
-              if grep -q "^compintel.co {" "$f" 2>/dev/null || grep -q "^www.compintel.co {" "$f" 2>/dev/null; then
-                echo "Found apex/www block in $f - removing..."
+
+            if [ -z "$FOUND_FILES" ]; then
+              echo "No bare compintel.co blocks found - good"
+            else
+              echo ""
+              echo "=== REMOVING compintel.co blocks ==="
+              for f in $FOUND_FILES; do
+                echo "Processing: $f"
                 sudo python3 <<PY
             import pathlib
             import re
             
             path = pathlib.Path("$f")
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text()
             lines = text.splitlines()
-            
             out = []
             i = 0
             
-            host_expr = re.compile(r'^\s*(?:https?://)?(compintel\.co|www\.compintel\.co)\s*\{\s*$', re.IGNORECASE)
-            
             while i < len(lines):
                 line = lines[i]
-                match = host_expr.match(line)
-                if match:
-                    depth = line.count("{") - line.count("}")
+                if re.match(r'^compintel\.co\s*\{', line):
+                    depth = 1
                     i += 1
-                    while i < len(lines):
-                        depth += lines[i].count("{") - lines[i].count("}")
+                    while i < len(lines) and depth > 0:
+                        depth += lines[i].count('{') - lines[i].count('}')
                         i += 1
-                        if depth <= 0:
-                            break
                     continue
                 out.append(line)
                 i += 1
             
-            path.write_text("\n".join(out) + "\n", encoding="utf-8")
+            path.write_text('\n'.join(out) + '\n')
             print(f"  Removed from $f")
             PY
-              fi
-            done
-            
-            # Finally, remove from main Caddyfile
-            echo "Processing main Caddyfile..."
-            sudo python3 <<'PY'
-            import pathlib
-            import re
-            
-            root_path = pathlib.Path("/etc/caddy/Caddyfile")
-            text = root_path.read_text(encoding="utf-8", errors="replace")
-            lines = text.splitlines()
-            
-            out = []
-            i = 0
-            removed = 0
-            
-            # Match compintel.co or www.compintel.co blocks (with optional http:// or https://)
-            host_expr = re.compile(r'^\s*(?:https?://)?(compintel\.co|www\.compintel\.co)\s*\{\s*$', re.IGNORECASE)
-            
-            while i < len(lines):
-                line = lines[i]
-                match = host_expr.match(line)
-                if match:
-                    removed += 1
-                    depth = line.count("{") - line.count("}")
-                    i += 1
-                    while i < len(lines):
-                        depth += lines[i].count("{") - lines[i].count("}")
-                        i += 1
-                        if depth <= 0:
-                            break
-                    continue
-                out.append(line)
-                i += 1
-            
-            root_path.write_text("\n".join(out) + "\n", encoding="utf-8")
-            print(f"Removed {removed} apex/www blocks from main Caddyfile")
-            PY
-            
-            echo "Apex/www block removal complete"
+              done
+            fi
 
-            # Write Caddyfile.root without indentation
-            sudo tee /etc/caddy/Caddyfile.root >/dev/null <<CADDY_ROOT
+            echo ""
+            echo "=== INSERTING catalog block ==="
+            
+            # Find connie block line
+            CONNIE_LINE=$(grep -n "^connie.compintel.co {" /etc/caddy/Caddyfile | head -1 | cut -d: -f1)
+            echo "connie.compintel.co at line $CONNIE_LINE"
+            
+            # Build new Caddyfile with catalog block before connie
+            sudo head -n $((CONNIE_LINE - 1)) /etc/caddy/Caddyfile > /tmp/caddy_new.txt
+            
+            cat >> /tmp/caddy_new.txt <<EOF
+
+# BEGIN AUTOMATON APEX
 compintel.co {
     root * $SITE_ROOT
     file_server
 }
-CADDY_ROOT
+# END AUTOMATON APEX
 
-            # Write Caddyfile.www without indentation
-            sudo tee /etc/caddy/Caddyfile.www >/dev/null <<'CADDY_WWW'
+EOF
+            
+            sudo tail -n +$CONNIE_LINE /etc/caddy/Caddyfile >> /tmp/caddy_new.txt
+            sudo mv /tmp/caddy_new.txt /etc/caddy/Caddyfile
+            
+            echo "Inserted apex block at line $CONNIE_LINE"
+
+            # Also write import files for consistency
+            sudo tee /etc/caddy/Caddyfile.root >/dev/null <<EOF
+compintel.co {
+    root * $SITE_ROOT
+    file_server
+}
+EOF
+
+            sudo tee /etc/caddy/Caddyfile.www >/dev/null <<'EOF'
 www.compintel.co {
     redir https://compintel.co{uri} permanent
 }
-CADDY_WWW
+EOF
 
-            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.root/d' /etc/caddy/Caddyfile
-            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' /etc/caddy/Caddyfile
-            sudo sed -i '/BEGIN AUTOMATON ROOT IMPORT/,/END AUTOMATON ROOT IMPORT/d' /etc/caddy/Caddyfile
-            sudo sed -i '/BEGIN AUTOMATON WWW IMPORT/,/END AUTOMATON WWW IMPORT/d' /etc/caddy/Caddyfile
+            echo ""
+            echo "=== VALIDATING ==="
+            sudo caddy validate --config /etc/caddy/Caddyfile || {
+              echo "VALIDATION FAILED - restoring backup"
+              sudo cp "$BACKUP" /etc/caddy/Caddyfile
+              sudo systemctl reload caddy
+              exit 1
+            }
 
-            {
-              echo ""
-              echo "# BEGIN AUTOMATON ROOT IMPORT"
-              echo "import /etc/caddy/Caddyfile.root"
-              echo "# END AUTOMATON ROOT IMPORT"
-              echo "# BEGIN AUTOMATON WWW IMPORT"
-              echo "import /etc/caddy/Caddyfile.www"
-              echo "# END AUTOMATON WWW IMPORT"
-            } | sudo tee -a /etc/caddy/Caddyfile >/dev/null
-
-            sudo caddy validate --config /etc/caddy/Caddyfile
+            echo ""
+            echo "=== RELOADING CADDY ==="
             sudo systemctl reload caddy
-            sleep 2
+            sleep 3
 
-            echo "=== Site root preview ==="
-            sudo sed -n '1,80p' "$SITE_ROOT/index.html" || true
+            echo ""
+            echo "=== VERIFICATION ==="
+            echo "compintel.co headers:"
+            curl -sSI https://compintel.co | grep -E "HTTP|content-type"
+            
+            echo ""
+            echo "compintel.co body (first line):"
+            curl -sS https://compintel.co | head -1
+            
+            echo ""
+            echo "Subdomain health checks:"
+            curl -sS -o /dev/null -w "api: %{http_code}\n" https://api.compintel.co/health
+            curl -sS -o /dev/null -w "relay: %{http_code}\n" https://relay.compintel.co/health
+            curl -sS -o /dev/null -w "signal-api: %{http_code}\n" https://signal-api.compintel.co/health
 
-            echo "=== Public checks ==="
-            curl -sSI https://www.compintel.co | head -6 || true
-            curl -sS https://compintel.co | rg -n "Compintel Product Catalog|Auto-generated from Connie's product registry|Published|Draft" || true
-
+            # Final test
+            if curl -sS https://compintel.co | grep -q "Compintel Product Catalog"; then
+              echo ""
+              echo "SUCCESS: compintel.co serves catalog HTML"
+            else
+              echo ""
+              echo "FAIL: compintel.co still not serving catalog"
+              echo "Restoring backup..."
+              sudo cp "$BACKUP" /etc/caddy/Caddyfile
+              sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+              exit 1
+            fi
