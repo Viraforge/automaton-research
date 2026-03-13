@@ -1,0 +1,38 @@
+name: VPS Root Route Diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: Diagnose compintel root routing on VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump Caddy route evidence via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            echo "=== compintel route lines across Caddy files ==="
+            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.*; do
+              [ -f "$f" ] || continue
+              echo "--- $f ---"
+              rg -n "compintel\.co|www\.compintel\.co|reverse_proxy|file_server|redir" "$f" || true
+            done
+
+            echo ""
+            echo "=== Adapted route snippets (caddy adapt) ==="
+            sudo caddy adapt --config /etc/caddy/Caddyfile --pretty >/tmp/caddy-adapted.json
+            rg -n "compintel\\.co|www\\.compintel\\.co|reverse_proxy|file_server|redir|upstreams|127\\.0\\.0\\.1:8092" /tmp/caddy-adapted.json || true
+
+            echo ""
+            echo "=== Public responses ==="
+            curl -sSI https://compintel.co || true
+            curl -sS https://compintel.co || true
+            curl -sSI https://www.compintel.co || true
+
