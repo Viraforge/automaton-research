@@ -38,3 +38,70 @@ jobs:
             curl -sS https://compintel.co || true
             curl -sSI https://www.compintel.co || true
 
+            echo ""
+            echo "=== FIXING APEX ROUTE ==="
+            
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            
+            # Backup
+            sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.fix.$(date +%s)
+            
+            # Remove all bare compintel.co blocks
+            echo "Removing existing compintel.co blocks..."
+            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy 2>/dev/null; do
+              [ -f "$f" ] || continue
+              if grep -q "^compintel.co {" "$f" 2>/dev/null; then
+                echo "Found in $f - removing"
+                sudo python3 -c "
+import pathlib, re
+path = pathlib.Path('$f')
+text = path.read_text()
+lines = text.splitlines()
+out, i = [], 0
+while i < len(lines):
+    if re.match(r'^compintel\.co\s*\{', lines[i]):
+        depth = 1
+        i += 1
+        while i < len(lines) and depth > 0:
+            depth += lines[i].count('{') - lines[i].count('}')
+            i += 1
+        continue
+    out.append(lines[i])
+    i += 1
+path.write_text('\n'.join(out) + '\n')
+"
+              fi
+            done
+            
+            # Insert catalog block before connie
+            CONNIE_LINE=$(grep -n "^connie.compintel.co {" /etc/caddy/Caddyfile | head -1 | cut -d: -f1)
+            echo "Inserting catalog block before line $CONNIE_LINE"
+            
+            sudo head -n $((CONNIE_LINE - 1)) /etc/caddy/Caddyfile > /tmp/caddy_fix.txt
+            cat >> /tmp/caddy_fix.txt <<EOF
+
+# BEGIN AUTOMATON APEX
+compintel.co {
+    root * $SITE_ROOT
+    file_server
+}
+# END AUTOMATON APEX
+
+EOF
+            sudo tail -n +$CONNIE_LINE /etc/caddy/Caddyfile >> /tmp/caddy_fix.txt
+            sudo mv /tmp/caddy_fix.txt /etc/caddy/Caddyfile
+            
+            # Validate and reload
+            echo "Validating..."
+            sudo caddy validate --config /etc/caddy/Caddyfile
+            
+            echo "Reloading..."
+            sudo systemctl reload caddy
+            sleep 3
+            
+            echo ""
+            echo "=== VERIFICATION ==="
+            curl -sSI https://compintel.co | grep -E "HTTP|content-type"
+            curl -sS https://compintel.co | head -3
+
