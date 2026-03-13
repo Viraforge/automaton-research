@@ -28,24 +28,7 @@ jobs:
             for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy; do
               [ -f "$f" ] || continue
               if grep -q '^compintel.co {' "$f" 2>/dev/null; then
-                sudo python3 -c '
-import pathlib, re, sys
-p = pathlib.Path(sys.argv[1])
-lines = p.read_text().splitlines()
-out = []
-i = 0
-while i < len(lines):
-    if re.match(r"^compintel\.co\s*\{", lines[i]):
-        depth = 1
-        i += 1
-        while i < len(lines) and depth > 0:
-            depth += lines[i].count("{") - lines[i].count("}")
-            i += 1
-        continue
-    out.append(lines[i])
-    i += 1
-p.write_text("\n".join(out) + "\n")
-' "$f"
+                sudo python3 -c 'import pathlib,re,sys; p=pathlib.Path(sys.argv[1]); t=p.read_text(); p.write_text(re.sub(r"(?ms)^compintel\\.co\\s*\\{.*?^}\\n?", "", t))' "$f"
               fi
             done
 
@@ -74,64 +57,4 @@ p.write_text("\n".join(out) + "\n")
 
             echo "=== Apex Verification ==="
             curl -sSI https://compintel.co | grep -E 'HTTP|content-type'
-            curl -sS https://compintel.co | head -3
-name: Fix Compintel Apex Route
-
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/fix-compintel-apex.yml'
-  workflow_dispatch:
-
-jobs:
-  fix-apex:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 5m
-          script: |
-            set -e
-            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service | sed 's/.*HOME=//')
-            sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.fix.bak.$(date +%s)
-            
-            # Remove bare compintel.co blocks from all files
-            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy; do
-              [ -f "$f" ] || continue
-              if grep -q "^compintel.co {" "$f" 2>/dev/null; then
-                sudo python3 -c "
-import pathlib, re
-p = pathlib.Path('$f')
-l = p.read_text().splitlines()
-o, i = [], 0
-while i < len(l):
-    if re.match(r'^compintel\.co\s*\{', l[i]):
-        d, i = 1, i + 1
-        while i < len(l) and d > 0: d += l[i].count('{') - l[i].count('}'); i += 1
-        continue
-    o.append(l[i]); i += 1
-p.write_text('\n'.join(o) + '\n')
-"
-              fi
-            done
-            
-            # Insert catalog block before connie
-            LINE=$(grep -n "^connie.compintel.co {" /etc/caddy/Caddyfile | head -1 | cut -d: -f1)
-            sudo head -n $((LINE - 1)) /etc/caddy/Caddyfile > /tmp/fix.txt
-            echo -e "\ncompintel.co {\n    root * $CONNIE_HOME/.automaton/site\n    file_server\n}\n" >> /tmp/fix.txt
-            sudo tail -n +$LINE /etc/caddy/Caddyfile >> /tmp/fix.txt
-            sudo mv /tmp/fix.txt /etc/caddy/Caddyfile
-            
-            # Validate and reload
-            sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
-            sleep 3
-            
-            # Verify
-            echo "Apex response:"
-            curl -sSI https://compintel.co | grep -E "HTTP|content-type"
             curl -sS https://compintel.co | head -3
