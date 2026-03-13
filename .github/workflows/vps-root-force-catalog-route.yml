@@ -1,0 +1,134 @@
+name: VPS Root Force Catalog Route
+
+on:
+  workflow_dispatch:
+
+jobs:
+  force-route:
+    name: Force apex catalog route on Connie VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Force root route via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 12m
+          script: |
+            set -euo pipefail
+
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            ROOT_FILE="/etc/caddy/Caddyfile"
+
+            if [ -z "$CONNIE_HOME" ]; then
+              echo "Unable to resolve CONNIE_HOME"
+              exit 1
+            fi
+
+            sudo cp "$ROOT_FILE" "/etc/caddy/Caddyfile.bak.$(date +%s)"
+            sudo mkdir -p "$SITE_ROOT"
+
+            # Ensure dedicated canonical root/www import files exist.
+            cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
+            compintel.co {
+                root * $SITE_ROOT
+                file_server
+            }
+            CADDY_ROOT
+
+            cat <<'CADDY_WWW' | sudo tee /etc/caddy/Caddyfile.www >/dev/null
+            www.compintel.co {
+                redir https://compintel.co{uri} permanent
+            }
+            CADDY_WWW
+
+            sudo python3 - <<'PY'
+            import glob
+            import pathlib
+            import re
+
+            host_matcher = re.compile(r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*[^,{ \t]+)*)\s*\{\s*$", re.I)
+            target_hosts = {"compintel.co", "www.compintel.co"}
+            canonical_files = {"/etc/caddy/Caddyfile.root", "/etc/caddy/Caddyfile.www"}
+
+            def parse_hosts(raw: str) -> set[str]:
+              result = set()
+              for part in raw.split(","):
+                host = part.strip().lower()
+                host = host.removeprefix("http://").removeprefix("https://")
+                if host:
+                  result.add(host)
+              return result
+
+            def strip_target_blocks(path: pathlib.Path) -> int:
+              text = path.read_text(encoding="utf-8", errors="replace")
+              lines = text.splitlines()
+              out: list[str] = []
+              removed = 0
+              i = 0
+              while i < len(lines):
+                line = lines[i]
+                matched = host_matcher.match(line)
+                if matched:
+                  hosts = parse_hosts(matched.group(1))
+                  if hosts & target_hosts:
+                    removed += 1
+                    depth = line.count("{") - line.count("}")
+                    i += 1
+                    while i < len(lines):
+                      removed += 1
+                      nxt = lines[i]
+                      depth += nxt.count("{") - nxt.count("}")
+                      i += 1
+                      if depth <= 0:
+                        break
+                    continue
+                out.append(line)
+                i += 1
+
+              if removed > 0:
+                path.write_text("\n".join(out) + ("\n" if text.endswith("\n") else ""), encoding="utf-8")
+              return removed
+
+            total_removed = 0
+            all_files = [pathlib.Path("/etc/caddy/Caddyfile")] + [pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))]
+            for file_path in all_files:
+              if not file_path.exists():
+                continue
+              if str(file_path) in canonical_files:
+                continue
+              removed = strip_target_blocks(file_path)
+              if removed > 0:
+                print(f"Removed {removed} root/www lines from {file_path}")
+                total_removed += removed
+
+            print(f"Total removed conflicting root/www lines: {total_removed}")
+            PY
+
+            # Reset managed import markers and re-append exactly once.
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.root/d' "$ROOT_FILE"
+            sudo sed -i '/import \/etc\/caddy\/Caddyfile\.www/d' "$ROOT_FILE"
+            sudo sed -i '/BEGIN AUTOMATON ROOT IMPORT/,/END AUTOMATON ROOT IMPORT/d' "$ROOT_FILE"
+            sudo sed -i '/BEGIN AUTOMATON WWW IMPORT/,/END AUTOMATON WWW IMPORT/d' "$ROOT_FILE"
+
+            {
+              echo ""
+              echo "# BEGIN AUTOMATON ROOT IMPORT"
+              echo "import /etc/caddy/Caddyfile.root"
+              echo "# END AUTOMATON ROOT IMPORT"
+              echo "# BEGIN AUTOMATON WWW IMPORT"
+              echo "import /etc/caddy/Caddyfile.www"
+              echo "# END AUTOMATON WWW IMPORT"
+            } | sudo tee -a "$ROOT_FILE" >/dev/null
+
+            sudo caddy validate --config "$ROOT_FILE"
+            sudo systemctl reload caddy
+            sleep 2
+
+            echo "=== Live checks ==="
+            curl -sSI https://compintel.co | sed -n '1,8p' || true
+            curl -sS https://compintel.co | sed -n '1,30p' || true
+            curl -sSI https://www.compintel.co | sed -n '1,8p' || true
+
