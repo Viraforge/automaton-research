@@ -41,7 +41,7 @@ jobs:
             done
 
             # Common fallback candidates observed historically.
-            printf "%s\n" 9004 9000 8094 8081 9010 >> "$TMP_PORTS"
+            printf "%s\n" 9004 9000 8094 9010 9100 >> "$TMP_PORTS"
 
             # Deduplicate and keep numeric ports only.
             mapfile -t CANDIDATE_PORTS < <(sort -u "$TMP_PORTS" | awk '/^[0-9]+$/')

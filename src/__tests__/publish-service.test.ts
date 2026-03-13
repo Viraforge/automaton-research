@@ -119,11 +119,12 @@ describe("publish_service tool", () => {
       1,
       false,
     );
-    expect(conway.execCalls).toHaveLength(1);
-    expect(conway.execCalls[0]?.command).toContain("alpha.compintel.co");
-    expect(conway.execCalls[0]?.command).toContain("reverse_proxy http://127.0.0.1:9090");
-    expect(conway.execCalls[0]?.command).toContain("http://alpha.compintel.co {");
-    expect(conway.execCalls[0]?.command).toContain("https://alpha.compintel.co {");
+    expect(conway.execCalls.length).toBeGreaterThanOrEqual(2);
+    expect(conway.execCalls[0]?.command).toContain("127.0.0.1:9090/health");
+    const publishCall = conway.execCalls[conway.execCalls.length - 1];
+    expect(publishCall?.command).toContain("alpha.compintel.co");
+    expect(publishCall?.command).toContain("reverse_proxy http://127.0.0.1:9090");
+    expect(publishCall?.command).toContain("Caddyfile.published-alpha.compintel.co");
     expect(vi.mocked(createCloudflareProvider)).toHaveBeenCalledWith({
       apiToken: "cf-test-token",
     });
@@ -144,6 +145,28 @@ describe("publish_service tool", () => {
     expect(result).toContain("Blocked: publish_service is restricted to compintel.co subdomains.");
     expect(addRecord).not.toHaveBeenCalled();
     expect(conway.execCalls).toHaveLength(0);
+  });
+
+  it("blocks publish_service when local health check fails", async () => {
+    vi.spyOn(conway, "exec").mockResolvedValueOnce({
+      stdout: "",
+      stderr: "connection refused",
+      exitCode: 7,
+    });
+
+    const publishTool = createBuiltinTools("test-sandbox-id").find((tool) => tool.name === "publish_service");
+    const result = await publishTool!.execute(
+      {
+        subdomain: "alpha",
+        port: 9090,
+        healthcheck_path: "/health",
+      },
+      ctx,
+    );
+
+    expect(result).toContain("Blocked: local service health check failed");
+    expect(addRecord).not.toHaveBeenCalled();
+    expect(deleteRecord).not.toHaveBeenCalled();
   });
 
   it("records successful publication in the public asset registry", async () => {

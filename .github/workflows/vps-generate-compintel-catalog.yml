@@ -1,0 +1,47 @@
+name: VPS Generate Compintel Catalog
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    name: Regenerate catalog index on VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate site via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+
+            REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
+            CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+            PRODUCTS_PATH="$CONNIE_HOME/.automaton/products.json"
+            SITE_ROOT="$CONNIE_HOME/.automaton/site"
+
+            if [ ! -d "$REPO" ]; then
+              echo "Repository path not found: $REPO"
+              exit 1
+            fi
+            if [ ! -f "$PRODUCTS_PATH" ]; then
+              echo "Products registry not found: $PRODUCTS_PATH"
+              exit 1
+            fi
+
+            cd "$REPO"
+            PRODUCTS_PATH="$PRODUCTS_PATH" SITE_ROOT="$SITE_ROOT" node --input-type=module -e "
+            import { generateCompintelSite } from './dist/publication/generate-compintel-site.js';
+            const result = await generateCompintelSite({
+              registryPath: process.env.PRODUCTS_PATH,
+              siteRoot: process.env.SITE_ROOT,
+            });
+            console.log(JSON.stringify(result));
+            "
+
+            curl -sS -o /dev/null -w "compintel.co %{http_code}\n" https://compintel.co || true
+            curl -sS https://compintel.co | grep -E "Compintel Product Catalog|Published|Draft" -n | head -10 || true
+
