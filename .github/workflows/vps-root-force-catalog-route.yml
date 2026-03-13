@@ -49,7 +49,8 @@ jobs:
             import pathlib
             import re
 
-            host_matcher = re.compile(r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*[^,{ \t]+)*)\s*\{\s*$", re.I)
+            # Match site headers even when comments trail after "{"
+            host_matcher = re.compile(r"^\s*(?:https?://)?([^{}]+?)\s*\{", re.I)
             target_hosts = {"compintel.co", "www.compintel.co"}
             canonical_files = {"/etc/caddy/Caddyfile.root", "/etc/caddy/Caddyfile.www"}
 
