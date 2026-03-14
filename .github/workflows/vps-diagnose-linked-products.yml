@@ -1,0 +1,192 @@
+name: VPS Diagnose Linked Product Hosts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose-linked-hosts:
+    name: Diagnose linked product hosts on Connie VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect linked host routing and upstream health
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 12m
+          script: |
+            set -euo pipefail
+
+            HOSTS_FILE=/tmp/compintel-linked-hosts.txt
+            cat <<'EOF' > "$HOSTS_FILE"
+            defi-lending.compintel.co
+            defi-liquidity.compintel.co
+            echo-service.compintel.co
+            polymarket.compintel.co
+            premium-analytics.compintel.co
+            premium-analytics-v2.compintel.co
+            real-polymarket.compintel.co
+            revenue-tracker.compintel.co
+            weather-api.compintel.co
+            webhook-notifications.compintel.co
+            webhook-service.compintel.co
+            defi-sentiment.compintel.co
+            polymarket-api.compintel.co
+            EOF
+
+            echo "=== Host to Caddy mapping ==="
+            python3 - <<'PY'
+            import glob
+            import pathlib
+            import re
+
+            hosts = [line.strip() for line in pathlib.Path("/tmp/compintel-linked-hosts.txt").read_text().splitlines() if line.strip()]
+            files = [
+              pathlib.Path("/etc/caddy/Caddyfile"),
+              *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))],
+              *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/automaton-sites/*.caddy"))],
+            ]
+            host_expr = re.compile(
+              r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*(?:https?://)?[^,{ \t]+)*)\s*\{\s*$",
+              re.IGNORECASE,
+            )
+            upstream_expr = re.compile(r"reverse_proxy\s+http://(?:127\.0\.0\.1|localhost):(\d+)")
+
+            def parse_hosts(raw: str) -> list[str]:
+              out = []
+              for item in raw.split(","):
+                value = item.strip().lower()
+                if value.startswith("http://"):
+                  value = value[len("http://"):]
+                if value.startswith("https://"):
+                  value = value[len("https://"):]
+                if value:
+                  out.append(value)
+              return out
+
+            for host in hosts:
+              print(f"\n=== {host} ===")
+              found = False
+              for file_path in files:
+                if not file_path.exists():
+                  continue
+                lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                i = 0
+                while i < len(lines):
+                  match = host_expr.match(lines[i])
+                  if not match:
+                    i += 1
+                    continue
+                  block_hosts = parse_hosts(match.group(1))
+                  depth = lines[i].count("{") - lines[i].count("}")
+                  block = [lines[i]]
+                  i += 1
+                  while i < len(lines):
+                    block.append(lines[i])
+                    depth += lines[i].count("{") - lines[i].count("}")
+                    i += 1
+                    if depth <= 0:
+                      break
+                  if host not in block_hosts:
+                    continue
+                  found = True
+                  ports = sorted({m.group(1) for line in block for m in upstream_expr.finditer(line)})
+                  print(f"FILE {file_path}")
+                  print(f"HOSTS {', '.join(block_hosts)}")
+                  print(f"PORTS {', '.join(ports) if ports else 'none'}")
+                  for preview in block[:10]:
+                    print(preview)
+                  if len(block) > 10:
+                    print("... truncated ...")
+              if not found:
+                print("NO CADDY BLOCK FOUND")
+            PY
+
+            echo ""
+            echo "=== Public URL checks ==="
+            while read -r host; do
+              [ -n "$host" ] || continue
+              root_code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "https://$host" || true)
+              health_code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "https://$host/health" || true)
+              echo "$host root=$root_code health=$health_code"
+            done < "$HOSTS_FILE"
+
+            echo ""
+            echo "=== Local port checks ==="
+            python3 - <<'PY' > /tmp/compintel-linked-ports.txt
+            import glob
+            import pathlib
+            import re
+
+            hosts = [line.strip() for line in pathlib.Path("/tmp/compintel-linked-hosts.txt").read_text().splitlines() if line.strip()]
+            files = [
+              pathlib.Path("/etc/caddy/Caddyfile"),
+              *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))],
+              *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/automaton-sites/*.caddy"))],
+            ]
+            host_expr = re.compile(
+              r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*(?:https?://)?[^,{ \t]+)*)\s*\{\s*$",
+              re.IGNORECASE,
+            )
+            upstream_expr = re.compile(r"reverse_proxy\s+http://(?:127\.0\.0\.1|localhost):(\d+)")
+
+            def parse_hosts(raw: str) -> list[str]:
+              out = []
+              for item in raw.split(","):
+                value = item.strip().lower()
+                if value.startswith("http://"):
+                  value = value[len("http://"):]
+                if value.startswith("https://"):
+                  value = value[len("https://"):]
+                if value:
+                  out.append(value)
+              return out
+
+            ports = set()
+            for file_path in files:
+              if not file_path.exists():
+                continue
+              lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+              i = 0
+              while i < len(lines):
+                match = host_expr.match(lines[i])
+                if not match:
+                  i += 1
+                  continue
+                block_hosts = parse_hosts(match.group(1))
+                depth = lines[i].count("{") - lines[i].count("}")
+                block = [lines[i]]
+                i += 1
+                while i < len(lines):
+                  block.append(lines[i])
+                  depth += lines[i].count("{") - lines[i].count("}")
+                  i += 1
+                  if depth <= 0:
+                    break
+                if not any(host in block_hosts for host in hosts):
+                  continue
+                for line in block:
+                  for m in upstream_expr.finditer(line):
+                    ports.add(m.group(1))
+
+            for port in sorted(ports, key=int):
+              print(port)
+            PY
+
+            while read -r port; do
+              [ -n "$port" ] || continue
+              root_code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:$port" || true)
+              health_code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:$port/health" || true)
+              echo "--- port $port ---"
+              echo "local root=$root_code health=$health_code"
+              sudo ss -ltnp 2>/dev/null | grep -E "[.:]$port\\b" || echo "no listener"
+            done < /tmp/compintel-linked-ports.txt
+
+            echo ""
+            echo "=== PM2 processes ==="
+            if command -v pm2 >/dev/null 2>&1; then
+              PM2_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')/.pm2 pm2 list || true
+            else
+              echo "pm2 not installed"
+            fi
