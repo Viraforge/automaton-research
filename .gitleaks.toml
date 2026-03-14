@@ -1,0 +1,15 @@
+title = "Gitleaks config for automaton-research"
+
+[allowlist]
+  description = "Well-known test keys and fixture data"
+
+  # Hardhat account #0 private key — deterministic, publicly documented, never used in production
+  regexTarget = "match"
+  regexes = [
+    '''0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+  ]
+
+  paths = [
+    '''src/__tests__/.*''',
+    '''.*\.test\.(js|ts)''',
+  ]
