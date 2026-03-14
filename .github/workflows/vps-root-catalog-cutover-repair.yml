@@ -65,7 +65,11 @@ jobs:
             import re
 
             root_file = pathlib.Path("/etc/caddy/Caddyfile")
-            targets = [root_file, *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))]]
+            targets = [
+              root_file,
+              *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/Caddyfile.*"))],
+              *[pathlib.Path(p) for p in sorted(glob.glob("/etc/caddy/automaton-sites/*.caddy"))],
+            ]
             host_expr = re.compile(
               r"^\s*(?:https?://)?([^,{ \t]+(?:\s*,\s*[^,{ \t]+)*)\s*\{\s*$",
               re.IGNORECASE,

@@ -21,7 +21,7 @@ jobs:
             echo "=== compintel route lines across Caddy files ==="
             echo "--- /etc/caddy/Caddyfile (full) ---"
             nl -ba /etc/caddy/Caddyfile || true
-            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.*; do
+            for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy; do
               [ -f "$f" ] || continue
               echo "--- $f ---"
               grep -nE "compintel\\.co|www\\.compintel\\.co|reverse_proxy|file_server|redir" "$f" || true
