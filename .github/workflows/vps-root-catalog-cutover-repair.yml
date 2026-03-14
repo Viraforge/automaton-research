@@ -21,6 +21,7 @@ jobs:
             CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
             REPO=$(grep 'ExecStart=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*node //' | sed 's|/dist/.*||')
             SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            PUBLIC_SITE_ROOT="/var/www/compintel"
             PRODUCTS_PATH="$CONNIE_HOME/.automaton/products.json"
 
             if [ -z "$CONNIE_HOME" ] || [ -z "$REPO" ]; then
@@ -28,7 +29,7 @@ jobs:
               exit 1
             fi
 
-            sudo mkdir -p "$SITE_ROOT"
+            sudo mkdir -p "$SITE_ROOT" "$PUBLIC_SITE_ROOT"
             sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%s)
 
             if [ -f "$REPO/dist/publication/generate-compintel-site.js" ] && [ -f "$PRODUCTS_PATH" ]; then
@@ -58,6 +59,10 @@ jobs:
             </html>
             HTML
             fi
+
+            sudo mkdir -p "$PUBLIC_SITE_ROOT"
+            sudo cp -R "$SITE_ROOT"/. "$PUBLIC_SITE_ROOT"/
+            sudo chmod -R a+rX "$PUBLIC_SITE_ROOT"
 
             sudo python3 - <<'PY'
             import glob
@@ -119,7 +124,7 @@ jobs:
 
             cat <<CADDY_ROOT | sudo tee /etc/caddy/Caddyfile.root >/dev/null
             compintel.co {
-                root * $SITE_ROOT
+                root * $PUBLIC_SITE_ROOT
                 file_server
             }
             CADDY_ROOT
@@ -150,7 +155,7 @@ jobs:
             sleep 2
 
             echo "=== Site root preview ==="
-            sudo sed -n '1,80p' "$SITE_ROOT/index.html" || true
+            sudo sed -n '1,80p' "$PUBLIC_SITE_ROOT/index.html" || true
 
             echo "=== Public checks ==="
             curl -sSI https://www.compintel.co | head -6 || true

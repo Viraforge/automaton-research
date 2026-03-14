@@ -23,7 +23,13 @@ jobs:
 
             CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
             SITE_ROOT="$CONNIE_HOME/.automaton/site"
+            PUBLIC_SITE_ROOT="/var/www/compintel"
             sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.fix.bak.$(date +%s)
+            sudo mkdir -p "$PUBLIC_SITE_ROOT"
+            if [ -d "$SITE_ROOT" ]; then
+              sudo cp -R "$SITE_ROOT"/. "$PUBLIC_SITE_ROOT"/
+              sudo chmod -R a+rX "$PUBLIC_SITE_ROOT"
+            fi
 
             for f in /etc/caddy/Caddyfile /etc/caddy/Caddyfile.* /etc/caddy/automaton-sites/*.caddy; do
               [ -f "$f" ] || continue
@@ -34,7 +40,7 @@ jobs:
 
             printf '%s\n' \
               'compintel.co {' \
-              "    root * $SITE_ROOT" \
+              "    root * $PUBLIC_SITE_ROOT" \
               '    file_server' \
               '}' | sudo tee /etc/caddy/Caddyfile.root >/dev/null
 
