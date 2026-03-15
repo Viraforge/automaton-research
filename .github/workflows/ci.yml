@@ -86,7 +86,7 @@ jobs:
           script: |
             set -e
             cd /root/.openclaw/workspace/artifacts/automaton-research
-            git fetch "https://x-access-token:${GITHUB_TOKEN}@github.com/nydamon/automaton-research.git" main
+            git fetch "https://x-access-token:${GITHUB_TOKEN}@github.com/Viraforge/automaton-research.git" main
             git reset --hard FETCH_HEAD
             REPO_HEAD=$(git rev-parse --short HEAD)
             npm run build
