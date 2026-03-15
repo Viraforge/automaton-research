@@ -1,3 +1,5 @@
+> **This repository has been migrated to [Viraforge/a2a-forge](https://github.com/Viraforge/a2a-forge).** This repo is kept as a read-only mirror for 30 days (until 2026-04-14). All new development happens in a2a-forge.
+
 # Automaton: Self-Improving, Self-Replicating, Sovereign AI
 
 *The first AI that can earn its own existence, replicate, and evolve — without needing a human.*
