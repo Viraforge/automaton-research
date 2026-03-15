@@ -1,0 +1,63 @@
+name: "VPS: Setup Staging Environment"
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'yes' to confirm staging environment setup"
+        required: true
+        default: ""
+
+jobs:
+  setup-staging:
+    if: github.event.inputs.confirm == 'yes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup staging environment on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GITHUB_TOKEN
+          script: |
+            set -e
+
+            STAGING_DIR="/root/.openclaw/workspace/artifacts/automaton-research-staging"
+
+            # Clone the repo to the staging directory
+            if [ ! -d "$STAGING_DIR/.git" ]; then
+              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/nydamon/automaton-research.git" "$STAGING_DIR"
+              cd "$STAGING_DIR"
+              # Create staging branch if it doesn't exist remotely
+              git checkout staging 2>/dev/null || git checkout -b staging
+            else
+              cd "$STAGING_DIR"
+              echo "Staging directory already exists, updating..."
+              git fetch origin
+              git checkout staging 2>/dev/null || git checkout -b staging
+              git reset --hard origin/staging 2>/dev/null || git reset --hard origin/main
+            fi
+
+            npm run build
+
+            # Run the staging service setup script
+            bash scripts/setup-staging-service.sh
+
+            # Start the service
+            systemctl start local-connie-staging || true
+
+            echo ""
+            echo "=== Staging Environment Setup Complete ==="
+            echo "Service: local-connie-staging"
+            echo "Code:    $STAGING_DIR"
+            echo "Data:    /root/.automaton-staging"
+            echo ""
+            echo "Next steps:"
+            echo "  1. Create a 'staging' branch in the repo"
+            echo "  2. Push changes to 'staging' to trigger staging deploys"
+            echo "  3. Validate staging before merging to main"

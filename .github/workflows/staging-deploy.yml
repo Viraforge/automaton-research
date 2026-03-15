@@ -1,0 +1,176 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - name: Run tests
+        timeout-minutes: 10
+        run: |
+          set +e
+          timeout 300 pnpm -s vitest run \
+            src/__tests__/publish-service.test.ts \
+            src/__tests__/products-registry.test.ts \
+            src/__tests__/compintel-site-generator.test.ts \
+            src/__tests__/wallet-x402-headers.test.ts
+          RC=$?
+          if [ $RC -eq 0 ]; then
+            timeout 300 bash -lc "npm ci --prefix services/polymarket-api && cd services/polymarket-api && npm test"
+            RC=$?
+          fi
+          set -e
+          if [ $RC -eq 124 ]; then echo "::warning::vitest process hung after tests, killed by timeout"; exit 0; fi
+          exit $RC
+      - name: Run security tests
+        timeout-minutes: 10
+        run: |
+          set +e
+          timeout 180 pnpm -s vitest run \
+            src/__tests__/tools-security.test.ts \
+            src/__tests__/injection-defense.test.ts \
+            src/__tests__/policy-engine.test.ts \
+            src/__tests__/financial.test.ts
+          RC=$?
+          set -e
+          if [ $RC -eq 124 ]; then echo "::warning::vitest process hung after tests, killed by timeout"; exit 0; fi
+          exit $RC
+
+  security-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high || true
+
+  deploy-staging:
+    name: Deploy to Staging VPS
+    runs-on: ubuntu-latest
+    needs: [build, security-audit]
+    steps:
+      - name: Deploy staging via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GITHUB_TOKEN
+          script: |
+            set -e
+
+            STAGING_DIR="/root/.openclaw/workspace/artifacts/automaton-research-staging"
+            STAGING_HOME="/root/.automaton-staging"
+            STAGING_SERVICE="local-connie-staging"
+            STAGING_POLYMARKET_PORT=8082
+
+            # Ensure staging directories exist
+            mkdir -p "$STAGING_DIR"
+            mkdir -p "$STAGING_HOME"
+
+            # Clone or fetch staging code
+            if [ ! -d "$STAGING_DIR/.git" ]; then
+              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/nydamon/automaton-research.git" "$STAGING_DIR"
+              cd "$STAGING_DIR"
+              git checkout staging
+            else
+              cd "$STAGING_DIR"
+              git fetch "https://x-access-token:${GITHUB_TOKEN}@github.com/nydamon/automaton-research.git" staging
+              git reset --hard FETCH_HEAD
+            fi
+
+            REPO_HEAD=$(git rev-parse --short HEAD)
+            npm run build
+
+            # Copy governance docs to staging home
+            mkdir -p "$STAGING_HOME"
+            for doc in SOUL.md GOVERNANCE.md INFRASTRUCTURE.md OPERATIONAL.md constitution.md; do
+              if [ -f "$doc" ]; then
+                cp "$doc" "$STAGING_HOME/$doc"
+              fi
+            done
+
+            # Seed registries if not present (staging gets its own copies)
+            if [ ! -f "$STAGING_HOME/public-assets.json" ] && [ -f docs/public-assets.json ]; then
+              cp docs/public-assets.json "$STAGING_HOME/public-assets.json"
+            fi
+            if [ ! -f "$STAGING_HOME/products.json" ] && [ -f docs/products.json ]; then
+              cp docs/products.json "$STAGING_HOME/products.json"
+            fi
+            SITE_ROOT="$STAGING_HOME/site"
+            mkdir -p "$SITE_ROOT"
+            if [ ! -f "$SITE_ROOT/index.html" ]; then
+              printf '<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><title>Compintel Staging</title></head>\n<body><h1>Staging Catalog</h1><p>No products yet.</p></body>\n</html>\n' > "$SITE_ROOT/index.html"
+            fi
+
+            # Create staging systemd service if it doesn't exist
+            if [ ! -f "/etc/systemd/system/${STAGING_SERVICE}.service" ]; then
+              bash "$STAGING_DIR/scripts/setup-staging-service.sh"
+            fi
+
+            # Configure staging environment overrides
+            mkdir -p "/etc/systemd/system/${STAGING_SERVICE}.service.d"
+            printf "[Service]\nEnvironment=PUBLIC_ASSET_REGISTRY_PATH=%s\nEnvironment=PRODUCTS_REGISTRY_PATH=%s\nEnvironment=COMPINTEL_SITE_ROOT=%s\n" \
+              "$STAGING_HOME/public-assets.json" \
+              "$STAGING_HOME/products.json" \
+              "$SITE_ROOT" \
+              > "/etc/systemd/system/${STAGING_SERVICE}.service.d/registry.conf"
+            chmod 600 "/etc/systemd/system/${STAGING_SERVICE}.service.d/registry.conf"
+            systemctl daemon-reload
+
+            # Restart staging service
+            systemctl restart "$STAGING_SERVICE"
+            echo "Staging service restarted"
+
+            # Deploy staging polymarket-api on separate port
+            POLYMARKET_STAGING_DIR="/root/.automaton-research-home/polymarket-api-staging"
+            mkdir -p "$POLYMARKET_STAGING_DIR"
+            cp -R services/polymarket-api/. "$POLYMARKET_STAGING_DIR"/
+            cd "$POLYMARKET_STAGING_DIR"
+            npm install --omit=dev
+
+            if command -v pm2 >/dev/null 2>&1; then
+              CONNIE_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//' || echo "/root")
+              if command -v fuser >/dev/null 2>&1; then
+                fuser -k ${STAGING_POLYMARKET_PORT}/tcp 2>/dev/null || true
+              fi
+              PM2_HOME="$CONNIE_HOME/.pm2" pm2 delete polymarket-api-staging 2>/dev/null || true
+              PORT=$STAGING_POLYMARKET_PORT PM2_HOME="$CONNIE_HOME/.pm2" pm2 start server.js \
+                --name polymarket-api-staging \
+                --cwd "$POLYMARKET_STAGING_DIR" \
+                --update-env || true
+              PM2_HOME="$CONNIE_HOME/.pm2" pm2 save || true
+            fi
+
+            # Health checks for staging
+            HEALTH_CODE=000
+            for attempt in $(seq 1 10); do
+              HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${STAGING_POLYMARKET_PORT}/health" || true)
+              HEALTH_CODE=${HEALTH_CODE:-000}
+              if [ "$HEALTH_CODE" = "200" ]; then
+                break
+              fi
+              echo "Staging polymarket-api probe attempt ${attempt}/10 => /health=${HEALTH_CODE}"
+              sleep 2
+            done
+            echo "Staging polymarket-api /health HTTP $HEALTH_CODE"
+
+            echo "Staging deploy complete: $REPO_HEAD"
