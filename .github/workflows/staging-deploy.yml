@@ -88,12 +88,12 @@ jobs:
 
             # Clone or fetch staging code
             if [ ! -d "$STAGING_DIR/.git" ]; then
-              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/nydamon/automaton-research.git" "$STAGING_DIR"
+              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/Viraforge/automaton-research.git" "$STAGING_DIR"
               cd "$STAGING_DIR"
               git checkout staging
             else
               cd "$STAGING_DIR"
-              git fetch "https://x-access-token:${GITHUB_TOKEN}@github.com/nydamon/automaton-research.git" staging
+              git fetch "https://x-access-token:${GITHUB_TOKEN}@github.com/Viraforge/automaton-research.git" staging
               git reset --hard FETCH_HEAD
             fi
 
