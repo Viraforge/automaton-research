@@ -14,7 +14,11 @@ STAGING_DIR="/root/.openclaw/workspace/artifacts/automaton-research-staging"
 STAGING_HOME="/root/.automaton-staging"
 
 # Derive HOME from the production service so credentials are shared
-PROD_HOME=$(grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null | sed 's/.*HOME=//')
+PROD_HOME=$(
+  grep 'Environment=HOME=' /etc/systemd/system/local-connie.service 2>/dev/null \
+    | sed 's/.*HOME=//' \
+    || true
+)
 if [ -z "$PROD_HOME" ]; then
   PROD_HOME="/root"
 fi
