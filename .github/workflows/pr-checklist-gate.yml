@@ -1,0 +1,33 @@
+name: PR Checklist Gate
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  check-manual-validation:
+    name: Manual validation steps completed
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check for unchecked manual validation items
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ -z "$PR_BODY" ]; then
+            echo "No PR body found — skipping checklist check."
+            exit 0
+          fi
+
+          # Extract unchecked checkboxes: lines matching "- [ ]" or "* [ ]"
+          UNCHECKED=$(echo "$PR_BODY" | grep -cE '^\s*[-*]\s*\[ \]' || true)
+
+          if [ "$UNCHECKED" -gt 0 ]; then
+            echo "::error::PR has $UNCHECKED unchecked checklist item(s). All manual validation steps must be checked before merge."
+            echo ""
+            echo "Unchecked items:"
+            echo "$PR_BODY" | grep -E '^\s*[-*]\s*\[ \]' || true
+            exit 1
+          fi
+
+          echo "All checklist items are checked (or no checklist items found)."
