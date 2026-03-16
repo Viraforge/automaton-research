@@ -1,0 +1,135 @@
+name: Merge Automation
+
+on:
+  status: {}
+
+jobs:
+  evaluate-merge:
+    if: github.event.context == 'ai-review/verdict'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: read
+      checks: read
+
+    steps:
+      - name: Evaluate merge conditions
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.commit.sha;
+            const state = context.payload.state;
+            const description = context.payload.description || '';
+
+            console.log(`ai-review/verdict: state=${state}, description="${description}"`);
+
+            // Find associated open PRs
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+
+            const openPRs = prs.filter(pr => pr.state === 'open');
+            if (openPRs.length === 0) {
+              console.log('No open PR found for this commit, skipping.');
+              return;
+            }
+
+            const pr = openPRs[0];
+            console.log(`PR #${pr.number}: ${pr.title}`);
+
+            // --- HIGH RISK: requires human approval ---
+            if (description.includes('HIGH_RISK') || description.includes('HUMAN_REQUIRED')) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: [
+                  '## Human Approval Required',
+                  '',
+                  'The AI Code Reviewer classified this PR as **high risk**.',
+                  '',
+                  `Verdict: \`${description}\``,
+                  '',
+                  'This PR will not auto-merge. A human must review the findings and approve before merge.',
+                ].join('\n'),
+              });
+              console.log('Posted human-approval-required comment.');
+              return;
+            }
+
+            // --- FAIL: blockers found ---
+            if (state === 'failure' || description.includes('FAIL')) {
+              console.log('Verdict is FAIL — auto-merge blocked until issues are resolved.');
+              return;
+            }
+
+            // --- PASS / PASS_WITH_NOTES: check remaining conditions ---
+            if (!description.includes('PASS')) {
+              console.log(`Unexpected verdict "${description}", skipping.`);
+              return;
+            }
+
+            // Collect all statuses for this commit
+            const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+            });
+
+            const statusMap = {};
+            for (const s of combined.statuses) {
+              statusMap[s.context] = s.state;
+            }
+
+            // Also check GitHub Actions check runs (verify, policy are check runs)
+            const { data: checkRuns } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+            });
+
+            for (const run of checkRuns.check_runs) {
+              if (run.conclusion === 'success') {
+                statusMap[run.name] = 'success';
+              }
+            }
+
+            // Required CI checks
+            const requiredChecks = ['verify', 'policy'];
+            const missing = requiredChecks.filter(c => statusMap[c] !== 'success');
+
+            if (missing.length > 0) {
+              console.log(`CI checks not yet passing: ${missing.join(', ')}. Auto-merge deferred.`);
+              return;
+            }
+
+            // All conditions met — merge the PR
+            console.log('All merge conditions satisfied. Merging...');
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                merge_method: 'squash',
+                commit_title: `${pr.title} (#${pr.number})`,
+              });
+              console.log(`PR #${pr.number} merged successfully.`);
+            } catch (error) {
+              console.log(`Merge failed: ${error.message}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: [
+                  '## Merge Automation',
+                  '',
+                  `Auto-merge conditions were met but merge failed: \`${error.message}\``,
+                  '',
+                  'Manual merge may be required.',
+                ].join('\n'),
+              });
+            }
