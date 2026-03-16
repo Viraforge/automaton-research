@@ -1,0 +1,241 @@
+{
+  "dataset": {
+    "total_trades": 3615,
+    "n_markets": 10,
+    "time_span_sec": 1342,
+    "fee_bps": 10
+  },
+  "candidates": {
+    "OFI Momentum (L=50)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.577,
+        "avg_pnl_per_trade": 4.5777,
+        "total_pnl": 16319.54,
+        "sharpe_ratio": 30.06,
+        "max_drawdown_abs": 1077.51,
+        "max_drawdown_pct": 7.04,
+        "profit_factor": 1.84,
+        "std_pnl": 49.3769,
+        "gross_profit": 35702.44,
+        "gross_loss": 19382.9
+      },
+      "gates_passed": 7,
+      "all_pass": true,
+      "bootstrap": {
+        "observed_mean": 4.577711,
+        "p_value": 0.0,
+        "ci_95": [
+          3.03253,
+          6.232485
+        ],
+        "significant_at_05": true,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "OFI Momentum (L=20)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.5661,
+        "avg_pnl_per_trade": 4.9053,
+        "total_pnl": 17487.41,
+        "sharpe_ratio": 27.84,
+        "max_drawdown_abs": 1834.51,
+        "max_drawdown_pct": 8.8,
+        "profit_factor": 1.8,
+        "std_pnl": 57.1224,
+        "gross_profit": 39469.2,
+        "gross_loss": 21981.8
+      },
+      "gates_passed": 7,
+      "all_pass": true,
+      "bootstrap": {
+        "observed_mean": 4.905304,
+        "p_value": 0.0,
+        "ci_95": [
+          3.106466,
+          6.881162
+        ],
+        "significant_at_05": true,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "Vol-Weighted Dir (L=30)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.5722,
+        "avg_pnl_per_trade": 4.659,
+        "total_pnl": 16609.22,
+        "sharpe_ratio": 23.42,
+        "max_drawdown_abs": 3543.85,
+        "max_drawdown_pct": 11.75,
+        "profit_factor": 1.72,
+        "std_pnl": 64.5017,
+        "gross_profit": 39689.34,
+        "gross_loss": 23080.12
+      },
+      "gates_passed": 7,
+      "all_pass": true,
+      "bootstrap": {
+        "observed_mean": 4.658967,
+        "p_value": 0.0,
+        "ci_95": [
+          2.48095,
+          6.730711
+        ],
+        "significant_at_05": true,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "Mean Reversion (L=30)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.3992,
+        "avg_pnl_per_trade": -3.2102,
+        "total_pnl": -11444.2,
+        "sharpe_ratio": -12.78,
+        "max_drawdown_abs": 12709.83,
+        "max_drawdown_pct": 113.18,
+        "profit_factor": 0.74,
+        "std_pnl": 81.4361,
+        "gross_profit": 33377.99,
+        "gross_loss": 44822.18
+      },
+      "gates_passed": 3,
+      "all_pass": false,
+      "bootstrap": {
+        "observed_mean": -3.210153,
+        "p_value": 0.9938,
+        "ci_95": [
+          -6.081133,
+          -0.576826
+        ],
+        "significant_at_05": false,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "Volatility Breakout (L=40, m=1.5)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.5663,
+        "avg_pnl_per_trade": 1.3697,
+        "total_pnl": 4883.08,
+        "sharpe_ratio": 11.54,
+        "max_drawdown_abs": 1863.0,
+        "max_drawdown_pct": 15.83,
+        "profit_factor": 1.25,
+        "std_pnl": 38.4799,
+        "gross_profit": 24583.42,
+        "gross_loss": 19700.34
+      },
+      "gates_passed": 5,
+      "all_pass": false,
+      "bootstrap": {
+        "observed_mean": 1.369729,
+        "p_value": 0.0168,
+        "ci_95": [
+          0.112534,
+          2.605494
+        ],
+        "significant_at_05": true,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "Price Momentum (L=20)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.5633,
+        "avg_pnl_per_trade": -0.6465,
+        "total_pnl": -2304.75,
+        "sharpe_ratio": -10.8,
+        "max_drawdown_abs": 2707.19,
+        "max_drawdown_pct": 26.16,
+        "profit_factor": 0.83,
+        "std_pnl": 19.415,
+        "gross_profit": 11125.95,
+        "gross_loss": 13430.7
+      },
+      "gates_passed": 3,
+      "all_pass": false,
+      "bootstrap": {
+        "observed_mean": -0.646492,
+        "p_value": 0.9834,
+        "ci_95": [
+          -1.314622,
+          -0.050045
+        ],
+        "significant_at_05": false,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "Ensemble (OFI+VWD+PM)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.5924,
+        "avg_pnl_per_trade": 4.9688,
+        "total_pnl": 17713.81,
+        "sharpe_ratio": 31.9,
+        "max_drawdown_abs": 1088.94,
+        "max_drawdown_pct": 8.69,
+        "profit_factor": 2.04,
+        "std_pnl": 50.4965,
+        "gross_profit": 34827.24,
+        "gross_loss": 17113.43
+      },
+      "gates_passed": 7,
+      "all_pass": true,
+      "bootstrap": {
+        "observed_mean": 4.96881,
+        "p_value": 0.0,
+        "ci_95": [
+          3.388813,
+          6.704559
+        ],
+        "significant_at_05": true,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    },
+    "Regime-Filtered OFI (L=50)": {
+      "metrics": {
+        "total_trades": 3565,
+        "win_rate": 0.5739,
+        "avg_pnl_per_trade": 1.4579,
+        "total_pnl": 5197.33,
+        "sharpe_ratio": 13.11,
+        "max_drawdown_abs": 1867.14,
+        "max_drawdown_pct": 18.2,
+        "profit_factor": 1.28,
+        "std_pnl": 36.0476,
+        "gross_profit": 23771.0,
+        "gross_loss": 18573.66
+      },
+      "gates_passed": 5,
+      "all_pass": false,
+      "bootstrap": {
+        "observed_mean": 1.457878,
+        "p_value": 0.0054,
+        "ci_95": [
+          0.302952,
+          2.655885
+        ],
+        "significant_at_05": true,
+        "n_samples": 3565,
+        "n_bootstrap": 5000
+      }
+    }
+  },
+  "passing_candidates": [
+    "OFI Momentum (L=50)",
+    "OFI Momentum (L=20)",
+    "Vol-Weighted Dir (L=30)",
+    "Ensemble (OFI+VWD+PM)"
+  ],
+  "top_candidate": "Ensemble (OFI+VWD+PM)"
+}
